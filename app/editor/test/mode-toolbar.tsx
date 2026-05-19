@@ -6,6 +6,8 @@ import {
 } from "@/lib/dromap/editor-mode";
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 
+import WorkspaceActions from "./workspace-actions";
+
 const MODES: EditorMode[] = ["navigation", "workspace-select", "edit"];
 
 export default function ModeToolbar() {
@@ -38,6 +40,7 @@ export default function ModeToolbar() {
           );
         })}
       </div>
+      <WorkspaceActions />
       <p className="rounded-md border border-neutral-200 bg-white/95 px-3 py-1 text-xs text-neutral-700 shadow-sm backdrop-blur-sm">
         Mode actif :{" "}
         <strong className="font-semibold text-neutral-900">
@@ -50,7 +53,10 @@ export default function ModeToolbar() {
           </span>
         )}
         {currentMode === "edit" && (
-          <span className="text-neutral-500"> — édition des entités à venir</span>
+          <span className="text-neutral-500">
+            {" "}
+            — carte figée, dessin pédagogique actif
+          </span>
         )}
       </p>
     </div>
