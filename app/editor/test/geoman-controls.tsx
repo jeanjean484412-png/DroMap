@@ -6,6 +6,7 @@ import L from "leaflet";
 import "@geoman-io/leaflet-geoman-free";
 import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 
+import { applyGeomanForEditorMode } from "@/lib/dromap/geoman-toolbar";
 import {
   bindLayerGeomanEvents,
   syncCreateToStore,
@@ -13,22 +14,7 @@ import {
   syncRemoveFromStore,
 } from "@/lib/dromap/geoman-sync";
 import { configureLeafletIcons, defaultMarkerIcon } from "@/lib/leaflet-icon";
-
-const GEOMAN_TOOLBAR = {
-  position: "topleft" as const,
-  drawMarker: true,
-  drawPolyline: true,
-  drawPolygon: true,
-  drawRectangle: false,
-  drawCircle: false,
-  drawCircleMarker: false,
-  drawText: false,
-  cutPolygon: false,
-  rotateMode: false,
-  editMode: true,
-  dragMode: true,
-  removalMode: true,
-};
+import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 
 type GeomanLayerEvent = {
   layer: L.Layer;
@@ -37,6 +23,7 @@ type GeomanLayerEvent = {
 
 export default function GeomanControls() {
   const map = useMap();
+  const currentMode = useEditorTestModeStore((s) => s.currentMode);
 
   useEffect(() => {
     configureLeafletIcons();
@@ -45,9 +32,12 @@ export default function GeomanControls() {
       markerStyle: { icon: defaultMarkerIcon },
     });
 
-    map.pm.addControls(GEOMAN_TOOLBAR);
-
     const onCreate = (event: GeomanLayerEvent) => {
+      if (useEditorTestModeStore.getState().currentMode !== "edit") {
+        map.removeLayer(event.layer);
+        return;
+      }
+
       if (event.layer instanceof L.Marker) {
         event.layer.setIcon(defaultMarkerIcon);
       }
@@ -62,6 +52,8 @@ export default function GeomanControls() {
     map.on("pm:edit", onEdit);
     map.on("pm:remove", onRemove);
 
+    applyGeomanForEditorMode(map, currentMode);
+
     return () => {
       map.off("pm:create", onCreate);
       map.off("pm:edit", onEdit);
@@ -70,7 +62,7 @@ export default function GeomanControls() {
         map.pm.removeControls();
       }
     };
-  }, [map]);
+  }, [map, currentMode]);
 
   return null;
 }
