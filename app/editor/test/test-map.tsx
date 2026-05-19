@@ -10,6 +10,7 @@ import {
 } from "@/lib/leaflet-icon";
 
 import GeomanControls from "./geoman-controls";
+import WorkspaceBoundsLayer from "./workspace-bounds-layer";
 
 configureLeafletIcons();
 
@@ -29,6 +30,7 @@ export default function TestMap() {
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <GeomanControls />
+      <WorkspaceBoundsLayer />
       <Marker position={PARIS} icon={defaultMarkerIcon}>
         <Popup>Paris</Popup>
       </Marker>

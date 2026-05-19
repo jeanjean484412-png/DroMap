@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 
 import FeaturesDebug from "./features-debug";
 import ModeToolbar from "./mode-toolbar";
+import WorkspaceDebug from "./workspace-debug";
 
 const TestMap = dynamic(() => import("./test-map"), {
   ssr: false,
@@ -19,6 +20,7 @@ export default function EditorTestPage() {
     <main className="relative h-screen w-full">
       <TestMap />
       <FeaturesDebug />
+      <WorkspaceDebug />
       <ModeToolbar />
     </main>
   );

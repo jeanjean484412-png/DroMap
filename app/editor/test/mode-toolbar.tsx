@@ -44,7 +44,10 @@ export default function ModeToolbar() {
           {EDITOR_MODE_LABELS[currentMode]}
         </strong>
         {currentMode === "workspace-select" && (
-          <span className="text-neutral-500"> — sélection de zone à venir</span>
+          <span className="text-neutral-500">
+            {" "}
+            — dessinez un rectangle sur la carte
+          </span>
         )}
         {currentMode === "edit" && (
           <span className="text-neutral-500"> — édition des entités à venir</span>

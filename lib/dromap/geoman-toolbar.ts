@@ -2,33 +2,38 @@ import type L from "leaflet";
 
 import type { EditorMode } from "@/lib/dromap/editor-mode";
 
-const SHARED_TOOLBAR_OPTIONS = {
-  position: "topleft" as const,
-  drawRectangle: false,
+const SHARED_DISABLED_DRAW = {
+  drawMarker: false,
+  drawPolyline: false,
+  drawPolygon: false,
   drawCircle: false,
   drawCircleMarker: false,
   drawText: false,
   cutPolygon: false,
   rotateMode: false,
+};
+
+/** Mode édition : dessin marker / ligne / zone + édition. */
+export const GEOMAN_EDIT_TOOLBAR = {
+  position: "topleft" as const,
+  ...SHARED_DISABLED_DRAW,
+  drawRectangle: false,
+  drawMarker: true,
+  drawPolyline: true,
+  drawPolygon: true,
   editMode: true,
   dragMode: true,
   removalMode: true,
 };
 
-/** Mode édition : dessin marker / ligne / zone + édition. */
-export const GEOMAN_EDIT_TOOLBAR = {
-  ...SHARED_TOOLBAR_OPTIONS,
-  drawMarker: true,
-  drawPolyline: true,
-  drawPolygon: true,
-};
-
-/** Mode sélection zone : édition des couches existantes, pas de nouveau dessin. */
+/** Mode sélection zone : rectangle de zone de travail uniquement. */
 export const GEOMAN_WORKSPACE_SELECT_TOOLBAR = {
-  ...SHARED_TOOLBAR_OPTIONS,
-  drawMarker: false,
-  drawPolyline: false,
-  drawPolygon: false,
+  position: "topleft" as const,
+  ...SHARED_DISABLED_DRAW,
+  drawRectangle: true,
+  editMode: false,
+  dragMode: false,
+  removalMode: false,
 };
 
 /** Désactive les modes Geoman actifs (dessin, édition globale, etc.). */
