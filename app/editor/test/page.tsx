@@ -2,6 +2,8 @@
 
 import dynamic from "next/dynamic";
 
+import FeaturesDebug from "./features-debug";
+
 const TestMap = dynamic(() => import("./test-map"), {
   ssr: false,
   loading: () => (
@@ -13,8 +15,9 @@ const TestMap = dynamic(() => import("./test-map"), {
 
 export default function EditorTestPage() {
   return (
-    <main className="h-screen w-full">
+    <main className="relative h-screen w-full">
       <TestMap />
+      <FeaturesDebug />
     </main>
   );
 }
