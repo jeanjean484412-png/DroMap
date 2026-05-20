@@ -3,6 +3,8 @@
 import dynamic from "next/dynamic";
 
 import FeaturesDebug from "./features-debug";
+import GraphicZoomControls from "./graphic-zoom-controls";
+import GraphicZoomViewport from "./graphic-zoom-viewport";
 import ModeToolbar from "./mode-toolbar";
 import WorkspaceDebug from "./workspace-debug";
 
@@ -17,10 +19,13 @@ const TestMap = dynamic(() => import("./test-map"), {
 
 export default function EditorTestPage() {
   return (
-    <main className="relative h-screen w-full">
-      <TestMap />
+    <main className="relative h-screen w-full overflow-hidden">
+      <GraphicZoomViewport>
+        <TestMap />
+      </GraphicZoomViewport>
       <FeaturesDebug />
       <WorkspaceDebug />
+      <GraphicZoomControls />
       <ModeToolbar />
     </main>
   );
