@@ -1,5 +1,6 @@
 "use client";
 
+
 import dynamic from "next/dynamic";
 
 import FeaturesDebug from "./features-debug";
@@ -7,6 +8,8 @@ import GraphicZoomControls from "./graphic-zoom-controls";
 import GraphicZoomViewport from "./graphic-zoom-viewport";
 import ModeToolbar from "./mode-toolbar";
 import WorkspaceDebug from "./workspace-debug";
+import { LegendPanel } from "./legend-panel";
+import { SelectedFeatureActions } from "./selected-feature-actions";
 
 const TestMap = dynamic(() => import("./test-map"), {
   ssr: false,
@@ -25,6 +28,8 @@ export default function EditorTestPage() {
       </GraphicZoomViewport>
       <FeaturesDebug />
       <WorkspaceDebug />
+      <LegendPanel />
+      <SelectedFeatureActions />
       <GraphicZoomControls />
       <ModeToolbar />
     </main>

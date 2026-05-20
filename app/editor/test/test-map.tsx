@@ -3,6 +3,7 @@
 import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { WorkspaceMaskLayer } from "./workspace-mask-layer";
 
 import {
   configureLeafletIcons,
@@ -12,6 +13,10 @@ import {
 import GeomanControls from "./geoman-controls";
 import MapViewController from "./map-view-controller";
 import WorkspaceBoundsLayer from "./workspace-bounds-layer";
+import { FeaturesStyleSync } from "./features-style-sync";
+import { SelectedFeatureHighlight } from "./selected-feature-highlight";
+import { SelectedFeatureMapInteractions } from "./selected-feature-map-interactions";
+import { FeatureLayerDeleteCommand } from "./feature-layer-delete-command";
 
 configureLeafletIcons();
 
@@ -31,8 +36,13 @@ export default function TestMap() {
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <GeomanControls />
-      <MapViewController />
+      <WorkspaceMaskLayer />
       <WorkspaceBoundsLayer />
+      <FeaturesStyleSync />
+      <FeatureLayerDeleteCommand />
+      <SelectedFeatureMapInteractions />
+      <SelectedFeatureHighlight />
+      <MapViewController />
       <Marker position={PARIS} icon={defaultMarkerIcon}>
         <Popup>Paris</Popup>
       </Marker>
