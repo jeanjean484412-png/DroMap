@@ -29,7 +29,7 @@ export default function GraphicZoomControls() {
 
   return (
     <aside
-      className="pointer-events-auto absolute bottom-28 left-3 z-[1000] flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50/95 p-3 text-xs shadow-md backdrop-blur-sm"
+      className="pointer-events-auto absolute top right-50 z-[1000] flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50/95 p-3 text-xs shadow-md backdrop-blur-sm"
       aria-label="Zoom graphique (prototype)"
     >
       <label className="flex cursor-pointer items-center gap-2 text-neutral-800">

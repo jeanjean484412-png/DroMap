@@ -2,69 +2,63 @@ import type L from "leaflet";
 
 import type { EditorMode } from "@/lib/dromap/editor-mode";
 
-const SHARED_DISABLED_DRAW = {
-  drawMarker: false,
-  drawPolyline: false,
-  drawPolygon: false,
-  drawCircle: false,
-  drawCircleMarker: false,
-  drawText: false,
-  cutPolygon: false,
-  rotateMode: false,
+const DROMAP_SNAP_DISTANCE = 5;
+
+type GeomanDrawApi = {
+  disableDraw: () => void;
+  enableDraw: (shape: "Rectangle", options?: unknown) => void;
+  controlsVisible: () => boolean;
+  removeControls: () => void;
+  globalEditModeEnabled: () => boolean;
+  disableGlobalEditMode: () => void;
+  globalDragModeEnabled: () => boolean;
+  disableGlobalDragMode: () => void;
+  globalRemovalModeEnabled: () => boolean;
+  disableGlobalRemovalMode: () => void;
 };
 
-/** Mode édition : dessin marker / ligne / zone + édition. */
-export const GEOMAN_EDIT_TOOLBAR = {
-  position: "topleft" as const,
-  ...SHARED_DISABLED_DRAW,
-  drawRectangle: false,
-  drawMarker: true,
-  drawPolyline: true,
-  drawPolygon: true,
-  editMode: true,
-  dragMode: true,
-  removalMode: true,
-};
-
-/** Mode sélection zone : rectangle de zone de travail uniquement. */
-export const GEOMAN_WORKSPACE_SELECT_TOOLBAR = {
-  position: "topleft" as const,
-  ...SHARED_DISABLED_DRAW,
-  drawRectangle: true,
-  editMode: false,
-  dragMode: false,
-  removalMode: false,
-};
-
-/** Désactive les modes Geoman actifs (dessin, édition globale, etc.). */
-export function deactivateGeomanModes(map: L.Map): void {
-  map.pm.disableDraw();
-  if (map.pm.globalEditModeEnabled()) map.pm.disableGlobalEditMode();
-  if (map.pm.globalDragModeEnabled()) map.pm.disableGlobalDragMode();
-  if (map.pm.globalRemovalModeEnabled()) map.pm.disableGlobalRemovalMode();
+function getGeoman(map: L.Map): GeomanDrawApi {
+  return map.pm as unknown as GeomanDrawApi;
 }
 
-/** Affiche ou masque la barre Geoman selon le mode éditeur. */
+export function deactivateGeomanModes(map: L.Map): void {
+  const pm = getGeoman(map);
+
+  pm.disableDraw();
+
+  if (pm.globalEditModeEnabled()) {
+    pm.disableGlobalEditMode();
+  }
+
+  if (pm.globalDragModeEnabled()) {
+    pm.disableGlobalDragMode();
+  }
+
+  if (pm.globalRemovalModeEnabled()) {
+    pm.disableGlobalRemovalMode();
+  }
+
+  if (pm.controlsVisible()) {
+    pm.removeControls();
+  }
+}
+
 export function applyGeomanForEditorMode(map: L.Map, mode: EditorMode): void {
+  const pm = getGeoman(map);
+
   deactivateGeomanModes(map);
 
-  switch (mode) {
-    case "navigation":
-      if (map.pm.controlsVisible()) {
-        map.pm.removeControls();
-      }
-      break;
-    case "workspace-select":
-      if (map.pm.controlsVisible()) {
-        map.pm.removeControls();
-      }
-      map.pm.addControls(GEOMAN_WORKSPACE_SELECT_TOOLBAR);
-      break;
-    case "edit":
-      if (map.pm.controlsVisible()) {
-        map.pm.removeControls();
-      }
-      map.pm.addControls(GEOMAN_EDIT_TOOLBAR);
-      break;
+  if (mode === "workspace-select") {
+    pm.enableDraw("Rectangle", {
+      snappable: true,
+      snapDistance: DROMAP_SNAP_DISTANCE,
+      pathOptions: {
+        color: "#f97316",
+        weight: 2,
+        opacity: 1,
+        fillColor: "#f97316",
+        fillOpacity: 0.08,
+      },
+    });
   }
 }

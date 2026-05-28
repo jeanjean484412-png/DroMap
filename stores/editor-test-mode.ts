@@ -8,6 +8,9 @@ type EditorTestModeState = {
 };
 
 export const useEditorTestModeStore = create<EditorTestModeState>((set) => ({
-  currentMode: "navigation",
-  setCurrentMode: (mode) => set({ currentMode: mode }),
+  currentMode: "workspace-select",
+
+  setCurrentMode: (mode) => {
+    set({ currentMode: mode });
+  },
 }));

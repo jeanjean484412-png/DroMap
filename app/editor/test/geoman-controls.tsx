@@ -28,7 +28,7 @@ type GeomanLayerEvent = {
 
 export default function GeomanControls() {
   const map = useMap();
-  const currentMode = useEditorTestModeStore((s) => s.currentMode);
+  const currentMode = useEditorTestModeStore((state) => state.currentMode);
 
   useEffect(() => {
     configureLeafletIcons();
@@ -47,9 +47,18 @@ export default function GeomanControls() {
         ) {
           const bounds = replaceWorkspaceRectangle(map, event.layer);
           useEditorTestWorkspaceStore.getState().setWorkspaceBounds(bounds);
+
+          window.setTimeout(() => {
+            const latestMode = useEditorTestModeStore.getState().currentMode;
+
+            if (latestMode === "workspace-select") {
+              applyGeomanForEditorMode(map, latestMode);
+            }
+          }, 0);
         } else {
           map.removeLayer(event.layer);
         }
+
         return;
       }
 
@@ -65,6 +74,7 @@ export default function GeomanControls() {
         if (event.layer instanceof L.Marker) {
           event.layer.setIcon(defaultMarkerIcon);
         }
+
         syncCreateToStore(event);
         bindLayerGeomanEvents(event.layer);
         return;
@@ -93,9 +103,12 @@ export default function GeomanControls() {
       map.off("pm:create", onCreate);
       map.off("pm:edit", onEdit);
       map.off("pm:remove", onRemove);
+
       if (map.pm.controlsVisible()) {
         map.pm.removeControls();
       }
+
+      map.pm.disableDraw();
     };
   }, [map, currentMode]);
 

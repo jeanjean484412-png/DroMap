@@ -1,14 +1,13 @@
 "use client";
 
-
 import dynamic from "next/dynamic";
 
-import FeaturesDebug from "./features-debug";
-import GraphicZoomControls from "./graphic-zoom-controls";
+import { DebugPanel } from "./debug-panel";
+import { ExportControls } from "./export-controls";
+import { ExportSetupPanel } from "./export-setup-panel";
 import GraphicZoomViewport from "./graphic-zoom-viewport";
-import ModeToolbar from "./mode-toolbar";
-import WorkspaceDebug from "./workspace-debug";
 import { LegendPanel } from "./legend-panel";
+import ModeToolbar from "./mode-toolbar";
 import { SelectedFeatureActions } from "./selected-feature-actions";
 
 const TestMap = dynamic(() => import("./test-map"), {
@@ -23,15 +22,26 @@ const TestMap = dynamic(() => import("./test-map"), {
 export default function EditorTestPage() {
   return (
     <main className="relative h-screen w-full overflow-hidden">
+      <style>{`
+        .leaflet-control-zoom,
+        .leaflet-pm-toolbar,
+        .leaflet-pm-draw,
+        .leaflet-pm-edit,
+        .leaflet-pm-options {
+          display: none !important;
+        }
+      `}</style>
+
       <GraphicZoomViewport>
         <TestMap />
       </GraphicZoomViewport>
-      <FeaturesDebug />
-      <WorkspaceDebug />
-      <LegendPanel />
-      <SelectedFeatureActions />
-      <GraphicZoomControls />
+
       <ModeToolbar />
+      <SelectedFeatureActions />
+      <ExportControls />
+      <LegendPanel />
+      <ExportSetupPanel />
+      <DebugPanel />
     </main>
   );
 }

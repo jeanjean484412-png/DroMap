@@ -19,6 +19,7 @@ function getFeatureTypeLabel(feature: FeatureLike) {
   const type = feature.properties?.type;
   const geometryType = feature.geometry?.type;
 
+  if (type === "text") return "texte";
   if (type === "marker" || geometryType === "Point") return "marqueur";
   if (type === "line" || geometryType === "LineString") return "ligne";
   if (type === "zone" || geometryType === "Polygon") return "zone";
@@ -32,27 +33,27 @@ function getFeatureLabel(feature: FeatureLike) {
 
 export function SelectedFeatureActions() {
   const requestDeleteFeatureLayer = useEditorTestLayerCommandsStore(
-    (state) => state.requestDeleteFeatureLayer
+    (state) => state.requestDeleteFeatureLayer,
   );
 
   const features = useEditorTestFeaturesStore(
-    (state) => state.features
+    (state) => state.features,
   ) as FeatureLike[];
 
-  const removeFeature = useEditorTestFeaturesStore(
-    (state) => state.removeFeature
+  const removeFeatureWithHistory = useEditorTestFeaturesStore(
+    (state) => state.removeFeatureWithHistory,
   );
 
   const selectedFeatureId = useEditorTestSelectionStore(
-    (state) => state.selectedFeatureId
+    (state) => state.selectedFeatureId,
   );
 
   const clearSelectedFeatureId = useEditorTestSelectionStore(
-    (state) => state.clearSelectedFeatureId
+    (state) => state.clearSelectedFeatureId,
   );
 
   const selectedFeature = features.find(
-    (feature) => feature.id === selectedFeatureId
+    (feature) => feature.id === selectedFeatureId,
   );
 
   if (!selectedFeatureId || !selectedFeature) {
@@ -62,37 +63,35 @@ export function SelectedFeatureActions() {
   function deleteSelectedFeature() {
     if (!selectedFeatureId) return;
 
-    const shouldDelete = window.confirm(
-      "Supprimer cet objet ? Cette action ne peut pas encore être annulée."
-    );
+    const shouldDelete = window.confirm("Supprimer cet objet ?");
 
     if (!shouldDelete) return;
 
     requestDeleteFeatureLayer(selectedFeatureId);
-    removeFeature(selectedFeatureId);
+    removeFeatureWithHistory(selectedFeatureId);
     clearSelectedFeatureId();
   }
 
   return (
-    <div className="absolute left-1/2 top-4 z-[1000] -translate-x-1/2 rounded-xl border border-black/10 bg-white/95 px-4 py-3 text-sm shadow-lg backdrop-blur">
-      <div className="flex items-center gap-3">
-        <div className="min-w-0">
-          <div className="max-w-64 truncate font-medium text-slate-900">
-            Objet sélectionné : {getFeatureLabel(selectedFeature)}
-          </div>
-          <div className="text-xs text-slate-500">
-            Type : {getFeatureTypeLabel(selectedFeature)}
-          </div>
+    <div className="pointer-events-auto absolute left-[6.5rem] top-[5rem] z-[1000] flex items-center gap-2 rounded-2xl border border-black/10 bg-white/95 p-2 shadow-xl backdrop-blur">
+      <div className="min-w-0 px-2">
+        <div className="max-w-48 truncate text-xs font-semibold text-neutral-900">
+          {getFeatureLabel(selectedFeature)}
         </div>
-
-        <button
-          type="button"
-          onClick={deleteSelectedFeature}
-          className="rounded-lg bg-red-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-red-700"
-        >
-          Supprimer
-        </button>
+        <div className="text-[10px] text-neutral-500">
+          {getFeatureTypeLabel(selectedFeature)}
+        </div>
       </div>
+
+      <button
+        type="button"
+        onClick={deleteSelectedFeature}
+        title="Supprimer"
+        aria-label="Supprimer"
+        className="flex h-10 w-10 items-center justify-center rounded-xl border border-red-200 bg-white text-lg font-bold text-red-700 shadow-sm transition hover:bg-red-50"
+      >
+        ×
+      </button>
     </div>
   );
 }

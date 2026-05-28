@@ -1,6 +1,9 @@
 import L from "leaflet";
 
-import { boundsFromRectangle, toLatLngBounds } from "@/lib/dromap/workspace-bounds";
+import {
+  boundsFromRectangle,
+  toLatLngBounds,
+} from "@/lib/dromap/workspace-bounds";
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
 
 const WORKSPACE_RECT_STYLE: L.PathOptions = {
@@ -10,11 +13,21 @@ const WORKSPACE_RECT_STYLE: L.PathOptions = {
   fillOpacity: 0.12,
 };
 
-let workspaceRectangleLayer: L.Rectangle | null = null;
+type DroMapWorkspaceRectangle = L.Rectangle & {
+  dromapWorkspaceRectangle?: true;
+};
 
-function configureWorkspaceLayer(layer: L.Rectangle): void {
-  layer.setStyle(WORKSPACE_RECT_STYLE);
-  layer.options.pmIgnore = true;
+let workspaceRectangleLayer: DroMapWorkspaceRectangle | null = null;
+
+function configureWorkspaceLayer(layer: L.Rectangle): DroMapWorkspaceRectangle {
+  const workspaceLayer = layer as DroMapWorkspaceRectangle;
+
+  workspaceLayer.dromapWorkspaceRectangle = true;
+  workspaceLayer.setStyle(WORKSPACE_RECT_STYLE);
+  workspaceLayer.options.pmIgnore = true;
+  workspaceLayer.options.interactive = false;
+
+  return workspaceLayer;
 }
 
 /** Remplace le rectangle de zone de travail sur la carte. */
@@ -26,30 +39,43 @@ export function replaceWorkspaceRectangle(
     map.removeLayer(workspaceRectangleLayer);
   }
 
-  configureWorkspaceLayer(layer);
-  workspaceRectangleLayer = layer;
-  return boundsFromRectangle(layer);
+  const configuredLayer = configureWorkspaceLayer(layer);
+  workspaceRectangleLayer = configuredLayer;
+
+  return boundsFromRectangle(configuredLayer);
 }
 
-/** Affiche un rectangle à partir des bounds stockés (si aucune couche active). */
+/**
+ * Affiche ou met à jour le rectangle à partir des bounds stockés.
+ *
+ * Important :
+ * l'ancienne version ne faisait rien si un rectangle existait déjà.
+ * Donc après chargement d'une sauvegarde, l'ancien rectangle pouvait rester visible.
+ */
 export function ensureWorkspaceRectangleOnMap(
   map: L.Map,
   bounds: WorkspaceBounds,
 ): void {
+  const latLngBounds = toLatLngBounds(bounds);
+
   if (workspaceRectangleLayer && map.hasLayer(workspaceRectangleLayer)) {
+    workspaceRectangleLayer.setBounds(latLngBounds);
+    configureWorkspaceLayer(workspaceRectangleLayer);
     return;
   }
 
-  const layer = L.rectangle(toLatLngBounds(bounds), WORKSPACE_RECT_STYLE);
-  configureWorkspaceLayer(layer);
-  layer.addTo(map);
-  workspaceRectangleLayer = layer;
+  const layer = L.rectangle(latLngBounds, WORKSPACE_RECT_STYLE);
+  const configuredLayer = configureWorkspaceLayer(layer);
+
+  configuredLayer.addTo(map);
+  workspaceRectangleLayer = configuredLayer;
 }
 
 export function clearWorkspaceRectangleFromMap(map: L.Map): void {
   if (workspaceRectangleLayer && map.hasLayer(workspaceRectangleLayer)) {
     map.removeLayer(workspaceRectangleLayer);
   }
+
   workspaceRectangleLayer = null;
 }
 

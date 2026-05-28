@@ -17,6 +17,10 @@ import { FeaturesStyleSync } from "./features-style-sync";
 import { SelectedFeatureHighlight } from "./selected-feature-highlight";
 import { SelectedFeatureMapInteractions } from "./selected-feature-map-interactions";
 import { FeatureLayerDeleteCommand } from "./feature-layer-delete-command";
+import { FeaturesStoreRenderer } from "./features-store-renderer";
+import { TextToolLayer } from "./text-tool-layer";
+import { FreehandLineToolLayer } from "./freehand-line-tool-layer";
+import { DrawingToolController } from "./drawing-tool-controller";
 
 configureLeafletIcons();
 
@@ -28,6 +32,7 @@ export default function TestMap() {
     <MapContainer
       center={FRANCE_CENTER}
       zoom={6}
+      zoomControl={false}
       scrollWheelZoom
       className="h-full w-full"
     >
@@ -35,14 +40,20 @@ export default function TestMap() {
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
+
       <GeomanControls />
+      <DrawingToolController />
       <WorkspaceMaskLayer />
       <WorkspaceBoundsLayer />
+      <FeaturesStoreRenderer />
       <FeaturesStyleSync />
       <FeatureLayerDeleteCommand />
       <SelectedFeatureMapInteractions />
+      <FreehandLineToolLayer />
+      <TextToolLayer />
       <SelectedFeatureHighlight />
       <MapViewController />
+
       <Marker position={PARIS} icon={defaultMarkerIcon}>
         <Popup>Paris</Popup>
       </Marker>
