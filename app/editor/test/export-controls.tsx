@@ -11,6 +11,9 @@ export function ExportControls() {
   const openExportPanel = useEditorTestExportStore(
     (state) => state.openExportPanel,
   );
+  const openImportPanel = useEditorTestExportStore(
+    (state) => state.openImportPanel,
+  );
 
   const workspaceBounds = useEditorTestWorkspaceStore(
     (state) => state.workspaceBounds,
@@ -27,27 +30,38 @@ export function ExportControls() {
   const canExport = workspaceBounds !== null;
 
   return (
-    <section className="absolute right-4 top-[235px] z-[1000] w-64 rounded-xl border border-slate-200 bg-white/95 p-3 text-sm shadow-lg">
-      <div className="mb-2 font-semibold text-slate-900">Export</div>
+    <section className="absolute left-[8.5rem] top-4 z-[1000] flex items-center gap-2 rounded-xl border border-slate-200 bg-white/95 px-2 py-2 text-sm shadow-lg backdrop-blur">
+      <div className="hidden min-w-0 sm:block">
+        <div className="text-xs font-semibold leading-none text-slate-900">
+          Fichiers
+        </div>
+        <div className="mt-0.5 max-w-40 truncate text-[10px] leading-none text-slate-500">
+          {canExport ? "Export disponible" : "Import disponible"}
+        </div>
+      </div>
 
       <button
         type="button"
         onClick={openExportPanel}
         disabled={!canExport}
-        className="w-full rounded-lg bg-indigo-600 px-3 py-2 text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
+        title={
+          canExport
+            ? "Exporter la carte"
+            : "Sélectionne et valide d’abord une zone de travail."
+        }
+        className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
       >
-        Exporter la carte
+        Exporter
       </button>
 
-      {!canExport ? (
-        <p className="mt-2 text-xs text-slate-500">
-          Sélectionne et valide d’abord une zone de travail.
-        </p>
-      ) : (
-        <p className="mt-2 text-xs text-slate-500">
-          Prépare un export propre de la zone de travail.
-        </p>
-      )}
+      <button
+        type="button"
+        onClick={openImportPanel}
+        title="Importer un projet DroMap JSON ou un calque GeoJSON"
+        className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 shadow-sm transition hover:bg-emerald-100"
+      >
+        Importer
+      </button>
     </section>
   );
 }

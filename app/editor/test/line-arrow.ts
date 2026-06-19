@@ -690,6 +690,7 @@ function createSingleLineArrowHeadLeafletLayer(
   placement: LineArrowPlacement,
   map: LeafletMap,
   leaflet: LeafletModule,
+  paneName?: string,
 ): LeafletPolygon | null {
   const projectedPoints = getLayerPointsFromFeature(feature, map, leaflet);
   const referencePoints = getLineArrowCanvasReferencePoints(
@@ -727,6 +728,7 @@ function createSingleLineArrowHeadLeafletLayer(
     interactive: false,
     bubblingMouseEvents: false,
     className: `dromap-line-arrow-head dromap-line-arrow-head-${placement}`,
+    ...(paneName ? { pane: paneName } : {}),
   });
 }
 
@@ -734,6 +736,7 @@ export function createLineArrowLeafletLayer(
   feature: DroMapFeature,
   map: LeafletMap,
   leaflet: LeafletModule,
+  paneName?: string,
 ): LeafletLayer | null {
   if (!featureHasLineArrow(feature)) {
     return null;
@@ -745,12 +748,14 @@ export function createLineArrowLeafletLayer(
     "start",
     map,
     leaflet,
+    paneName,
   );
   const endArrowLayer = createSingleLineArrowHeadLeafletLayer(
     feature,
     "end",
     map,
     leaflet,
+    paneName,
   );
 
   if (startArrowLayer) {

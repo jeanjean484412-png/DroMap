@@ -1,9 +1,17 @@
 import type L from "leaflet";
 
-import { layerToDroMapFeature } from "@/lib/dromap/feature";
+import {
+  isBoundaryFillZoneFeature,
+  isFeatureLocked,
+  layerToDroMapFeature,
+} from "@/lib/dromap/feature";
 import { getLayerFeatureId, setLayerFeatureId } from "@/lib/dromap/layer-id";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
 import { applyDrawingPresetToFeature } from "@/stores/editor-test-drawing-options";
+import {
+  isFeatureEffectivelyLocked,
+  useEditorTestLayersStore,
+} from "@/stores/editor-test-layers";
 
 type GeomanLayerEvent = {
   layer: L.Layer;
@@ -56,6 +64,12 @@ export function syncEditToStore(event: GeomanLayerEvent): void {
     .getState()
     .features.find((feature) => feature.id === id);
 
+  if (
+    isFeatureLocked(existing) ||
+    isFeatureEffectivelyLocked(existing, useEditorTestLayersStore.getState().layers) ||
+    isBoundaryFillZoneFeature(existing)
+  ) return;
+
   const feature = layerToDroMapFeature(event.layer, event.shape, existing);
   if (!feature) return;
 
@@ -65,6 +79,20 @@ export function syncEditToStore(event: GeomanLayerEvent): void {
 export function syncEditToStoreWithSessionHistory(
   event: GeomanLayerEvent,
 ): void {
+  const id = getLayerFeatureId(event.layer);
+
+  if (id) {
+    const existing = useEditorTestFeaturesStore
+      .getState()
+      .features.find((feature) => feature.id === id);
+
+    if (
+    isFeatureLocked(existing) ||
+    isFeatureEffectivelyLocked(existing, useEditorTestLayersStore.getState().layers) ||
+    isBoundaryFillZoneFeature(existing)
+  ) return;
+  }
+
   commitEditHistoryOnce(event.layer);
   syncEditToStore(event);
 }
@@ -77,6 +105,12 @@ export function syncDragEndToStoreWithHistory(event: GeomanLayerEvent): void {
     .getState()
     .features.find((feature) => feature.id === id);
 
+  if (
+    isFeatureLocked(existing) ||
+    isFeatureEffectivelyLocked(existing, useEditorTestLayersStore.getState().layers) ||
+    isBoundaryFillZoneFeature(existing)
+  ) return;
+
   const feature = layerToDroMapFeature(event.layer, event.shape, existing);
   if (!feature) return;
 
@@ -88,6 +122,16 @@ export function syncDragEndToStoreWithHistory(event: GeomanLayerEvent): void {
 export function syncRemoveFromStore(event: GeomanLayerEvent): void {
   const id = getLayerFeatureId(event.layer);
   if (!id) return;
+
+  const existing = useEditorTestFeaturesStore
+    .getState()
+    .features.find((feature) => feature.id === id);
+
+  if (
+    isFeatureLocked(existing) ||
+    isFeatureEffectivelyLocked(existing, useEditorTestLayersStore.getState().layers) ||
+    isBoundaryFillZoneFeature(existing)
+  ) return;
 
   useEditorTestFeaturesStore.getState().removeFeatureWithHistory(id);
 }

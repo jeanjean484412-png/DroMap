@@ -4,6 +4,8 @@ import type {
   DroMapFeature,
   DroMapFeatureStyle,
   DroMapMarkerBuiltinSymbol,
+  DroMapZoneHatchingStyle,
+  DroMapZoneShapeKind,
   DroMapMarkerSymbol,
 } from "@/lib/dromap/feature";
 
@@ -11,6 +13,8 @@ type MarkerStylePreset = {
   color: string;
   opacity: number;
   markerSize: number;
+  weight: number;
+  markerFilled: boolean;
 };
 
 type LineStylePreset = {
@@ -20,6 +24,7 @@ type LineStylePreset = {
   dashStyle: "solid" | "dashed" | "dotted";
   arrowStart: boolean;
   arrowEnd: boolean;
+  freehandSmoothing: number;
 };
 
 type ZoneStylePreset = {
@@ -29,12 +34,34 @@ type ZoneStylePreset = {
   fillColor: string;
   fillOpacity: number;
   dashStyle: "solid" | "dashed" | "dotted";
+  zoneStrokeEnabled: boolean;
+  zoneFillEnabled: boolean;
+  zoneHatchingStyle: DroMapZoneHatchingStyle;
+  zoneHatchingColor: string;
+  zoneHatchingWeight: number;
+  zoneHatchingSpacing: number;
+  zoneDotsEnabled: boolean;
+  zoneDotsColor: string;
+  zoneDotsRadius: number;
+  zoneDotsSpacing: number;
+  zoneShapeKind: DroMapZoneShapeKind;
+  zoneShapeWidth: number;
+  zoneShapeHeight: number;
+  zoneShapeRotation: number;
+  freehandSmoothing: number;
 };
 
 type TextStylePreset = {
   color: string;
   opacity: number;
   fontSize: number;
+  textRotation: number;
+  textBackgroundEnabled: boolean;
+  textBackgroundColor: string;
+  textBackgroundOpacity: number;
+  textBorderEnabled: boolean;
+  textBorderColor: string;
+  textBorderWidth: number;
 };
 
 type EditorTestDrawingOptionsState = {
@@ -54,9 +81,11 @@ type EditorTestDrawingOptionsState = {
 export const useEditorTestDrawingOptionsStore =
   create<EditorTestDrawingOptionsState>((set) => ({
     markerStyle: {
-      color: "#e63946",
+      color: "#000000",
       opacity: 1,
       markerSize: 22,
+      weight: 7,
+      markerFilled: true,
     },
     markerSymbol: {
       type: "builtin",
@@ -70,6 +99,7 @@ export const useEditorTestDrawingOptionsStore =
       dashStyle: "solid",
       arrowStart: false,
       arrowEnd: false,
+      freehandSmoothing: 45,
     },
 
     zoneStyle: {
@@ -79,12 +109,34 @@ export const useEditorTestDrawingOptionsStore =
       fillColor: "#22c55e",
       fillOpacity: 0.25,
       dashStyle: "solid",
+      zoneStrokeEnabled: true,
+      zoneFillEnabled: false,
+      zoneHatchingStyle: "none",
+      zoneHatchingColor: "#111827",
+      zoneHatchingWeight: 2,
+      zoneHatchingSpacing: 14,
+      zoneDotsEnabled: false,
+      zoneDotsColor: "#111827",
+      zoneDotsRadius: 2,
+      zoneDotsSpacing: 14,
+      zoneShapeKind: "rectangle",
+      zoneShapeWidth: 180,
+      zoneShapeHeight: 110,
+      zoneShapeRotation: 0,
+      freehandSmoothing: 45,
     },
 
     textStyle: {
       color: "#111827",
       opacity: 1,
       fontSize: 22,
+      textRotation: 0,
+      textBackgroundEnabled: false,
+      textBackgroundColor: "#ffffff",
+      textBackgroundOpacity: 0.85,
+      textBorderEnabled: false,
+      textBorderColor: "#111827",
+      textBorderWidth: 2,
     },
 
     updateMarkerStyle: (style) =>
@@ -156,11 +208,23 @@ export function applyDrawingPresetToFeature(
   }
 
   if (featureType === "line") {
+    const presetStyle: DroMapFeatureStyle = {
+      color: state.lineStyle.color,
+      opacity: state.lineStyle.opacity,
+      weight: state.lineStyle.weight,
+      dashStyle: state.lineStyle.dashStyle,
+      arrowStart: state.lineStyle.arrowStart,
+      arrowEnd: state.lineStyle.arrowEnd,
+      ...(feature.properties.lineVariant === "freehand"
+        ? { freehandSmoothing: state.lineStyle.freehandSmoothing }
+        : {}),
+    };
+
     return {
       ...feature,
       properties: {
         ...feature.properties,
-        style: mergeStyle(feature.properties.style, state.lineStyle),
+        style: mergeStyle(feature.properties.style, presetStyle),
       },
     };
   }

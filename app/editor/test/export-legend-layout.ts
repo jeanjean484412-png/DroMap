@@ -346,14 +346,14 @@ export function createExportLegendLayout({
   );
   const itemGap = clampExportNumber(Math.round(itemFontSize * 0.72), 12, 28);
   const columnGap = clampExportNumber(Math.round(itemFontSize * 1.55), 26, 58);
-  const symbolSize = clampExportNumber(Math.round(itemFontSize * 1.55), 30, 56);
+  const symbolSize = clampExportNumber(Math.round(itemFontSize * 2), 40, 74);
   const symbolBoxWidth = clampExportNumber(
-    Math.round(itemFontSize * 3.25),
-    56,
-    74,
+    Math.round(itemFontSize * 4.1),
+    82,
+    112,
   );
   const textGap = 22;
-  const itemHeight = Math.max(symbolSize + 8, itemFontSize + typeFontSize + 14);
+  const itemHeight = Math.max(symbolSize + 10, itemFontSize + typeFontSize + 14);
   const rowHeight = itemHeight + itemGap;
   const sectionHeaderHeight = Math.max(sectionFontSize * 1.65, itemHeight * 0.76);
   const sectionGap = Math.max(12, Math.round(itemFontSize * 0.72));

@@ -14,28 +14,14 @@ type DroMapLeafletLayer = L.Layer & {
   dromapArrowKind?: "line-body" | "line-end";
 };
 
-type LatLngPoint = {
-  lat: number;
-  lng: number;
-};
-
 type LayerWithElement = L.Layer & {
   getElement?: () => HTMLElement | SVGElement | null;
 };
 
-function getLayerFeatureId(layer: L.Layer): string | undefined {
-  return (layer as DroMapLeafletLayer).dromapFeatureId;
-}
-
-function getArrowBodyOwnerId(layer: L.Layer): string | undefined {
-  const dromapLayer = layer as DroMapLeafletLayer;
-
-  if (dromapLayer.dromapArrowKind !== "line-body") {
-    return undefined;
-  }
-
-  return dromapLayer.dromapArrowOwnerId;
-}
+type LatLngPoint = {
+  lat: number;
+  lng: number;
+};
 
 function getWorkspaceLatLngBounds(bounds: unknown): L.LatLngBounds | null {
   if (!bounds) return null;
@@ -102,8 +88,36 @@ function getWorkspaceLatLngBounds(bounds: unknown): L.LatLngBounds | null {
   return null;
 }
 
+function getLayerFeatureId(layer: L.Layer): string | undefined {
+  return (layer as DroMapLeafletLayer).dromapFeatureId;
+}
+
+function getArrowBodyOwnerId(layer: L.Layer): string | undefined {
+  const dromapLayer = layer as DroMapLeafletLayer;
+
+  if (dromapLayer.dromapArrowKind !== "line-body") {
+    return undefined;
+  }
+
+  return dromapLayer.dromapArrowOwnerId;
+}
+
 function getLayerElement(layer: L.Layer): HTMLElement | SVGElement | null {
   return (layer as LayerWithElement).getElement?.() ?? null;
+}
+
+function getPreciseMarkerHighlightTarget(
+  element: HTMLElement | SVGElement,
+): HTMLElement | SVGElement {
+  if (!(element instanceof HTMLElement)) {
+    return element;
+  }
+
+  const preciseTarget = element.querySelector<HTMLElement>(
+    '[data-dromap-text-frame="true"]',
+  );
+
+  return preciseTarget ?? element;
 }
 
 function applyMarkerHighlight(layer: L.Marker): () => void {
@@ -113,21 +127,30 @@ function applyMarkerHighlight(layer: L.Marker): () => void {
     return () => {};
   }
 
-  const previousOutline = element.style.outline;
-  const previousBorderRadius = element.style.borderRadius;
-  const previousBoxShadow = element.style.boxShadow;
-  const previousZIndex = element.style.zIndex;
+  const targetElement = getPreciseMarkerHighlightTarget(element);
+  const previousTargetOutline = targetElement.style.outline;
+  const previousTargetOutlineOffset = targetElement.style.outlineOffset;
+  const previousTargetBorderRadius = targetElement.style.borderRadius;
+  const previousTargetBoxShadow = targetElement.style.boxShadow;
+  const previousRootZIndex = element.style.zIndex;
 
-  element.style.outline = "3px solid #2563eb";
-  element.style.borderRadius = "9999px";
-  element.style.boxShadow = "0 0 0 6px rgba(37, 99, 235, 0.22)";
+  targetElement.style.outline = "3px solid #2563eb";
+  targetElement.style.outlineOffset = "2px";
+  targetElement.style.boxShadow =
+    "0 0 0 6px rgba(37, 99, 235, 0.22)";
+
+  if (targetElement === element && !targetElement.style.borderRadius) {
+    targetElement.style.borderRadius = "9999px";
+  }
+
   element.style.zIndex = "1000";
 
   return () => {
-    element.style.outline = previousOutline;
-    element.style.borderRadius = previousBorderRadius;
-    element.style.boxShadow = previousBoxShadow;
-    element.style.zIndex = previousZIndex;
+    targetElement.style.outline = previousTargetOutline;
+    targetElement.style.outlineOffset = previousTargetOutlineOffset;
+    targetElement.style.borderRadius = previousTargetBorderRadius;
+    targetElement.style.boxShadow = previousTargetBoxShadow;
+    element.style.zIndex = previousRootZIndex;
   };
 }
 
@@ -156,12 +179,20 @@ function applyPathHighlight(layer: L.Polyline | L.Polygon): () => void {
 export function SelectedFeatureHighlight() {
   const map = useMap();
 
-  const movedToSelectionRef = useRef(false);
-  const lastFocusedFeatureIdRef = useRef<string | null>(null);
+  const lastFocusedRequestIdRef = useRef<number | null>(null);
+  const lastWorkspaceRecenterRequestIdRef = useRef<number | null>(null);
   const [viewRevision, setViewRevision] = useState(0);
 
   const selectedFeatureId = useEditorTestSelectionStore(
     (state) => state.selectedFeatureId,
+  );
+
+  const focusedSelectionRequest = useEditorTestSelectionStore(
+    (state) => state.focusedSelectionRequest,
+  );
+
+  const workspaceRecenterRequest = useEditorTestSelectionStore(
+    (state) => state.workspaceRecenterRequest,
   );
 
   const workspaceBounds = useEditorTestWorkspaceStore(
@@ -196,64 +227,69 @@ export function SelectedFeatureHighlight() {
 
   useEffect(() => {
     if (!selectedFeatureId) {
-      lastFocusedFeatureIdRef.current = null;
+      const shouldRecenterWorkspace =
+        Boolean(workspaceRecenterRequest) &&
+        workspaceRecenterRequest?.requestId !==
+          lastWorkspaceRecenterRequestIdRef.current;
 
-      if (movedToSelectionRef.current) {
-        movedToSelectionRef.current = false;
+      if (!shouldRecenterWorkspace || !workspaceRecenterRequest) {
+        return;
+      }
 
-        const bounds = getWorkspaceLatLngBounds(workspaceBounds);
+      lastWorkspaceRecenterRequestIdRef.current =
+        workspaceRecenterRequest.requestId;
 
-        if (bounds?.isValid()) {
-          map.fitBounds(bounds, {
-            animate: true,
-            padding: [24, 24],
-          });
-        }
+      const bounds = getWorkspaceLatLngBounds(workspaceBounds);
+
+      if (bounds?.isValid()) {
+        map.fitBounds(bounds, {
+          animate: true,
+          padding: [24, 24],
+        });
       }
 
       return;
     }
 
-    movedToSelectionRef.current = true;
-
-    let selectedLayer: L.Layer | null = null;
-    let selectedDisplayLayer: L.Layer | null = null;
+    const mapLayers: L.Layer[] = [];
 
     map.eachLayer((layer) => {
-      if (getLayerFeatureId(layer) === selectedFeatureId) {
-        selectedLayer = layer;
-      }
-
-      if (getArrowBodyOwnerId(layer) === selectedFeatureId) {
-        selectedDisplayLayer = layer;
-      }
+      mapLayers.push(layer);
     });
 
-    selectedLayer = selectedDisplayLayer ?? selectedLayer;
+    const selectedDisplayLayer =
+      mapLayers.find((layer) => getArrowBodyOwnerId(layer) === selectedFeatureId) ??
+      null;
+    const selectedLayer =
+      mapLayers.find((layer) => getLayerFeatureId(layer) === selectedFeatureId) ??
+      null;
+    const selectedLeafletLayer = selectedDisplayLayer ?? selectedLayer;
 
-    if (!selectedLayer) {
+    if (!selectedLeafletLayer) {
       return;
     }
 
     let cleanupHighlight = () => {};
-    const shouldFocus = lastFocusedFeatureIdRef.current !== selectedFeatureId;
+    const shouldFocusFromObjectsPanel =
+      focusedSelectionRequest?.featureId === selectedFeatureId &&
+      focusedSelectionRequest.requestId !== lastFocusedRequestIdRef.current;
 
-    if (selectedLayer instanceof L.Marker) {
-      cleanupHighlight = applyMarkerHighlight(selectedLayer);
+    if (selectedLeafletLayer instanceof L.Marker) {
+      cleanupHighlight = applyMarkerHighlight(selectedLeafletLayer);
 
-      if (shouldFocus) {
-        map.panTo(selectedLayer.getLatLng(), {
+      if (shouldFocusFromObjectsPanel) {
+        map.panTo(selectedLeafletLayer.getLatLng(), {
           animate: true,
         });
       }
     } else if (
-      selectedLayer instanceof L.Polygon ||
-      selectedLayer instanceof L.Polyline
+      selectedLeafletLayer instanceof L.Polygon ||
+      selectedLeafletLayer instanceof L.Polyline
     ) {
-      cleanupHighlight = applyPathHighlight(selectedLayer);
+      cleanupHighlight = applyPathHighlight(selectedLeafletLayer);
 
-      if (shouldFocus) {
-        const bounds = selectedLayer.getBounds();
+      if (shouldFocusFromObjectsPanel) {
+        const bounds = selectedLeafletLayer.getBounds();
 
         if (bounds.isValid()) {
           map.fitBounds(bounds.pad(0.25), {
@@ -264,12 +300,22 @@ export function SelectedFeatureHighlight() {
       }
     }
 
-    lastFocusedFeatureIdRef.current = selectedFeatureId;
+    if (shouldFocusFromObjectsPanel && focusedSelectionRequest) {
+      lastFocusedRequestIdRef.current = focusedSelectionRequest.requestId;
+    }
 
     return () => {
       cleanupHighlight();
     };
-  }, [features, map, selectedFeatureId, viewRevision, workspaceBounds]);
+  }, [
+    features,
+    focusedSelectionRequest,
+    map,
+    selectedFeatureId,
+    viewRevision,
+    workspaceBounds,
+    workspaceRecenterRequest,
+  ]);
 
   return null;
 }

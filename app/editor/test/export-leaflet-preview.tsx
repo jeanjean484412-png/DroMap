@@ -7,17 +7,40 @@ import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
+import { getFeaturesByDrawOrder } from "@/lib/dromap/feature-order";
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
+import {
+  getRenderableFeaturesForLayers,
+  useEditorTestLayersStore,
+} from "@/stores/editor-test-layers";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
+import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
 
 import { getLeafletDashArray } from "./feature-style";
+import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
+import { getDromapExportAttributionHtml } from "@/lib/dromap/credits";
+import { BasemapBoundariesLayer } from "./basemap-boundaries-layer";
+import { GeoJsonLayersRenderer } from "./geojson-layers-renderer";
+import { MapLibreBasemapLayer } from "./maplibre-basemap-layer";
 import {
   createLineArrowBodyLeafletLayer,
   createLineArrowLeafletLayer,
   featureHasLineArrow,
 } from "./line-arrow";
 import { createMarkerLeafletIcon } from "./marker-symbol";
+import { createTextDivIconRender } from "./text-rendering";
+import { createZoneHatchingLeafletLayer } from "./zone-hatching";
+import {
+  createAlignedZoneOutlineLeafletLayer,
+  shouldUseAlignedZoneOutline,
+} from "./zone-outline";
+import {
+  getZoneFillEnabled,
+  getZoneStrokeEnabled,
+  getZoneVisibleFillOpacity,
+  getZoneVisibleStrokeOpacity,
+} from "./zone-style";
 
 type LatLngPoint = {
   lat: number;
@@ -32,22 +55,59 @@ type FeatureStyle = {
   fillOpacity?: number;
   markerSize?: number;
   fontSize?: number;
+  textRotation?: number;
+  textBackgroundEnabled?: boolean;
+  textBackgroundColor?: string;
+  textBackgroundOpacity?: number;
+  textBorderEnabled?: boolean;
+  textBorderColor?: string;
+  textBorderWidth?: number;
+  zoneHatchingWeight?: number;
+  zoneHatchingSpacing?: number;
+  zoneDotsRadius?: number;
+  zoneDotsSpacing?: number;
 };
 
 type ExportLeafletPreviewProps = {
   symbolScale?: number;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+const EXPORT_FEATURE_PANE_PREFIX = "dromap-export-feature-pane-";
+const EXPORT_FEATURE_PANE_BASE_Z_INDEX = 430;
+const EXPORT_FEATURE_PANE_STEP = 8;
+
+function getExportFeaturePaneName(featureId: string) {
+  return `${EXPORT_FEATURE_PANE_PREFIX}${featureId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
-function clamp(value: number, min: number, max: number) {
-  if (!Number.isFinite(value)) {
-    return min;
-  }
+function ensureExportFeaturePane(
+  map: L.Map,
+  feature: DroMapFeature,
+  drawIndex: number,
+) {
+  const paneName = getExportFeaturePaneName(feature.id);
+  const pane = map.getPane(paneName) ?? map.createPane(paneName);
 
-  return Math.min(Math.max(value, min), max);
+  pane.style.zIndex = String(
+    EXPORT_FEATURE_PANE_BASE_Z_INDEX + drawIndex * EXPORT_FEATURE_PANE_STEP,
+  );
+  pane.style.pointerEvents = "none";
+
+  return paneName;
+}
+
+function getExportFeaturePaneNamesById(map: L.Map, features: DroMapFeature[]) {
+  const paneNamesById = new Map<string, string>();
+
+  features.forEach((feature, index) => {
+    paneNamesById.set(feature.id, ensureExportFeaturePane(map, feature, index));
+  });
+
+  return paneNamesById;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function scaleNumber(value: unknown, fallback: number, scale: number) {
@@ -78,14 +138,40 @@ function scaleFeatureForPreview(
 
   if (type === "zone") {
     nextStyle.weight = Math.max(0.5, scaleNumber(style.weight, 2, symbolScale));
+    nextStyle.zoneHatchingWeight = Math.max(
+      0.5,
+      scaleNumber(style.zoneHatchingWeight, 2, symbolScale),
+    );
+    nextStyle.zoneHatchingSpacing = Math.max(
+      2,
+      scaleNumber(style.zoneHatchingSpacing, 14, symbolScale),
+    );
+    nextStyle.zoneDotsRadius = Math.max(
+      0.5,
+      scaleNumber(style.zoneDotsRadius, 2, symbolScale),
+    );
+    nextStyle.zoneDotsSpacing = Math.max(
+      2,
+      scaleNumber(style.zoneDotsSpacing, 14, symbolScale),
+    );
   }
 
   if (type === "marker") {
-    nextStyle.markerSize = Math.max(2, scaleNumber(style.markerSize, 18, symbolScale));
+    nextStyle.markerSize = Math.max(
+      2,
+      scaleNumber(style.markerSize, 18, symbolScale),
+    );
   }
 
   if (type === "text") {
-    nextStyle.fontSize = Math.max(4, scaleNumber(style.fontSize, 22, symbolScale));
+    nextStyle.fontSize = Math.max(
+      4,
+      scaleNumber(style.fontSize, 22, symbolScale),
+    );
+    nextStyle.textBorderWidth = Math.max(
+      1,
+      scaleNumber(style.textBorderWidth, 2, symbolScale),
+    );
   }
 
   return {
@@ -95,15 +181,6 @@ function scaleFeatureForPreview(
       style: nextStyle,
     },
   };
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }
 
 function readLatLngPoint(value: unknown): LatLngPoint | null {
@@ -177,12 +254,21 @@ function workspaceBoundsToLeafletBounds(
   );
 }
 
-function getFeatureStyle(feature: DroMapFeature): Required<FeatureStyle> {
+function getFeatureStyle(
+  feature: DroMapFeature,
+): Required<
+  Pick<
+    FeatureStyle,
+    "color" | "opacity" | "weight" | "fillColor" | "fillOpacity"
+  >
+> &
+  Pick<FeatureStyle, "fontSize"> {
   const style = feature.properties?.style as FeatureStyle | undefined;
   const color = style?.color ?? "#334155";
 
   const rawOpacity = style?.opacity ?? 1;
-  const opacity = featureHasLineArrow(feature) && rawOpacity <= 0.05 ? 1 : rawOpacity;
+  const opacity =
+    featureHasLineArrow(feature) && rawOpacity <= 0.05 ? 1 : rawOpacity;
 
   return {
     color,
@@ -194,43 +280,17 @@ function getFeatureStyle(feature: DroMapFeature): Required<FeatureStyle> {
 }
 
 function createPointIcon(feature: DroMapFeature) {
-  const style = getFeatureStyle(feature);
-
   if (feature.properties?.type === "text") {
-    const text = feature.properties.label?.trim() || "Texte";
-    const fontSize = clamp(feature.properties.style?.fontSize ?? 22, 10, 72);
-    const opacity = clamp(style.opacity, 0, 1);
-
-    const width = clamp(Math.round(text.length * fontSize * 0.62 + 24), 56, 520);
-    const height = Math.round(fontSize * 1.35 + 14);
+    const renderedText = createTextDivIconRender(feature, {
+      minWidth: 56,
+      maxWidth: 640,
+    });
 
     return L.divIcon({
       className: "dromap-export-text-icon",
-      iconSize: [width, height],
-      iconAnchor: [width / 2, height / 2],
-      html: `
-        <span
-          style="
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            box-sizing:border-box;
-            width:${width}px;
-            height:${height}px;
-            color:${style.color};
-            opacity:${opacity};
-            font-size:${fontSize}px;
-            font-weight:700;
-            line-height:1.15;
-            white-space:nowrap;
-            text-align:center;
-            text-shadow:
-              0 1px 3px rgba(255,255,255,0.95),
-              0 1px 5px rgba(0,0,0,0.25);
-            pointer-events:none;
-          "
-        >${escapeHtml(text)}</span>
-      `,
+      iconSize: [renderedText.width, renderedText.height],
+      iconAnchor: [renderedText.anchorX, renderedText.anchorY],
+      html: renderedText.html,
     });
   }
 
@@ -255,6 +315,7 @@ function geoJsonPositionToLatLng(position: unknown): L.LatLng | null {
 function createLeafletLayerFromFeature(
   feature: DroMapFeature,
   map: L.Map,
+  paneName?: string,
 ): L.Layer | null {
   const geometry = feature.geometry;
 
@@ -275,7 +336,8 @@ function createLeafletLayerFromFeature(
       icon: createPointIcon(feature),
       interactive: false,
       keyboard: false,
-      zIndexOffset: feature.properties?.type === "text" ? 2000 : 1000,
+      zIndexOffset: 0,
+      ...(paneName ? { pane: paneName } : {}),
     });
   }
 
@@ -302,6 +364,7 @@ function createLeafletLayerFromFeature(
       lineCap: "round",
       lineJoin: "round",
       interactive: false,
+      ...(paneName ? { pane: paneName } : {}),
     };
 
     if (featureHasLineArrow(feature)) {
@@ -334,32 +397,27 @@ function createLeafletLayerFromFeature(
       return null;
     }
 
+    const useAlignedZoneOutline = shouldUseAlignedZoneOutline(feature);
+
     return L.polygon(latLngRings, {
       color: style.color,
-      opacity: style.opacity,
-      weight: style.weight,
+      opacity: useAlignedZoneOutline ? 0 : getZoneVisibleStrokeOpacity(feature),
+      weight: getZoneStrokeEnabled(feature) && !useAlignedZoneOutline ? style.weight : 0,
+      stroke: getZoneStrokeEnabled(feature) && !useAlignedZoneOutline,
+      fill: true,
       fillColor: style.fillColor,
-      fillOpacity: style.fillOpacity,
-      dashArray: getLeafletDashArray(feature),
+      fillOpacity: getZoneFillEnabled(feature)
+        ? getZoneVisibleFillOpacity(feature)
+        : 0,
+      dashArray: useAlignedZoneOutline ? undefined : getLeafletDashArray(feature),
       lineCap: "round",
       lineJoin: "round",
       interactive: false,
+      ...(paneName ? { pane: paneName } : {}),
     });
   }
 
   return null;
-}
-
-function getFeaturesByPreviewDrawOrder(features: DroMapFeature[]) {
-  return [
-    ...features.filter(
-      (feature) =>
-        feature.properties?.type !== "marker" &&
-        feature.properties?.type !== "text",
-    ),
-    ...features.filter((feature) => feature.properties?.type === "marker"),
-    ...features.filter((feature) => feature.properties?.type === "text"),
-  ];
 }
 
 function ExportMapController({ bounds }: { bounds: L.LatLngBounds }) {
@@ -426,17 +484,55 @@ function ExportFeatureLayers({
     const renderFeatures = () => {
       group.clearLayers();
 
-      const featuresByDrawOrder = getFeaturesByPreviewDrawOrder(features);
+      const featuresByDrawOrder = getFeaturesByDrawOrder(features);
+      const paneNamesById = getExportFeaturePaneNamesById(
+        map,
+        featuresByDrawOrder,
+      );
 
       for (const feature of featuresByDrawOrder) {
         const previewFeature = scaleFeatureForPreview(feature, symbolScale);
-        const layer = createLeafletLayerFromFeature(previewFeature, map);
+        const paneName = paneNamesById.get(feature.id);
+        const layer = createLeafletLayerFromFeature(
+          previewFeature,
+          map,
+          paneName,
+        );
 
         if (layer) {
           group.addLayer(layer);
         }
 
-        const arrowLayer = createLineArrowLeafletLayer(previewFeature, map, L);
+        if (previewFeature.properties.type === "zone") {
+          const hatchingLayer = createZoneHatchingLeafletLayer(
+            previewFeature,
+            map,
+            L,
+            paneName,
+          );
+
+          if (hatchingLayer) {
+            group.addLayer(hatchingLayer);
+          }
+
+          const outlineLayer = createAlignedZoneOutlineLeafletLayer(
+            previewFeature,
+            map,
+            L,
+            paneName,
+          );
+
+          if (outlineLayer) {
+            group.addLayer(outlineLayer);
+          }
+        }
+
+        const arrowLayer = createLineArrowLeafletLayer(
+          previewFeature,
+          map,
+          L,
+          paneName,
+        );
 
         if (arrowLayer) {
           group.addLayer(arrowLayer);
@@ -446,15 +542,19 @@ function ExportFeatureLayers({
 
     renderFeatures();
 
-    map.on("zoomend resize", renderFeatures);
+    map.on("moveend zoomend resize", renderFeatures);
 
     return () => {
-      map.off("zoomend resize", renderFeatures);
+      map.off("moveend zoomend resize", renderFeatures);
       group.removeFrom(map);
     };
   }, [features, map, symbolScale]);
 
   return null;
+}
+
+function getPreviewAttributionHtml(basemap: ReturnType<typeof getDromapBasemapConfig>) {
+  return getDromapExportAttributionHtml(basemap);
 }
 
 export function ExportLeafletPreview({
@@ -466,18 +566,29 @@ export function ExportLeafletPreview({
   const workspaceBasemapZoom = useEditorTestWorkspaceStore(
     (state) => state.workspaceBasemapZoom,
   );
-  const features = useEditorTestFeaturesStore((state) => state.features);
+  const basemapId = useEditorTestBasemapStore((state) => state.basemapId);
+  const basemap = getDromapBasemapConfig(basemapId);
+  const rawFeatures = useEditorTestFeaturesStore((state) => state.features);
+  const layers = useEditorTestLayersStore((state) => state.layers);
+  const features = useMemo(
+    () => getRenderableFeaturesForLayers(rawFeatures, layers, { workspaceBounds }),
+    [rawFeatures, layers, workspaceBounds],
+  );
 
   const leafletBounds = useMemo(
     () => workspaceBoundsToLeafletBounds(workspaceBounds),
     [workspaceBounds],
   );
 
-  const forcedNativeZoom =
+  const forcedMapLibreDetailZoom =
     typeof workspaceBasemapZoom === "number" &&
     Number.isFinite(workspaceBasemapZoom)
-      ? Math.max(0, Math.min(19, Math.round(workspaceBasemapZoom)))
+      ? Math.max(0, Math.min(19, workspaceBasemapZoom))
       : null;
+  const forcedTileNativeZoom =
+    forcedMapLibreDetailZoom === null
+      ? null
+      : Math.max(0, Math.min(19, Math.floor(forcedMapLibreDetailZoom)));
 
   const mapKey = useMemo(() => {
     const points = getWorkspaceBoundsPoints(workspaceBounds);
@@ -491,9 +602,10 @@ export function ExportLeafletPreview({
       points.southWest.lng,
       points.northEast.lat,
       points.northEast.lng,
-      forcedNativeZoom ?? "auto",
+      forcedMapLibreDetailZoom ?? "auto",
+      basemap.id,
     ].join("-");
-  }, [workspaceBounds, forcedNativeZoom]);
+  }, [basemap.id, workspaceBounds, forcedMapLibreDetailZoom]);
 
   if (!leafletBounds) {
     return (
@@ -504,15 +616,18 @@ export function ExportLeafletPreview({
   }
 
   const nativeZoomProps =
-    forcedNativeZoom === null
+    forcedTileNativeZoom === null
       ? {}
       : {
-          minNativeZoom: forcedNativeZoom,
-          maxNativeZoom: forcedNativeZoom,
+          minNativeZoom: forcedTileNativeZoom,
+          maxNativeZoom: forcedTileNativeZoom,
         };
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-slate-100">
+    <div
+      className="relative h-full w-full overflow-hidden"
+      style={{ background: basemap.exportBackground }}
+    >
       <MapContainer
         key={mapKey}
         bounds={leafletBounds}
@@ -526,19 +641,47 @@ export function ExportLeafletPreview({
         zoomSnap={0}
         zoomDelta={0.1}
         className="h-full w-full"
-        style={{ height: "100%", width: "100%" }}
+        style={{
+          height: "100%",
+          width: "100%",
+          background: basemap.exportBackground,
+        }}
       >
-        <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          crossOrigin="anonymous"
-          maxZoom={19}
-          detectRetina={false}
-          {...nativeZoomProps}
-        />
+        {basemap.kind === "tile" ? (
+          <TileLayer
+            key={basemap.id}
+            url={basemap.tileUrl}
+            attribution={basemap.attribution}
+            crossOrigin="anonymous"
+            maxZoom={basemap.maxZoom}
+            detectRetina={false}
+            noWrap={false}
+            {...nativeZoomProps}
+          />
+        ) : null}
+
+        {basemap.kind === "maplibre" ? (
+          <MapLibreBasemapLayer
+            key={`${basemap.id}-${basemap.styleUrl}-${forcedMapLibreDetailZoom ?? "auto"}`}
+            styleUrl={basemap.styleUrl}
+            attribution={basemap.attribution}
+            lockedNativeZoom={forcedMapLibreDetailZoom}
+          />
+        ) : null}
+
+        <BasemapBoundariesLayer boundaryOverlay={basemap.boundaryOverlay} />
 
         <ExportMapController bounds={leafletBounds} />
+        <GeoJsonLayersRenderer />
         <ExportFeatureLayers features={features} symbolScale={symbolScale} />
       </MapContainer>
+
+      {getPreviewAttributionHtml(basemap) ? (
+        <div
+          className="pointer-events-auto absolute bottom-px right-px max-w-[62%] rounded-sm bg-white/35 px-1 py-px text-right text-[7px] leading-none text-slate-600/70"
+          dangerouslySetInnerHTML={{ __html: getPreviewAttributionHtml(basemap) }}
+        />
+      ) : null}
     </div>
   );
 }

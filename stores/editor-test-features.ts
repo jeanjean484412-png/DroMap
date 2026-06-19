@@ -1,6 +1,16 @@
 import { create } from "zustand";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
+import type { DroMapFeatureDrawOrderAction } from "@/lib/dromap/feature-order";
+import {
+  normalizeFeatureDrawOrdersForPersistence,
+  reorderFeatureDrawOrder,
+} from "@/lib/dromap/feature-order";
+import {
+  assignFeatureToActiveLayer,
+  ensureFeatureHasLayerId,
+  useEditorTestLayersStore,
+} from "@/stores/editor-test-layers";
 
 const MAX_FEATURE_HISTORY_ENTRIES = 75;
 
@@ -13,25 +23,48 @@ type EditorTestFeaturesState = {
   clearFeatures: () => void;
   addFeatureWithHistory: (feature: DroMapFeature) => void;
   replaceFeatures: (features: DroMapFeature[]) => void;
+  reorderFeatureWithHistory: (
+    featureId: string,
+    action: DroMapFeatureDrawOrderAction,
+  ) => void;
 
   past: DroMapFeature[][];
   future: DroMapFeature[][];
-
-  
 
   undo: () => void;
   redo: () => void;
 
   updateFeatureWithHistory: (
     featureId: string,
-    updater: (feature: DroMapFeature) => DroMapFeature
+    updater: (feature: DroMapFeature) => DroMapFeature,
   ) => void;
 
   commitFeaturesHistory: () => void;
-
-
 };
 
+function cloneFeatures(features: DroMapFeature[]) {
+  return structuredClone(features);
+}
+
+function normalizeFeaturesForStore(features: DroMapFeature[]) {
+  const normalizedFeatures = normalizeFeatureDrawOrdersForPersistence(features).map(
+    (feature) => ensureFeatureHasLayerId(feature),
+  );
+
+  useEditorTestLayersStore.getState().syncLayersForFeatures(normalizedFeatures);
+
+  return normalizedFeatures;
+}
+
+function normalizeNewFeatureForStore(feature: DroMapFeature) {
+  const nextFeature =
+    typeof feature.properties.layerId === "string" && feature.properties.layerId.trim()
+      ? ensureFeatureHasLayerId(feature)
+      : assignFeatureToActiveLayer(feature);
+  useEditorTestLayersStore.getState().syncLayersForFeatures([nextFeature]);
+
+  return nextFeature;
+}
 
 export const useEditorTestFeaturesStore = create<EditorTestFeaturesState>(
   (set) => ({
@@ -39,16 +72,39 @@ export const useEditorTestFeaturesStore = create<EditorTestFeaturesState>(
     past: [],
     future: [],
 
+    reorderFeatureWithHistory: (featureId, action) =>
+      set((state) => {
+        const nextFeatures = reorderFeatureDrawOrder(
+          state.features,
+          featureId,
+          action,
+        );
+
+        if (nextFeatures === state.features) {
+          return state;
+        }
+
+        return {
+          features: normalizeFeaturesForStore(nextFeatures),
+          past: [...state.past, cloneFeatures(state.features)].slice(
+            -MAX_FEATURE_HISTORY_ENTRIES,
+          ),
+          future: [],
+        };
+      }),
+
     updateFeatureWithHistory: (featureId, updater) =>
       set((state) => {
         const nextFeatures = state.features.map((feature) =>
-          feature.id === featureId ? updater(feature) : feature
+          feature.id === featureId
+            ? ensureFeatureHasLayerId(updater(feature), feature.properties.layerId)
+            : feature,
         );
 
         return {
-          features: nextFeatures,
-          past: [...state.past, structuredClone(state.features)].slice(
-            -MAX_FEATURE_HISTORY_ENTRIES
+          features: normalizeFeaturesForStore(nextFeatures),
+          past: [...state.past, cloneFeatures(state.features)].slice(
+            -MAX_FEATURE_HISTORY_ENTRIES,
           ),
           future: [],
         };
@@ -56,7 +112,7 @@ export const useEditorTestFeaturesStore = create<EditorTestFeaturesState>(
 
     replaceFeatures: (features) => {
       set({
-        features: structuredClone(features),
+        features: cloneFeatures(normalizeFeaturesForStore(features)),
         past: [],
         future: [],
       });
@@ -64,42 +120,44 @@ export const useEditorTestFeaturesStore = create<EditorTestFeaturesState>(
 
     commitFeaturesHistory: () =>
       set((state) => ({
-        past: [...state.past, structuredClone(state.features)].slice(
-          -MAX_FEATURE_HISTORY_ENTRIES
+        past: [...state.past, cloneFeatures(state.features)].slice(
+          -MAX_FEATURE_HISTORY_ENTRIES,
         ),
         future: [],
       })),
 
     undo: () =>
       set((state) => {
-        if (state.past.length === 0){
+        if (state.past.length === 0) {
           return state;
         }
-        const previousFeatures = state.past[state.past.length - 1];
+        const previousFeatures = normalizeFeaturesForStore(
+          state.past[state.past.length - 1] ?? [],
+        );
         const newPast = state.past.slice(0, -1);
 
         return {
           features: previousFeatures,
           past: newPast,
-          future: [structuredClone(state.features), ...state.future].slice(
+          future: [cloneFeatures(state.features), ...state.future].slice(
             0,
-            MAX_FEATURE_HISTORY_ENTRIES
+            MAX_FEATURE_HISTORY_ENTRIES,
           ),
         };
       }),
 
     redo: () =>
       set((state) => {
-        if (state.future.length === 0){
+        if (state.future.length === 0) {
           return state;
         }
-        const nextFeatures = state.future[0];
+        const nextFeatures = normalizeFeaturesForStore(state.future[0] ?? []);
         const newFuture = state.future.slice(1);
 
         return {
           features: nextFeatures,
-          past: [...state.past, structuredClone(state.features)].slice(
-            -MAX_FEATURE_HISTORY_ENTRIES
+          past: [...state.past, cloneFeatures(state.features)].slice(
+            -MAX_FEATURE_HISTORY_ENTRIES,
           ),
           future: newFuture,
         };
@@ -107,21 +165,25 @@ export const useEditorTestFeaturesStore = create<EditorTestFeaturesState>(
 
     addFeature: (feature) =>
       set((state) => ({
-        features: [...state.features, feature],
+        features: [...state.features, normalizeNewFeatureForStore(feature)],
       })),
 
     addFeatureWithHistory: (feature) =>
       set((state) => ({
-        features: [...state.features, feature],
-        past: [...state.past, structuredClone(state.features)].slice(
-          -MAX_FEATURE_HISTORY_ENTRIES
+        features: [...state.features, normalizeNewFeatureForStore(feature)],
+        past: [...state.past, cloneFeatures(state.features)].slice(
+          -MAX_FEATURE_HISTORY_ENTRIES,
         ),
         future: [],
       })),
 
     updateFeature: (id, feature) =>
       set((state) => ({
-        features: state.features.map((f) => (f.id === id ? feature : f)),
+        features: normalizeFeaturesForStore(
+          state.features.map((f) =>
+            f.id === id ? ensureFeatureHasLayerId(feature, f.properties.layerId) : f,
+          ),
+        ),
       })),
 
     removeFeature: (id) =>
@@ -132,8 +194,8 @@ export const useEditorTestFeaturesStore = create<EditorTestFeaturesState>(
     removeFeatureWithHistory: (featureId) =>
       set((state) => ({
         features: state.features.filter((feature) => feature.id !== featureId),
-        past: [...state.past, structuredClone(state.features)].slice(
-          -MAX_FEATURE_HISTORY_ENTRIES
+        past: [...state.past, cloneFeatures(state.features)].slice(
+          -MAX_FEATURE_HISTORY_ENTRIES,
         ),
         future: [],
       })),

@@ -14,9 +14,21 @@ import {
   isFreehandLineFeature,
   type DroMapFeature,
 } from "@/lib/dromap/feature";
-import { useEditorTestExportStore } from "@/stores/editor-test-export";
+import {
+  useEditorTestExportStore,
+  type ExportScaleBarStyle,
+} from "@/stores/editor-test-export";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
+import {
+  getRenderableFeaturesForLayers,
+  useEditorTestLayersStore,
+} from "@/stores/editor-test-layers";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
+import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
+import {
+  getRenderableGeoJsonLayers,
+  useEditorTestGeoJsonLayersStore,
+} from "@/stores/editor-test-geojson-layers";
 import { EXPORT_CAPTURE_ELEMENT_ID } from "./export-download";
 import {
   EXPORT_LAYOUT_GAP,
@@ -40,7 +52,25 @@ import {
   type ExportLegendDisplayItem,
 } from "./export-legend-layout";
 import { getLegendEntries, type LegendEntry } from "./legend-entry";
+import { createExportScaleBarModel } from "./export-scale";
+import { mergeLegendEntriesWithGeoJsonLayers } from "./geojson-layer-legend";
+import {
+  getZoneDotsColor,
+  getZoneDotsEnabled,
+  getZoneDotsRadius,
+  getZoneDotsSpacing,
+  getZoneHatchingColor,
+  getZoneHatchingEnabled,
+  getZoneHatchingSpacing,
+  getZoneHatchingStyle,
+  getZoneHatchingWeight,
+  getZoneStrokeEnabled,
+  getZoneVisibleFillOpacity,
+  getZoneVisibleStrokeOpacity,
+} from "./zone-style";
 import { getFeatureDashStyle, getFeatureMarkerSize } from "./feature-style";
+import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
+import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
 
 import { getMarkerSymbolHtml } from "./marker-symbol";
 import {
@@ -48,6 +78,15 @@ import {
   featureHasArrowStart,
   featureHasLineArrow,
 } from "./line-arrow";
+import {
+  getTextBackgroundColor,
+  getTextBackgroundEnabled,
+  getTextBackgroundOpacity,
+  getTextBorderColor,
+  getTextBorderEnabled,
+  getTextBorderWidth,
+  hexToRgba,
+} from "./text-rendering";
 
 const ExportLeafletPreview = dynamic(
   () =>
@@ -59,6 +98,44 @@ const ExportLeafletPreview = dynamic(
     loading: () => <ExportMapPreviewFallback />,
   },
 );
+
+const MIN_PREVIEW_BASEMAP_DETAIL_ZOOM = 0;
+const PREVIEW_BASEMAP_DETAIL_STEP = 0.25;
+const PREVIEW_BASEMAP_DETAIL_DELTA = 1;
+
+function formatBasemapDetailZoom(value: number | null) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "auto";
+  }
+
+  return Number.isInteger(value)
+    ? String(value)
+    : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function formatBasemapDetailDelta(value: number, base: number) {
+  const delta = Math.round((value - base) * 100) / 100;
+
+  if (Math.abs(delta) < 0.01) {
+    return "base";
+  }
+
+  const formatted = Number.isInteger(delta)
+    ? String(Math.abs(delta))
+    : Math.abs(delta).toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+
+  return `${delta > 0 ? "+" : "-"}${formatted}`;
+}
+
+const EXPORT_SCALE_BAR_STYLE_OPTIONS: Array<{
+  value: ExportScaleBarStyle;
+  label: string;
+}> = [
+  { value: "alternating", label: "Alternée" },
+  { value: "bar", label: "Barre pleine" },
+  { value: "line", label: "Ligne graduée" },
+  { value: "boxed", label: "Cartouche" },
+];
 
 type ResizeStartState = {
   pointerId: number;
@@ -151,32 +228,303 @@ function getFeatureFillColor(feature: DroMapFeature) {
   return feature.properties?.style?.fillColor ?? getFeatureColor(feature);
 }
 
+function clamp01(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.min(1, Math.max(0, value));
+}
+
 function getFeatureOpacity(feature: DroMapFeature) {
   const opacity = feature.properties?.style?.opacity ?? 1;
 
   return featureHasLineArrow(feature) && opacity <= 0.05 ? 1 : opacity;
 }
 
-function getFeatureFillOpacity(feature: DroMapFeature) {
-  return feature.properties?.style?.fillOpacity ?? 0.3;
+function getLegendZoneFillOpacity(feature: DroMapFeature) {
+  const visibleFillOpacity = getZoneVisibleFillOpacity(feature);
+
+  if (visibleFillOpacity > 0) {
+    return visibleFillOpacity;
+  }
+
+  const style = feature.properties?.style ?? {};
+
+  if (
+    feature.properties?.type === "zone" &&
+    feature.properties?.zoneVariant === "boundary-fill" &&
+    style.zoneFillEnabled !== false
+  ) {
+    return clamp01(Number(style.fillOpacity ?? 0));
+  }
+
+  return 0;
 }
 
 function getFeatureWeight(feature: DroMapFeature) {
   return feature.properties?.style?.weight ?? 3;
 }
 
-function getLegendLineDashArray(feature: DroMapFeature, lineWidth: number) {
-  const dashStyle = getFeatureDashStyle(feature);
+function getLegendDashStyle(feature: DroMapFeature) {
+  return getFeatureDashStyle(feature);
+}
+
+function createEvenSteps(count: number, start: number, end: number) {
+  if (count <= 1) return [start];
+
+  const step = (end - start) / (count - 1);
+
+  return Array.from({ length: count }, (_, index) => start + step * index);
+}
+
+function getLegendPreviewStrokeWeight(weight: number) {
+  return Math.max(3, Math.min(weight * 1.35, 7));
+}
+
+function renderLegendPreviewLineStroke({
+  feature,
+  color,
+  lineStartX,
+  lineEndX,
+  centerY,
+  symbolWeight,
+  freehandPath,
+}: {
+  feature: DroMapFeature;
+  color: string;
+  lineStartX: number;
+  lineEndX: number;
+  centerY: number;
+  symbolWeight: number;
+  freehandPath: string;
+}) {
+  const dashStyle = getLegendDashStyle(feature);
 
   if (dashStyle === "solid") {
-    return undefined;
+    return isFreehandLineFeature(feature) ? (
+      <path
+        d={freehandPath}
+        fill="none"
+        stroke={color}
+        strokeWidth={symbolWeight}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    ) : (
+      <line
+        x1={lineStartX}
+        y1={centerY}
+        x2={lineEndX}
+        y2={centerY}
+        stroke={color}
+        strokeWidth={symbolWeight}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    );
   }
 
-  if (dashStyle === "dashed") {
-    return `${Math.max(10, lineWidth * 2.5)} ${Math.max(6, lineWidth * 1.5)}`;
+  if (dashStyle === "dotted") {
+    const dotRadius = Math.max(2.1, Math.min(symbolWeight * 0.58, 3.9));
+    const dotCount = Math.max(
+      5,
+      Math.min(8, Math.floor((lineEndX - lineStartX) / 7)),
+    );
+    const xValues = createEvenSteps(
+      dotCount,
+      lineStartX + dotRadius,
+      lineEndX - dotRadius,
+    );
+
+    return (
+      <g fill={color}>
+        {xValues.map((dotX, index) => {
+          const freehandOffset = isFreehandLineFeature(feature)
+            ? Math.sin(index * 1.35) * Math.max(2.2, symbolWeight * 0.55)
+            : 0;
+
+          return (
+            <circle
+              key={`dot-${index}`}
+              cx={dotX}
+              cy={centerY + freehandOffset}
+              r={dotRadius}
+            />
+          );
+        })}
+      </g>
+    );
   }
 
-  return `0.001 ${Math.max(7, lineWidth * 2)}`;
+  const segmentCount = Math.max(
+    3,
+    Math.min(4, Math.floor((lineEndX - lineStartX) / 13)),
+  );
+  const totalWidth = lineEndX - lineStartX;
+  const gap = Math.max(5, symbolWeight * 1.15);
+  const segmentLength = Math.max(
+    8,
+    (totalWidth - gap * (segmentCount - 1)) / segmentCount,
+  );
+  const usedWidth = segmentLength * segmentCount + gap * (segmentCount - 1);
+  const firstX = lineStartX + Math.max(0, (totalWidth - usedWidth) / 2);
+
+  return (
+    <g
+      stroke={color}
+      strokeWidth={symbolWeight}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      fill="none"
+    >
+      {Array.from({ length: segmentCount }, (_, index) => {
+        const x1 = firstX + index * (segmentLength + gap);
+        const x2 = x1 + segmentLength;
+        const offset1 = isFreehandLineFeature(feature)
+          ? Math.sin(index * 1.2) * Math.max(2, symbolWeight * 0.45)
+          : 0;
+        const offset2 = isFreehandLineFeature(feature)
+          ? Math.sin(index * 1.2 + 0.8) * Math.max(2, symbolWeight * 0.45)
+          : 0;
+
+        return (
+          <line
+            key={`dash-${index}`}
+            x1={x1}
+            y1={centerY + offset1}
+            x2={x2}
+            y2={centerY + offset2}
+          />
+        );
+      })}
+    </g>
+  );
+}
+
+function renderLegendPreviewZoneOutline({
+  feature,
+  color,
+  opacity,
+  x,
+  y,
+  width,
+  height,
+  strokeWidth,
+}: {
+  feature: DroMapFeature;
+  color: string;
+  opacity: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  strokeWidth: number;
+}) {
+  const dashStyle = getLegendDashStyle(feature);
+
+  if (dashStyle === "solid") {
+    return (
+      <rect
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        rx={2}
+        fill="none"
+        stroke={color}
+        strokeOpacity={opacity}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    );
+  }
+
+  if (dashStyle === "dotted") {
+    const radius = Math.max(1.6, Math.min(strokeWidth * 0.58, 2.8));
+    const topBottomCount = Math.max(5, Math.round(width / 7));
+    const sideCount = Math.max(4, Math.round(height / 6));
+    const topBottom = createEvenSteps(topBottomCount, x, x + width);
+    const sides = createEvenSteps(sideCount, y, y + height).slice(1, -1);
+
+    return (
+      <g fill={color} fillOpacity={opacity}>
+        {topBottom.map((dotX, index) => (
+          <circle key={`top-${index}`} cx={dotX} cy={y} r={radius} />
+        ))}
+        {topBottom.map((dotX, index) => (
+          <circle
+            key={`bottom-${index}`}
+            cx={dotX}
+            cy={y + height}
+            r={radius}
+          />
+        ))}
+        {sides.map((dotY, index) => (
+          <circle key={`left-${index}`} cx={x} cy={dotY} r={radius} />
+        ))}
+        {sides.map((dotY, index) => (
+          <circle key={`right-${index}`} cx={x + width} cy={dotY} r={radius} />
+        ))}
+      </g>
+    );
+  }
+
+  const segments = [];
+  const horizontalSegments = 3;
+  const verticalSegments = 2;
+  const horizontalGap = Math.max(5, width * 0.08);
+  const verticalGap = Math.max(4, height * 0.12);
+  const horizontalLength =
+    (width - horizontalGap * (horizontalSegments - 1)) / horizontalSegments;
+  const verticalLength =
+    (height - verticalGap * (verticalSegments - 1)) / verticalSegments;
+
+  for (let index = 0; index < horizontalSegments; index += 1) {
+    const x1 = x + index * (horizontalLength + horizontalGap);
+    const x2 = x1 + horizontalLength;
+
+    segments.push(
+      <line key={`top-${index}`} x1={x1} y1={y} x2={x2} y2={y} />,
+      <line
+        key={`bottom-${index}`}
+        x1={x1}
+        y1={y + height}
+        x2={x2}
+        y2={y + height}
+      />,
+    );
+  }
+
+  for (let index = 0; index < verticalSegments; index += 1) {
+    const y1 = y + index * (verticalLength + verticalGap);
+    const y2 = y1 + verticalLength;
+
+    segments.push(
+      <line key={`left-${index}`} x1={x} y1={y1} x2={x} y2={y2} />,
+      <line
+        key={`right-${index}`}
+        x1={x + width}
+        y1={y1}
+        x2={x + width}
+        y2={y2}
+      />,
+    );
+  }
+
+  return (
+    <g
+      stroke={color}
+      strokeOpacity={opacity}
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      fill="none"
+    >
+      {segments}
+    </g>
+  );
 }
 
 function rectToStyle(rect: ExportCanvasRect): CSSProperties {
@@ -195,16 +543,26 @@ function LegendSymbol({ feature }: { feature: DroMapFeature }) {
   const weight = getFeatureWeight(feature);
 
   if (type === "text") {
+    const hasBackground = getTextBackgroundEnabled(feature);
+    const hasBorder = getTextBorderEnabled(feature);
+
     return (
       <span
-        className="inline-flex items-center justify-center rounded border bg-white font-bold"
+        className="inline-flex items-center justify-center rounded font-bold"
         style={{
           width: 34,
           height: 34,
-          borderColor: "#cbd5e1",
-          color,
-          opacity,
+          color: hexToRgba(color, opacity),
           fontSize: 20,
+          background: hasBackground
+            ? hexToRgba(
+                getTextBackgroundColor(feature),
+                getTextBackgroundOpacity(feature),
+              )
+            : "#ffffff",
+          border: hasBorder
+            ? `${Math.max(1, Math.min(getTextBorderWidth(feature), 3))}px solid ${getTextBorderColor(feature)}`
+            : "1px solid #cbd5e1",
         }}
         aria-hidden="true"
       >
@@ -230,27 +588,26 @@ function LegendSymbol({ feature }: { feature: DroMapFeature }) {
   }
 
   if (type === "line") {
-    const symbolWeight = Math.max(3, Math.min(weight * 1.6, 9));
-    const symbolWidth = 62;
-    const symbolHeight = 28;
+    const symbolWeight = getLegendPreviewStrokeWeight(weight);
+    const symbolWidth = 64;
+    const symbolHeight = 30;
     const centerY = symbolHeight / 2;
-    const startX = 2;
-    const endX = symbolWidth - 2;
+    const startX = 3;
+    const endX = symbolWidth - 3;
     const hasArrowStart = featureHasArrowStart(feature);
     const hasArrowEnd = featureHasArrowEnd(feature);
-    const arrowLength = Math.max(13, Math.min(24, symbolWeight * 2.1));
-    const arrowHalfHeight = Math.max(8, symbolWeight * 1.4);
+    const arrowLength = Math.max(12, Math.min(20, symbolWeight * 2.45));
+    const arrowHalfHeight = Math.max(6.5, Math.min(10.5, symbolWeight * 1.35));
     const startArrowBaseX = startX + arrowLength;
     const endArrowBaseX = endX - arrowLength;
     const lineStartX = hasArrowStart
-      ? startArrowBaseX - Math.max(1.5, symbolWeight * 0.45)
-      : startX;
+      ? startArrowBaseX - Math.max(1.4, symbolWeight * 0.42)
+      : startX + Math.max(1, symbolWeight * 0.2);
     const lineEndX = hasArrowEnd
-      ? endArrowBaseX + Math.max(1.5, symbolWeight * 0.45)
-      : endX;
-    const dashArray = getLegendLineDashArray(feature, symbolWeight);
-    const freehandControlOffset = Math.max(7, symbolHeight * 0.26);
-    const freehandPath = `M ${lineStartX} ${centerY} C ${lineStartX + (lineEndX - lineStartX) * 0.22} ${centerY - freehandControlOffset}, ${lineStartX + (lineEndX - lineStartX) * 0.44} ${centerY + freehandControlOffset}, ${lineStartX + (lineEndX - lineStartX) * 0.62} ${centerY} C ${lineStartX + (lineEndX - lineStartX) * 0.76} ${centerY - freehandControlOffset}, ${lineStartX + (lineEndX - lineStartX) * 0.9} ${centerY + freehandControlOffset}, ${lineEndX} ${centerY}`;
+      ? endArrowBaseX + Math.max(1.4, symbolWeight * 0.42)
+      : endX - Math.max(1, symbolWeight * 0.2);
+    const freehandControlOffset = Math.max(5, symbolHeight * 0.18);
+    const freehandPath = `M ${lineStartX} ${centerY} C ${lineStartX + (lineEndX - lineStartX) * 0.25} ${centerY - freehandControlOffset}, ${lineStartX + (lineEndX - lineStartX) * 0.48} ${centerY + freehandControlOffset}, ${lineStartX + (lineEndX - lineStartX) * 0.66} ${centerY} C ${lineStartX + (lineEndX - lineStartX) * 0.8} ${centerY - freehandControlOffset}, ${lineStartX + (lineEndX - lineStartX) * 0.92} ${centerY + freehandControlOffset * 0.65}, ${lineEndX} ${centerY}`;
 
     return (
       <svg
@@ -261,29 +618,15 @@ function LegendSymbol({ feature }: { feature: DroMapFeature }) {
         focusable="false"
         style={{ display: "block", overflow: "visible", opacity }}
       >
-        {isFreehandLineFeature(feature) ? (
-          <path
-            d={freehandPath}
-            fill="none"
-            stroke={color}
-            strokeWidth={symbolWeight}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeDasharray={dashArray}
-          />
-        ) : (
-          <line
-            x1={lineStartX}
-            y1={centerY}
-            x2={lineEndX}
-            y2={centerY}
-            stroke={color}
-            strokeWidth={symbolWeight}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeDasharray={dashArray}
-          />
-        )}
+        {renderLegendPreviewLineStroke({
+          feature,
+          color,
+          lineStartX,
+          lineEndX,
+          centerY,
+          symbolWeight,
+          freehandPath,
+        })}
 
         {hasArrowStart ? (
           <path
@@ -302,33 +645,171 @@ function LegendSymbol({ feature }: { feature: DroMapFeature }) {
     );
   }
 
-  const zoneStrokeWidth = Math.max(3, Math.min(weight * 1.2, 7));
-  const zoneDashArray = getLegendLineDashArray(feature, zoneStrokeWidth);
+  const zoneX = 4;
+  const zoneY = 6;
+  const zoneWidth = 42;
+  const zoneHeight = 22;
+  const zoneStrokeWidth = Math.max(2.6, Math.min(weight * 1.05, 5.6));
+  const legendFillOpacity = getLegendZoneFillOpacity(feature);
+  const legendFillColor = getFeatureFillColor(feature);
+
+  const hatchingStyle = getZoneHatchingStyle(feature);
+  const hatchSpacing = Math.max(
+    6,
+    Math.min(getZoneHatchingSpacing(feature), 10),
+  );
+  const hatchWeight = Math.max(
+    1.1,
+    Math.min(getZoneHatchingWeight(feature), 2.8),
+  );
+  const zoneDotsEnabled = getZoneDotsEnabled(feature);
+  const zoneDotsSpacing = Math.max(
+    7,
+    Math.min(getZoneDotsSpacing(feature), 12),
+  );
+  const zoneDotsRadius = Math.max(
+    1.5,
+    Math.min(getZoneDotsRadius(feature), 2.8),
+  );
+  const hatchLines = [];
+  const hatchDots = [];
+  const clipId = `dromap-preview-zone-symbol-${feature.id}`;
+
+  if (getZoneHatchingEnabled(feature)) {
+    for (
+      let offset = -zoneHeight;
+      offset <= zoneWidth + zoneHeight;
+      offset += hatchSpacing
+    ) {
+      if (hatchingStyle === "horizontal") {
+        hatchLines.push(
+          <line
+            key={offset}
+            x1={zoneX}
+            y1={zoneY + offset}
+            x2={zoneX + zoneWidth}
+            y2={zoneY + offset}
+          />,
+        );
+      } else if (hatchingStyle === "vertical") {
+        hatchLines.push(
+          <line
+            key={offset}
+            x1={zoneX + offset}
+            y1={zoneY}
+            x2={zoneX + offset}
+            y2={zoneY + zoneHeight}
+          />,
+        );
+      } else if (hatchingStyle === "diagonal-left") {
+        hatchLines.push(
+          <line
+            key={offset}
+            x1={zoneX + offset}
+            y1={zoneY}
+            x2={zoneX + offset + zoneHeight}
+            y2={zoneY + zoneHeight}
+          />,
+        );
+      } else {
+        hatchLines.push(
+          <line
+            key={offset}
+            x1={zoneX + offset}
+            y1={zoneY + zoneHeight}
+            x2={zoneX + offset + zoneHeight}
+            y2={zoneY}
+          />,
+        );
+      }
+    }
+  }
+
+  if (zoneDotsEnabled) {
+    const startY = zoneY + zoneDotsRadius + 2;
+    const endY = zoneY + zoneHeight - zoneDotsRadius - 2;
+    const startX = zoneX + zoneDotsRadius + 3;
+    const endX = zoneX + zoneWidth - zoneDotsRadius - 3;
+
+    for (let y = startY; y <= endY; y += zoneDotsSpacing) {
+      const rowIndex = Math.round((y - startY) / zoneDotsSpacing);
+      const rowOffset = rowIndex % 2 === 0 ? 0 : zoneDotsSpacing / 2;
+
+      for (let x = startX + rowOffset; x <= endX; x += zoneDotsSpacing) {
+        hatchDots.push(
+          <circle key={`${x}-${y}`} cx={x} cy={y} r={zoneDotsRadius} />,
+        );
+      }
+    }
+  }
 
   return (
     <svg
-      width={42}
+      width={50}
       height={34}
-      viewBox="0 0 42 34"
+      viewBox="0 0 50 34"
       aria-hidden="true"
       focusable="false"
       style={{ display: "block", overflow: "visible" }}
     >
-      <rect
-        x={7}
-        y={6}
-        width={28}
-        height={22}
-        rx={1.5}
-        fill={getFeatureFillColor(feature)}
-        fillOpacity={Math.max(0.12, getFeatureFillOpacity(feature))}
-        stroke={color}
-        strokeOpacity={opacity}
-        strokeWidth={zoneStrokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeDasharray={zoneDashArray}
-      />
+      <defs>
+        <clipPath id={clipId}>
+          <rect
+            x={zoneX}
+            y={zoneY}
+            width={zoneWidth}
+            height={zoneHeight}
+            rx={2}
+          />
+        </clipPath>
+      </defs>
+
+      {legendFillOpacity > 0 ? (
+        <rect
+          x={zoneX}
+          y={zoneY}
+          width={zoneWidth}
+          height={zoneHeight}
+          rx={2}
+          fill={legendFillColor}
+          fillOpacity={Math.max(0.16, legendFillOpacity)}
+        />
+      ) : null}
+
+      {hatchLines.length > 0 ? (
+        <g
+          clipPath={`url(#${clipId})`}
+          stroke={getZoneHatchingColor(feature)}
+          strokeWidth={hatchWeight}
+          strokeLinecap="round"
+          opacity={0.96}
+        >
+          {hatchLines}
+        </g>
+      ) : null}
+
+      {hatchDots.length > 0 ? (
+        <g
+          clipPath={`url(#${clipId})`}
+          fill={getZoneDotsColor(feature)}
+          opacity={0.98}
+        >
+          {hatchDots}
+        </g>
+      ) : null}
+
+      {getZoneStrokeEnabled(feature) && getZoneVisibleStrokeOpacity(feature) > 0
+        ? renderLegendPreviewZoneOutline({
+            feature,
+            color,
+            opacity: getZoneVisibleStrokeOpacity(feature),
+            x: zoneX,
+            y: zoneY,
+            width: zoneWidth,
+            height: zoneHeight,
+            strokeWidth: zoneStrokeWidth,
+          })
+        : null}
     </svg>
   );
 }
@@ -376,13 +857,19 @@ function EditableLegendText({
       event: ReactChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
     ) => setDraftValue(event.target.value),
     onBlur: commit,
-    onPointerDown: (event: ReactPointerEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    onPointerDown: (
+      event: ReactPointerEvent<HTMLInputElement | HTMLTextAreaElement>,
+    ) => {
       event.stopPropagation();
     },
-    onClick: (event: ReactMouseEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    onClick: (
+      event: ReactMouseEvent<HTMLInputElement | HTMLTextAreaElement>,
+    ) => {
       event.stopPropagation();
     },
-    onKeyDown: (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    onKeyDown: (
+      event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+    ) => {
       if (event.key === "Escape") {
         cancel(event.currentTarget);
         return;
@@ -420,6 +907,7 @@ function ExportLegendPreview({
   onEntryLabelChange,
   onEntryHide,
   onEntryMove,
+  onRemoveSection,
 }: {
   title: string;
   entries: LegendEntry[];
@@ -440,6 +928,7 @@ function ExportLegendPreview({
     targetSection: string;
     beforeGroupKey?: string;
   }) => void;
+  onRemoveSection: (section: string) => void;
 }) {
   const asideRef = useRef<HTMLElement | null>(null);
   const dragStateRef = useRef<LegendPointerDragState | null>(null);
@@ -465,7 +954,8 @@ function ExportLegendPreview({
   });
   const safeTitle = getSafeLegendTitle(title);
   const draggedEntry = pointerDrag
-    ? entries.find((entry) => entry.dedupeKey === pointerDrag.groupKey) ?? null
+    ? (entries.find((entry) => entry.dedupeKey === pointerDrag.groupKey) ??
+      null)
     : null;
 
   function getLocalPoint(clientX: number, clientY: number) {
@@ -520,6 +1010,57 @@ function ExportLegendPreview({
     return undefined;
   }
 
+  function getBottomColumnMoveTarget(localPoint: { x: number; y: number }) {
+    if (!legendLayout.isBottomSectionColumnMode) {
+      return null;
+    }
+
+    const columns = new Map<
+      number,
+      { section: string; left: number; right: number }
+    >();
+
+    for (const item of legendLayout.visibleItems) {
+      const displayItem = displayItems[item.featureIndex];
+
+      if (!displayItem) {
+        continue;
+      }
+
+      const section =
+        displayItem.type === "section"
+          ? displayItem.section
+          : entries[displayItem.entryIndex]?.section;
+
+      if (!section) {
+        continue;
+      }
+
+      const currentColumn = columns.get(item.columnIndex);
+      const left = item.x - rect.x - legendLayout.columnGap / 2;
+      const right = item.x - rect.x + item.width + legendLayout.columnGap / 2;
+
+      columns.set(item.columnIndex, {
+        section,
+        left: currentColumn ? Math.min(currentColumn.left, left) : left,
+        right: currentColumn ? Math.max(currentColumn.right, right) : right,
+      });
+    }
+
+    for (const column of columns.values()) {
+      if (
+        localPoint.x >= column.left &&
+        localPoint.x <= column.right &&
+        localPoint.y >= legendLayout.itemsTop - rect.y &&
+        localPoint.y <= legendLayout.itemsBottom - rect.y
+      ) {
+        return { targetSection: column.section };
+      }
+    }
+
+    return null;
+  }
+
   function getMoveTargetFromPointer(
     clientX: number,
     clientY: number,
@@ -530,7 +1071,10 @@ function ExportLegendPreview({
       return null;
     }
 
-    for (const [visibleItemIndex, item] of legendLayout.visibleItems.entries()) {
+    for (const [
+      visibleItemIndex,
+      item,
+    ] of legendLayout.visibleItems.entries()) {
       const displayItem = displayItems[item.featureIndex];
 
       if (!displayItem) {
@@ -589,6 +1133,12 @@ function ExportLegendPreview({
       return null;
     }
 
+    const bottomColumnTarget = getBottomColumnMoveTarget(localPoint);
+
+    if (bottomColumnTarget) {
+      return bottomColumnTarget;
+    }
+
     return { targetSection: DEFAULT_EXPORT_LEGEND_SECTION };
   }
 
@@ -619,12 +1169,20 @@ function ExportLegendPreview({
     });
   }
 
-  function stopPointerDrag(event?: ReactPointerEvent<HTMLElement>) {
+  function stopPointerDrag(pointerId?: number) {
     const currentDragState = dragStateRef.current;
 
-    if (event && currentDragState?.pointerId === event.pointerId) {
+    if (
+      typeof pointerId === "number" &&
+      currentDragState &&
+      currentDragState.pointerId !== pointerId
+    ) {
+      return;
+    }
+
+    if (currentDragState) {
       try {
-        event.currentTarget.releasePointerCapture(event.pointerId);
+        asideRef.current?.releasePointerCapture(currentDragState.pointerId);
       } catch {
         // La capture peut déjà être libérée si le navigateur a annulé le pointeur.
       }
@@ -633,6 +1191,45 @@ function ExportLegendPreview({
     dragStateRef.current = null;
     lastPointerMoveSignatureRef.current = null;
     setPointerDrag(null);
+  }
+
+  function updatePointerDrag(
+    pointerId: number,
+    clientX: number,
+    clientY: number,
+  ) {
+    const currentDragState = dragStateRef.current;
+
+    if (!currentDragState || currentDragState.pointerId !== pointerId) {
+      return;
+    }
+
+    const localPoint = getLocalPoint(clientX, clientY);
+
+    if (!localPoint) {
+      return;
+    }
+
+    const distance = Math.hypot(
+      clientX - currentDragState.startClientX,
+      clientY - currentDragState.startClientY,
+    );
+    const hasMoved = currentDragState.hasMoved || distance >= 5;
+    const nextDragState: LegendPointerDragState = {
+      ...currentDragState,
+      clientX,
+      clientY,
+      localX: localPoint.x,
+      localY: localPoint.y,
+      hasMoved,
+    };
+
+    dragStateRef.current = nextDragState;
+    setPointerDrag(nextDragState);
+
+    if (hasMoved) {
+      moveDraggedEntry(getMoveTargetFromPointer(clientX, clientY));
+    }
   }
 
   function handleEntryPointerDown(
@@ -669,57 +1266,48 @@ function ExportLegendPreview({
     setPointerDrag(nextDragState);
 
     try {
-      event.currentTarget.setPointerCapture(event.pointerId);
+      asideRef.current?.setPointerCapture(event.pointerId);
     } catch {
       // Certains navigateurs peuvent refuser la capture si le pointeur a déjà changé d'état.
     }
   }
 
-  function handleEntryPointerMove(event: ReactPointerEvent<HTMLElement>) {
-    const currentDragState = dragStateRef.current;
-
-    if (!currentDragState || currentDragState.pointerId !== event.pointerId) {
+  useEffect(() => {
+    if (!pointerDrag) {
       return;
     }
 
-    const localPoint = getLocalPoint(event.clientX, event.clientY);
+    function handleWindowPointerMove(event: PointerEvent) {
+      if (dragStateRef.current?.pointerId !== event.pointerId) {
+        return;
+      }
 
-    if (!localPoint) {
-      return;
+      event.preventDefault();
+      updatePointerDrag(event.pointerId, event.clientX, event.clientY);
     }
 
-    event.preventDefault();
-    event.stopPropagation();
+    function handleWindowPointerUp(event: PointerEvent) {
+      stopPointerDrag(event.pointerId);
+    }
 
-    const distance = Math.hypot(
-      event.clientX - currentDragState.startClientX,
-      event.clientY - currentDragState.startClientY,
-    );
-    const hasMoved = currentDragState.hasMoved || distance >= 5;
-    const nextDragState: LegendPointerDragState = {
-      ...currentDragState,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      localX: localPoint.x,
-      localY: localPoint.y,
-      hasMoved,
+    function handleWindowBlur() {
+      stopPointerDrag();
+    }
+
+    window.addEventListener("pointermove", handleWindowPointerMove, {
+      passive: false,
+    });
+    window.addEventListener("pointerup", handleWindowPointerUp);
+    window.addEventListener("pointercancel", handleWindowPointerUp);
+    window.addEventListener("blur", handleWindowBlur);
+
+    return () => {
+      window.removeEventListener("pointermove", handleWindowPointerMove);
+      window.removeEventListener("pointerup", handleWindowPointerUp);
+      window.removeEventListener("pointercancel", handleWindowPointerUp);
+      window.removeEventListener("blur", handleWindowBlur);
     };
-
-    dragStateRef.current = nextDragState;
-    setPointerDrag(nextDragState);
-
-    if (hasMoved) {
-      moveDraggedEntry(getMoveTargetFromPointer(event.clientX, event.clientY));
-    }
-  }
-
-  function handleEntryPointerUp(event: ReactPointerEvent<HTMLElement>) {
-    stopPointerDrag(event);
-  }
-
-  function handleEntryPointerCancel(event: ReactPointerEvent<HTMLElement>) {
-    stopPointerDrag(event);
-  }
+  }, [pointerDrag]);
 
   return (
     <aside
@@ -733,6 +1321,40 @@ function ExportLegendPreview({
       }}
     >
       <div className="absolute inset-0 overflow-hidden">
+        {legendLayout.isBottomSectionColumnMode &&
+        legendLayout.columnCount > 1 ? (
+          <>
+            {Array.from({ length: legendLayout.columnCount - 1 }).map(
+              (_, columnIndex) => {
+                const x =
+                  legendLayout.padding +
+                  (columnIndex + 1) *
+                    (legendLayout.columnWidth + legendLayout.columnGap) -
+                  legendLayout.columnGap / 2;
+
+                return (
+                  <span
+                    key={`section-column-separator-${columnIndex}`}
+                    className="absolute rounded-full shadow-sm"
+                    style={{
+                      left: x - 2,
+                      top: legendLayout.itemsTop - rect.y,
+                      width: 4,
+                      height: Math.max(
+                        0,
+                        legendLayout.itemsBottom - legendLayout.itemsTop,
+                      ),
+                      backgroundColor: separatorColor,
+                      opacity: 0.9,
+                    }}
+                    aria-hidden="true"
+                  />
+                );
+              },
+            )}
+          </>
+        ) : null}
+
         {legendLayout.hasTitle ? (
           <EditableLegendText
             value={safeTitle}
@@ -777,7 +1399,9 @@ function ExportLegendPreview({
               }
 
               if (displayItem.type === "section") {
-                const isDefaultSection = isDefaultLegendSection(displayItem.section);
+                const isDefaultSection = isDefaultLegendSection(
+                  displayItem.section,
+                );
 
                 if (isDefaultSection) {
                   return null;
@@ -788,7 +1412,7 @@ function ExportLegendPreview({
                     key={displayItem.id}
                     draggable={false}
                     onDragStart={(event) => event.preventDefault()}
-                    className="absolute flex min-w-0 items-center overflow-hidden rounded-lg border border-transparent px-1 hover:border-indigo-200 hover:bg-indigo-50/60"
+                    className="group/section absolute min-w-0 overflow-hidden rounded-lg border border-transparent px-1 hover:border-indigo-200 hover:bg-indigo-50/60"
                     style={{
                       left: item.x - rect.x,
                       top: item.y - rect.y,
@@ -800,10 +1424,6 @@ function ExportLegendPreview({
                     }}
                     title="Sous-légende : glisse des groupes ici"
                   >
-                    <span
-                      className="h-[3px] flex-1 rounded-full shadow-sm"
-                      style={{ backgroundColor: separatorColor }}
-                    />
                     <EditableLegendText
                       value={displayItem.label}
                       onCommit={(nextValue) => {
@@ -812,13 +1432,43 @@ function ExportLegendPreview({
                         onRenameSection(displayItem.section, trimmedValue);
                       }}
                       placeholder="Sous-légende"
-                      className="mx-2 min-w-0 max-w-[74%] rounded border border-transparent bg-transparent px-2 py-1 text-center font-bold uppercase tracking-[0.12em] outline-none hover:border-slate-300 hover:bg-white/70 focus:border-indigo-400 focus:bg-white/95 focus:ring-2 focus:ring-indigo-200"
-                      style={{ color: colors.titleColor }}
+                      className="absolute left-0 top-0 min-w-0 max-w-[calc(100%-42px)] rounded border border-transparent bg-transparent px-2 py-1 font-bold uppercase tracking-[0.12em] outline-none hover:border-slate-300 hover:bg-white/70 focus:border-indigo-400 focus:bg-white/95 focus:ring-2 focus:ring-indigo-200"
+                      style={{
+                        color: colors.titleColor,
+                        fontSize: legendLayout.sectionFontSize,
+                      }}
                     />
-                    <span
-                      className="h-[3px] flex-1 rounded-full shadow-sm"
-                      style={{ backgroundColor: separatorColor }}
-                    />
+
+                    {!legendLayout.isBottomSectionColumnMode ? (
+                      <span
+                        className="absolute left-0 right-0 rounded-full shadow-sm"
+                        style={{
+                          top: Math.min(
+                            item.height - 5,
+                            Math.max(
+                              legendLayout.sectionFontSize + 12,
+                              Math.round(item.height * 0.72),
+                            ),
+                          ),
+                          height: 4,
+                          backgroundColor: separatorColor,
+                        }}
+                      />
+                    ) : null}
+
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRemoveSection(displayItem.section);
+                      }}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-rose-200 bg-white/95 text-rose-600 opacity-0 shadow-sm transition hover:bg-rose-50 group-hover/section:opacity-100 focus:opacity-100"
+                      title="Supprimer cette sous-légende"
+                      aria-label="Supprimer cette sous-légende"
+                    >
+                      ×
+                    </button>
                   </li>
                 );
               }
@@ -840,7 +1490,10 @@ function ExportLegendPreview({
                 );
               const textMaxWidth = Math.max(
                 20,
-                item.width - legendLayout.symbolBoxWidth - legendLayout.textGap - 38,
+                item.width -
+                  legendLayout.symbolBoxWidth -
+                  legendLayout.textGap -
+                  50,
               );
               const isHidden = entry.featureIds.every((featureId) =>
                 hiddenLegendFeatureIds.includes(featureId),
@@ -851,10 +1504,9 @@ function ExportLegendPreview({
                   key={displayItem.id}
                   draggable={false}
                   onDragStart={(event) => event.preventDefault()}
-                  onPointerDown={(event) => handleEntryPointerDown(event, entry)}
-                  onPointerMove={handleEntryPointerMove}
-                  onPointerUp={handleEntryPointerUp}
-                  onPointerCancel={handleEntryPointerCancel}
+                  onPointerDown={(event) =>
+                    handleEntryPointerDown(event, entry)
+                  }
                   className="group absolute flex min-w-0 cursor-grab items-center overflow-hidden rounded-lg border border-transparent active:cursor-grabbing hover:border-indigo-200 hover:bg-indigo-50/50"
                   style={{
                     left: item.x - rect.x,
@@ -888,7 +1540,9 @@ function ExportLegendPreview({
                       left: legendLayout.symbolBoxWidth + legendLayout.textGap,
                       top: Math.max(
                         0,
-                        Math.round((legendLayout.itemHeight - itemFontSize) / 2),
+                        Math.round(
+                          (legendLayout.itemHeight - itemFontSize) / 2,
+                        ),
                       ),
                       width: textMaxWidth,
                     }}
@@ -915,17 +1569,17 @@ function ExportLegendPreview({
                       onEntryHide(entry);
                     }}
                     onPointerDown={(event) => event.stopPropagation()}
-                    className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-500 opacity-0 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100 focus:opacity-100"
+                    className="absolute right-1 top-1/2 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-500 opacity-0 shadow-md transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100 focus:opacity-100"
                     title="Masquer ce groupe dans la légende"
                     aria-label="Masquer ce groupe dans la légende"
                   >
                     <svg
-                      width="17"
-                      height="17"
+                      width="28"
+                      height="28"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
-                      strokeWidth="2"
+                      strokeWidth="2.2"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       aria-hidden="true"
@@ -965,13 +1619,21 @@ function ExportLegendPreview({
         <div
           className="pointer-events-none absolute z-[1500] flex max-w-[260px] items-center gap-2 rounded-xl border border-indigo-200 bg-white/95 px-3 py-2 text-sm font-semibold text-slate-800 shadow-2xl ring-4 ring-indigo-100/60"
           style={{
-            left: Math.min(Math.max(pointerDrag.localX + 12, 8), rect.width - 20),
-            top: Math.min(Math.max(pointerDrag.localY + 12, 8), rect.height - 20),
+            left: Math.min(
+              Math.max(pointerDrag.localX + 12, 8),
+              rect.width - 20,
+            ),
+            top: Math.min(
+              Math.max(pointerDrag.localY + 12, 8),
+              rect.height - 20,
+            ),
             transform: "translateY(-50%)",
           }}
         >
           <LegendSymbol feature={draggedEntry.representativeFeature} />
-          <span className="min-w-0 truncate">{draggedEntry.label || "Sans nom"}</span>
+          <span className="min-w-0 truncate">
+            {draggedEntry.label || "Sans nom"}
+          </span>
         </div>
       ) : null}
     </aside>
@@ -982,6 +1644,66 @@ function ExportMapPreviewFallback() {
   return (
     <div className="flex h-full w-full items-center justify-center bg-slate-100 p-4 text-center text-sm text-slate-500">
       Chargement de la carte...
+    </div>
+  );
+}
+
+function ExportScaleBarPreview(input: {
+  enabled: boolean;
+  style: ExportScaleBarStyle;
+  workspaceBounds: WorkspaceBounds | null;
+  mapRect: ExportCanvasRect;
+}) {
+  const model = createExportScaleBarModel({
+    workspaceBounds: input.workspaceBounds,
+    mapRect: input.mapRect,
+  });
+
+  if (!input.enabled || !model) {
+    return null;
+  }
+
+  const isBoxed = input.style === "boxed";
+  const isLine = input.style === "line";
+  const segments = 4;
+
+  return (
+    <div
+      className={[
+        "pointer-events-none absolute bottom-4 left-4 z-[900] select-none rounded-md px-2 py-1.5 text-[12px] font-semibold leading-none text-slate-950",
+        isBoxed
+          ? "border border-slate-900/25 bg-white/95 shadow-sm"
+          : "bg-white/85 shadow-sm",
+      ].join(" ")}
+      style={{ minWidth: model.widthPx + 16 }}
+    >
+      <div className="mb-1.5">{model.label}</div>
+      {isLine ? (
+        <div className="relative h-3" style={{ width: model.widthPx }}>
+          <span className="absolute left-0 right-0 top-1/2 h-0.5 -translate-y-1/2 bg-slate-950" />
+          <span className="absolute left-0 top-0 h-3 w-0.5 bg-slate-950" />
+          <span className="absolute left-1/2 top-0 h-3 w-0.5 -translate-x-1/2 bg-slate-950" />
+          <span className="absolute right-0 top-0 h-3 w-0.5 bg-slate-950" />
+        </div>
+      ) : input.style === "alternating" || input.style === "boxed" ? (
+        <div
+          className="flex h-2 overflow-hidden border border-slate-950"
+          style={{ width: model.widthPx }}
+        >
+          {Array.from({ length: segments }, (_, index) => (
+            <span
+              key={index}
+              className={index % 2 === 0 ? "bg-slate-950" : "bg-white"}
+              style={{ width: model.widthPx / segments }}
+            />
+          ))}
+        </div>
+      ) : (
+        <div
+          className="h-2 border border-white bg-slate-950"
+          style={{ width: model.widthPx }}
+        />
+      )}
     </div>
   );
 }
@@ -1027,7 +1749,9 @@ export function ExportPreviewScene() {
   const [isHiddenListOpen, setIsHiddenListOpen] = useState(false);
 
   const legendTitle = useEditorTestExportStore((state) => state.legendTitle);
-  const setLegendTitle = useEditorTestExportStore((state) => state.setLegendTitle);
+  const setLegendTitle = useEditorTestExportStore(
+    (state) => state.setLegendTitle,
+  );
   const legendPosition = useEditorTestExportStore(
     (state) => state.legendPosition,
   );
@@ -1076,6 +1800,18 @@ export function ExportPreviewScene() {
   const legendSectionOrder = useEditorTestExportStore(
     (state) => state.legendSectionOrder,
   );
+  const scaleBarEnabled = useEditorTestExportStore(
+    (state) => state.scaleBarEnabled,
+  );
+  const scaleBarStyle = useEditorTestExportStore(
+    (state) => state.scaleBarStyle,
+  );
+  const setScaleBarEnabled = useEditorTestExportStore(
+    (state) => state.setScaleBarEnabled,
+  );
+  const setScaleBarStyle = useEditorTestExportStore(
+    (state) => state.setScaleBarStyle,
+  );
   const setLegendGroupLabel = useEditorTestExportStore(
     (state) => state.setLegendGroupLabel,
   );
@@ -1097,11 +1833,63 @@ export function ExportPreviewScene() {
   const renameLegendSection = useEditorTestExportStore(
     (state) => state.renameLegendSection,
   );
+  const removeLegendSection = useEditorTestExportStore(
+    (state) => state.removeLegendSection,
+  );
 
-  const features = useEditorTestFeaturesStore((state) => state.features);
-  const updateFeature = useEditorTestFeaturesStore((state) => state.updateFeature);
+  const rawFeatures = useEditorTestFeaturesStore((state) => state.features);
+  const layers = useEditorTestLayersStore((state) => state.layers);
   const workspaceBounds = useEditorTestWorkspaceStore(
     (state) => state.workspaceBounds,
+  );
+  const workspaceBasemapZoom = useEditorTestWorkspaceStore(
+    (state) => state.workspaceBasemapZoom,
+  );
+  const workspaceBasemapBaseZoom = useEditorTestWorkspaceStore(
+    (state) => state.workspaceBasemapBaseZoom,
+  );
+  const setWorkspaceBasemapZoom = useEditorTestWorkspaceStore(
+    (state) => state.setWorkspaceBasemapZoom,
+  );
+  const basemapId = useEditorTestBasemapStore((state) => state.basemapId);
+  const basemap = getDromapBasemapConfig(basemapId);
+  const canAdjustBasemapDetail = basemap.kind === "maplibre";
+  const rawBasemapDetailZoomValue =
+    typeof workspaceBasemapZoom === "number" &&
+    Number.isFinite(workspaceBasemapZoom)
+      ? workspaceBasemapZoom
+      : MIN_PREVIEW_BASEMAP_DETAIL_ZOOM;
+  const baseBasemapDetailZoom =
+    typeof workspaceBasemapBaseZoom === "number" &&
+    Number.isFinite(workspaceBasemapBaseZoom)
+      ? workspaceBasemapBaseZoom
+      : rawBasemapDetailZoomValue;
+  const minPreviewBasemapDetailZoom = Math.max(
+    MIN_PREVIEW_BASEMAP_DETAIL_ZOOM,
+    baseBasemapDetailZoom - PREVIEW_BASEMAP_DETAIL_DELTA,
+  );
+  const maxPreviewBasemapDetailZoom = Math.min(
+    basemap.kind === "maplibre" ? basemap.maxZoom : 19,
+    baseBasemapDetailZoom + PREVIEW_BASEMAP_DETAIL_DELTA,
+  );
+  const basemapDetailZoomValue = Math.min(
+    Math.max(rawBasemapDetailZoomValue, minPreviewBasemapDetailZoom),
+    maxPreviewBasemapDetailZoom,
+  );
+  const features = useMemo(
+    () =>
+      getRenderableFeaturesForLayers(rawFeatures, layers, { workspaceBounds }),
+    [rawFeatures, layers, workspaceBounds],
+  );
+  const rawGeoJsonLayers = useEditorTestGeoJsonLayersStore(
+    (state) => state.geoJsonLayers,
+  );
+  const geoJsonLayers = useMemo(
+    () => getRenderableGeoJsonLayers(rawGeoJsonLayers),
+    [rawGeoJsonLayers],
+  );
+  const updateFeature = useEditorTestFeaturesStore(
+    (state) => state.updateFeature,
   );
 
   const appearance = useMemo(
@@ -1136,16 +1924,27 @@ export function ExportPreviewScene() {
 
   const allLegendEntries = useMemo(
     () =>
-      getLegendEntries(allLegendFeatures, {
-        legendGroupLabels,
-        legendGroupSections,
-        legendGroupOrder,
-      }),
+      mergeLegendEntriesWithGeoJsonLayers(
+        getLegendEntries(allLegendFeatures, {
+          legendGroupLabels,
+          legendGroupSections,
+          legendGroupOrder,
+        }),
+        geoJsonLayers,
+        {
+          legendGroupLabels,
+          legendGroupSections,
+          legendGroupOrder,
+          workspaceBounds,
+        },
+      ),
     [
       allLegendFeatures,
+      geoJsonLayers,
       legendGroupLabels,
       legendGroupSections,
       legendGroupOrder,
+      workspaceBounds,
     ],
   );
 
@@ -1171,16 +1970,29 @@ export function ExportPreviewScene() {
 
   const visibleLegendEntries = useMemo(
     () =>
-      getLegendEntries(visibleLegendFeatures, {
-        legendGroupLabels,
-        legendGroupSections,
-        legendGroupOrder,
-      }),
+      mergeLegendEntriesWithGeoJsonLayers(
+        getLegendEntries(visibleLegendFeatures, {
+          legendGroupLabels,
+          legendGroupSections,
+          legendGroupOrder,
+        }),
+        geoJsonLayers,
+        {
+          legendGroupLabels,
+          legendGroupSections,
+          legendGroupOrder,
+          hiddenLegendFeatureIds,
+          workspaceBounds,
+        },
+      ),
     [
       visibleLegendFeatures,
+      geoJsonLayers,
+      hiddenLegendFeatureIds,
       legendGroupLabels,
       legendGroupSections,
       legendGroupOrder,
+      workspaceBounds,
     ],
   );
 
@@ -1224,6 +2036,18 @@ export function ExportPreviewScene() {
       viewportSize.height / layout.canvasHeight,
     );
   }, [layout, viewportSize.height, viewportSize.width]);
+
+  function handleBasemapDetailChange(
+    event: ReactChangeEvent<HTMLInputElement>,
+  ) {
+    const nextZoom = Number(event.currentTarget.value);
+
+    if (!Number.isFinite(nextZoom)) {
+      return;
+    }
+
+    setWorkspaceBasemapZoom(nextZoom);
+  }
 
   function handleResizePointerDown(
     event: ReactPointerEvent<HTMLButtonElement>,
@@ -1519,6 +2343,78 @@ export function ExportPreviewScene() {
           </div>
         </div>
 
+        {canAdjustBasemapDetail ? (
+          <div
+            className="flex min-w-[260px] max-w-sm flex-1 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 shadow-sm"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-700">
+                <span>Détail du fond</span>
+                <span className="tabular-nums text-slate-500">
+                  z{formatBasemapDetailZoom(basemapDetailZoomValue)} ·{" "}
+                  {formatBasemapDetailDelta(
+                    basemapDetailZoomValue,
+                    baseBasemapDetailZoom,
+                  )}
+                </span>
+              </div>
+
+              <input
+                type="range"
+                min={minPreviewBasemapDetailZoom}
+                max={maxPreviewBasemapDetailZoom}
+                step={PREVIEW_BASEMAP_DETAIL_STEP}
+                value={basemapDetailZoomValue}
+                onChange={handleBasemapDetailChange}
+                className="mt-1 w-full accent-indigo-600"
+                title="Change la quantité de détails du fond OpenFreeMap sans modifier la zone de travail"
+              />
+
+              <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] leading-tight text-slate-500">
+                <span>-{PREVIEW_BASEMAP_DETAIL_DELTA}</span>
+                <span>
+                  base z{formatBasemapDetailZoom(baseBasemapDetailZoom)}
+                </span>
+                <span>+{PREVIEW_BASEMAP_DETAIL_DELTA}</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <div
+          className="flex shrink-0 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 shadow-sm"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700">
+            <input
+              type="checkbox"
+              checked={scaleBarEnabled}
+              onChange={(event) =>
+                setScaleBarEnabled(event.currentTarget.checked)
+              }
+              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            Échelle
+          </label>
+
+          <select
+            value={scaleBarStyle}
+            onChange={(event) =>
+              setScaleBarStyle(event.currentTarget.value as ExportScaleBarStyle)
+            }
+            disabled={!scaleBarEnabled}
+            className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+            title="Choisir le style d’échelle affiché dans la preview et dans l’export"
+          >
+            {EXPORT_SCALE_BAR_STYLE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="shrink-0 text-right text-xs text-slate-500">
           <div>Format : {getExportFormatLabel(exportFormat)}</div>
           <div>
@@ -1560,6 +2456,12 @@ export function ExportPreviewScene() {
               style={rectToStyle(layout.mapRect)}
             >
               <ExportLeafletPreview symbolScale={layout.mapRenderScale} />
+              <ExportScaleBarPreview
+                enabled={scaleBarEnabled}
+                style={scaleBarStyle}
+                workspaceBounds={workspaceBounds}
+                mapRect={layout.mapRect}
+              />
             </div>
 
             <ExportLegendPreview
@@ -1578,6 +2480,7 @@ export function ExportPreviewScene() {
               onEntryLabelChange={handleLegendGroupLabelChange}
               onEntryHide={handleLegendEntryHide}
               onEntryMove={handleLegendEntryMove}
+              onRemoveSection={removeLegendSection}
             />
 
             <button

@@ -4,15 +4,20 @@ export type DroMapFeatureType = "marker" | "line" | "zone" | "text";
 
 export type DroMapFeatureDashStyle = "solid" | "dashed" | "dotted";
 
-export type DroMapLineVariant = "straight" | "freehand";
+export type DroMapZoneHatchingStyle =
+  | "none"
+  | "diagonal-right"
+  | "diagonal-left"
+  | "horizontal"
+  | "vertical";
 
-export type DroMapMarkerBuiltinSymbol =
-  | "circle"
-  | "square"
-  | "diamond"
-  | "triangle"
-  | "star"
-  | "pin";
+export type DroMapZoneVariant = "polygon" | "freehand" | "shape" | "boundary-fill";
+
+export type DroMapZoneShapeKind = "rectangle" | "circle" | "ellipse";
+
+export type DroMapLineVariant = "straight" | "freehand" | "traced";
+
+export type DroMapMarkerBuiltinSymbol = string;
 
 export type DroMapMarkerSymbol =
   | {
@@ -36,6 +41,20 @@ export type DroMapMarkerSymbol =
       id: string;
     };
 
+
+export type DroMapFeatureSource = {
+  type: "geojson";
+  importId: string;
+  sourceName?: string | null;
+  originalProperties?: Record<string, unknown>;
+  /** Identifiant stable de l’entité GeoJSON d’origine, utile pour regrouper les parties Multi* au retour en calque GeoJSON. */
+  originalFeatureId?: string | number | null;
+  /** Type géométrique d’origine avant conversion en objets DroMap. */
+  originalGeometryType?: string | null;
+  /** Index de la partie dans une géométrie MultiPoint/MultiLineString/MultiPolygon. */
+  originalPartIndex?: number | null;
+};
+
 export type DroMapFeatureStyle = {
   color?: string;
   weight?: number;
@@ -43,11 +62,39 @@ export type DroMapFeatureStyle = {
   fillColor?: string;
   fillOpacity?: number;
   dashStyle?: DroMapFeatureDashStyle;
+  zoneStrokeEnabled?: boolean;
+  zoneFillEnabled?: boolean;
+  zoneHatchingStyle?: DroMapZoneHatchingStyle | "dots";
+  zoneHatchingColor?: string;
+  zoneHatchingWeight?: number;
+  zoneHatchingSpacing?: number;
+  zoneDotsEnabled?: boolean;
+  zoneDotsColor?: string;
+  zoneDotsRadius?: number;
+  zoneDotsSpacing?: number;
+  zoneShapeWidth?: number;
+  zoneShapeHeight?: number;
+  zoneShapeRotation?: number;
   markerSize?: number;
+  markerFilled?: boolean;
   fontSize?: number;
+  textRotation?: number;
+  textBackgroundEnabled?: boolean;
+  textBackgroundColor?: string;
+  textBackgroundOpacity?: number;
+  textBorderEnabled?: boolean;
+  textBorderColor?: string;
+  textBorderWidth?: number;
   arrowStart?: boolean;
   arrowEnd?: boolean;
+  /**
+   * Niveau de lissage appliqué au moment de la création d’un dessin libre
+   * ou d’une zone libre. 0 = tracé brut, 100 = tracé fortement nettoyé.
+   */
+  freehandSmoothing?: number;
 };
+
+export type DroMapFeatureLockOverride = "locked" | "unlocked";
 
 export type DroMapFeatureProperties = {
   type: DroMapFeatureType;
@@ -56,6 +103,21 @@ export type DroMapFeatureProperties = {
   legendLabel?: string;
   symbol?: DroMapMarkerSymbol;
   lineVariant?: DroMapLineVariant;
+  zoneVariant?: DroMapZoneVariant;
+  zoneShapeKind?: DroMapZoneShapeKind;
+  order?: number;
+  locked?: boolean;
+  /**
+   * Verrouillage explicite de l’objet.
+   * - absent : l’objet suit uniquement son verrouillage simple et celui du calque ;
+   * - "locked" : l’objet est verrouillé individuellement ;
+   * - "unlocked" : ancien état conservé pour compatibilité, mais n’outrepasse plus un calque verrouillé.
+   */
+  lockOverride?: DroMapFeatureLockOverride;
+  layerId?: string;
+  /** Ordre de calque calculé au rendu, non utilisé comme donnée métier persistante. */
+  layerRenderOrder?: number;
+  source?: DroMapFeatureSource;
   meta: { version: 1 };
 };
 
@@ -104,9 +166,11 @@ const DEFAULT_MARKER_SYMBOL: DroMapMarkerSymbol = {
 
 const DEFAULT_STYLE: Record<DroMapFeatureType, DroMapFeatureStyle> = {
   marker: {
-    color: "#3388ff",
+    color: "#000000",
+    weight: 7,
     opacity: 1,
     markerSize: 18,
+    markerFilled: true,
   },
   line: {
     color: "#3388ff",
@@ -115,6 +179,7 @@ const DEFAULT_STYLE: Record<DroMapFeatureType, DroMapFeatureStyle> = {
     dashStyle: "solid",
     arrowStart: false,
     arrowEnd: false,
+    freehandSmoothing: 45,
   },
   zone: {
     color: "#3388ff",
@@ -123,11 +188,32 @@ const DEFAULT_STYLE: Record<DroMapFeatureType, DroMapFeatureStyle> = {
     fillColor: "#3388ff",
     fillOpacity: 0.2,
     dashStyle: "solid",
+    zoneStrokeEnabled: true,
+    zoneFillEnabled: false,
+    zoneHatchingStyle: "none",
+    zoneHatchingColor: "#111827",
+    zoneHatchingWeight: 2,
+    zoneHatchingSpacing: 14,
+    zoneDotsEnabled: false,
+    zoneDotsColor: "#111827",
+    zoneDotsRadius: 2,
+    zoneDotsSpacing: 14,
+    zoneShapeWidth: 180,
+    zoneShapeHeight: 110,
+    zoneShapeRotation: 0,
+    freehandSmoothing: 45,
   },
   text: {
     color: "#111827",
     opacity: 1,
     fontSize: 22,
+    textRotation: 0,
+    textBackgroundEnabled: false,
+    textBackgroundColor: "#ffffff",
+    textBackgroundOpacity: 0.85,
+    textBorderEnabled: false,
+    textBorderColor: "#111827",
+    textBorderWidth: 2,
   },
 };
 
@@ -158,6 +244,100 @@ export function isFreehandLineFeature(feature: DroMapFeature) {
     Array.isArray(feature.geometry.coordinates) &&
     feature.geometry.coordinates.length > 24
   );
+}
+
+export function isTracedLineFeature(feature: DroMapFeature | null | undefined) {
+  return (
+    feature?.properties?.type === "line" &&
+    feature.geometry?.type === "LineString" &&
+    feature.properties.lineVariant === "traced"
+  );
+}
+
+export function isQuickShapeZoneFeature(feature: DroMapFeature) {
+  return (
+    feature.properties?.type === "zone" &&
+    feature.geometry?.type === "Polygon" &&
+    feature.properties.zoneVariant === "shape"
+  );
+}
+
+export function isFreehandZoneFeature(feature: DroMapFeature) {
+  if (
+    feature.properties?.type !== "zone" ||
+    feature.geometry?.type !== "Polygon"
+  ) {
+    return false;
+  }
+
+  if (feature.properties.zoneVariant === "freehand") {
+    return true;
+  }
+
+  if (feature.properties.label?.trim().toLowerCase() === "zone libre") {
+    return true;
+  }
+
+  return false;
+}
+
+
+function getLargestPolygonRingLength(feature: DroMapFeature): number {
+  if (feature.geometry?.type !== "Polygon") {
+    return 0;
+  }
+
+  return feature.geometry.coordinates.reduce(
+    (largest, ring) => Math.max(largest, Array.isArray(ring) ? ring.length : 0),
+    0,
+  );
+}
+
+export function isBoundaryFillZoneFeature(feature: DroMapFeature | null | undefined): boolean {
+  if (
+    feature?.properties?.type !== "zone" ||
+    feature.geometry?.type !== "Polygon"
+  ) {
+    return false;
+  }
+
+  if (feature.properties.zoneVariant === "boundary-fill") {
+    return true;
+  }
+
+  /**
+   * Compatibilite avec les zones deja creees par les premiers patchs de
+   * remplissage vectoriel : elles etaient encore sauvegardees comme
+   * zoneVariant = "polygon" alors que leur contour contient souvent des
+   * dizaines/centaines de points issus du fond de carte.
+   * On les traite comme non-editables geometriquement pour eviter la foret
+   * de poignees Geoman.
+   */
+  return (
+    (feature.properties.zoneVariant === "polygon" ||
+      !feature.properties.zoneVariant) &&
+    getLargestPolygonRingLength(feature) > 48
+  );
+}
+
+export function getFeatureLockOverride(
+  feature: DroMapFeature | null | undefined,
+): DroMapFeatureLockOverride | null {
+  const override = feature?.properties?.lockOverride;
+
+  return override === "locked" || override === "unlocked" ? override : null;
+}
+
+export function isFeatureLocked(feature: DroMapFeature | null | undefined): boolean {
+  const override = getFeatureLockOverride(feature);
+
+  return feature?.properties?.locked === true || override === "locked";
+}
+
+export function isFeatureExplicitlyUnlocked(
+  feature: DroMapFeature | null | undefined,
+): boolean {
+  return getFeatureLockOverride(feature) === "unlocked";
 }
 
 export function geomanShapeToFeatureType(
@@ -255,6 +435,24 @@ function getFeatureLineVariantProperties(
   };
 }
 
+function getFeatureZoneVariantProperties(
+  featureType: DroMapFeatureType,
+  existing?: DroMapFeature,
+) {
+  if (featureType !== "zone") {
+    return {};
+  }
+
+  return {
+    ...(existing?.properties.zoneVariant
+      ? { zoneVariant: existing.properties.zoneVariant }
+      : {}),
+    ...(existing?.properties.zoneShapeKind
+      ? { zoneShapeKind: existing.properties.zoneShapeKind }
+      : {}),
+  };
+}
+
 /** Extrait une DroMapFeature depuis une couche Leaflet / Geoman. */
 export function layerToDroMapFeature(
   layer: Layer,
@@ -305,7 +503,12 @@ export function layerToDroMapFeature(
       style,
       label: existing?.properties.label ?? DEFAULT_LABEL[featureType],
       legendLabel: existing?.properties.legendLabel,
+      order: existing?.properties.order,
+      locked: existing?.properties.locked === true,
+      ...(existing?.properties.lockOverride ? { lockOverride: existing.properties.lockOverride } : {}),
+      layerId: existing?.properties.layerId,
       ...getFeatureLineVariantProperties(featureType, existing),
+      ...getFeatureZoneVariantProperties(featureType, existing),
       ...getFeatureSymbolProperties(featureType, existing),
       meta: { version: 1 },
     },

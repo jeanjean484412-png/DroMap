@@ -5,6 +5,7 @@ import L from "leaflet";
 import { useMap } from "react-leaflet";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
+import { getFeaturesByDrawOrder } from "@/lib/dromap/feature-order";
 import { getLeafletDashArray } from "./feature-style";
 import {
   createLineArrowBodyLeafletLayer,
@@ -13,8 +14,75 @@ import {
   getLineArrowStyle,
 } from "./line-arrow";
 import { createMarkerLeafletIcon } from "./marker-symbol";
+import { createTextDivIconRender } from "./text-rendering";
+import { createZoneHatchingLeafletLayer } from "./zone-hatching";
+import {
+  createAlignedZoneOutlineLeafletLayer,
+  shouldUseAlignedZoneOutline,
+} from "./zone-outline";
+import {
+  getZoneFillEnabled,
+  getZoneStrokeEnabled,
+  getZoneVisibleFillOpacity,
+  getZoneVisibleStrokeOpacity,
+} from "./zone-style";
 import { bindLayerGeomanEvents } from "@/lib/dromap/geoman-sync";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
+import { useEditorTestToolStore } from "@/stores/editor-test-tool";
+import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
+import {
+  getRenderableFeaturesForLayers,
+  useEditorTestLayersStore,
+} from "@/stores/editor-test-layers";
+
+const LINE_SELECTION_HITBOX_EXTRA_WEIGHT = 4;
+const LINE_SELECTION_HITBOX_MIN_WEIGHT = 7;
+const DROMAP_FEATURE_PANE_PREFIX = "dromap-feature-pane-";
+const DROMAP_FEATURE_PANE_BASE_Z_INDEX = 430;
+const DROMAP_FEATURE_PANE_STEP = 8;
+
+function shouldUseInteractiveFeatureHitboxes(activeTool: string) {
+  return activeTool === "select" || activeTool === "edit";
+}
+
+function getPanePointerEventsForTool(activeTool: string) {
+  return shouldUseInteractiveFeatureHitboxes(activeTool) ? "auto" : "none";
+}
+
+function getFeaturePaneName(featureId: string) {
+  return `${DROMAP_FEATURE_PANE_PREFIX}${featureId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
+function ensureFeaturePane(
+  map: L.Map,
+  feature: DroMapFeature,
+  drawIndex: number,
+  activeTool: string,
+) {
+  const paneName = getFeaturePaneName(feature.id);
+  const pane = map.getPane(paneName) ?? map.createPane(paneName);
+
+  pane.style.zIndex = String(
+    DROMAP_FEATURE_PANE_BASE_Z_INDEX + drawIndex * DROMAP_FEATURE_PANE_STEP,
+  );
+  pane.style.pointerEvents = getPanePointerEventsForTool(activeTool);
+
+  return paneName;
+}
+
+function getFeaturePaneNamesById(
+  map: L.Map,
+  features: DroMapFeature[],
+  activeTool: string,
+) {
+  const paneNamesById = new Map<string, string>();
+
+  features.forEach((feature, index) => {
+    paneNamesById.set(feature.id, ensureFeaturePane(map, feature, index, activeTool));
+  });
+
+  return paneNamesById;
+}
 
 type DromapLayer = L.Layer & {
   dromapFeatureId?: string;
@@ -25,6 +93,18 @@ type DromapArrowLayer = L.Layer & {
   dromapArrowKind?: "line-body" | "line-end";
 };
 
+type DromapLineHitboxLayer = L.Layer & {
+  dromapHitboxOwnerId?: string;
+};
+
+type DromapZoneHatchingLayer = L.Layer & {
+  dromapHatchOwnerId?: string;
+};
+
+type DromapZoneOutlineLayer = L.Layer & {
+  dromapZoneOutlineOwnerId?: string;
+};
+
 type GeomanEditableLayer = L.Layer & {
   pm?: {
     enabled?: () => boolean;
@@ -32,6 +112,20 @@ type GeomanEditableLayer = L.Layer & {
     enable?: () => void;
   };
 };
+
+type LayerWithPaneOption = L.Layer & {
+  options?: {
+    pane?: string;
+  };
+};
+
+function layerUsesExpectedPane(layer: L.Layer, paneName?: string) {
+  if (!paneName) {
+    return true;
+  }
+
+  return (layer as LayerWithPaneOption).options?.pane === paneName;
+}
 
 function refreshGeomanEditHandles(layer: L.Layer) {
   const geomanLayer = layer as GeomanEditableLayer;
@@ -51,6 +145,20 @@ function refreshGeomanEditHandles(layer: L.Layer) {
 
 function getLayerFeatureId(layer: L.Layer) {
   return (layer as DromapLayer).dromapFeatureId;
+}
+
+function getLayerDrawOrderOwnerId(layer: L.Layer) {
+  const dromapLayer = layer as DromapLayer &
+    DromapArrowLayer &
+    DromapLineHitboxLayer;
+
+  return (
+    dromapLayer.dromapFeatureId ??
+    dromapLayer.dromapArrowOwnerId ??
+    dromapLayer.dromapHitboxOwnerId ??
+    (dromapLayer as DromapZoneHatchingLayer).dromapHatchOwnerId ??
+    (dromapLayer as DromapZoneOutlineLayer).dromapZoneOutlineOwnerId
+  );
 }
 
 function setLayerFeatureId(layer: L.Layer, featureId: string) {
@@ -87,15 +195,202 @@ function removeLineArrowLayers(map: L.Map) {
   }
 }
 
-function syncLineArrowLayers(map: L.Map, features: DroMapFeature[]) {
+function isDromapLineHitboxLayer(
+  layer: L.Layer,
+): layer is DromapLineHitboxLayer {
+  return Boolean((layer as DromapLineHitboxLayer).dromapHitboxOwnerId);
+}
+
+function isDromapZoneHatchingLayer(
+  layer: L.Layer,
+): layer is DromapZoneHatchingLayer {
+  return Boolean((layer as DromapZoneHatchingLayer).dromapHatchOwnerId);
+}
+
+function removeLineHitboxLayers(map: L.Map) {
+  const layersToRemove: L.Layer[] = [];
+
+  map.eachLayer((layer) => {
+    if (isDromapLineHitboxLayer(layer)) {
+      layersToRemove.push(layer);
+    }
+  });
+
+  for (const layer of layersToRemove) {
+    map.removeLayer(layer);
+  }
+}
+
+function removeZoneHatchingLayers(map: L.Map) {
+  const layersToRemove: L.Layer[] = [];
+
+  map.eachLayer((layer) => {
+    if (isDromapZoneHatchingLayer(layer)) {
+      layersToRemove.push(layer);
+    }
+  });
+
+  for (const layer of layersToRemove) {
+    map.removeLayer(layer);
+  }
+}
+
+function isDromapZoneOutlineLayer(
+  layer: L.Layer,
+): layer is DromapZoneOutlineLayer {
+  return Boolean((layer as DromapZoneOutlineLayer).dromapZoneOutlineOwnerId);
+}
+
+function removeZoneOutlineLayers(map: L.Map) {
+  const layersToRemove: L.Layer[] = [];
+
+  map.eachLayer((layer) => {
+    if (isDromapZoneOutlineLayer(layer)) {
+      layersToRemove.push(layer);
+    }
+  });
+
+  for (const layer of layersToRemove) {
+    map.removeLayer(layer);
+  }
+}
+
+function getLineHitboxWeight(feature: DroMapFeature) {
+  const weight = feature.properties.style.weight ?? 3;
+
+  return Math.max(
+    weight + LINE_SELECTION_HITBOX_EXTRA_WEIGHT,
+    LINE_SELECTION_HITBOX_MIN_WEIGHT,
+  );
+}
+
+function createLineHitboxLayer(
+  feature: DroMapFeature,
+  paneName?: string,
+): L.Polyline | null {
+  if (feature.geometry.type !== "LineString") {
+    return null;
+  }
+
+  const latLngs = feature.geometry.coordinates.map((coordinate) =>
+    lngLatToLatLng(coordinate),
+  );
+
+  return L.polyline(latLngs, {
+    color: "transparent",
+    opacity: 1,
+    weight: getLineHitboxWeight(feature),
+    lineCap: "round",
+    lineJoin: "round",
+    interactive: true,
+    bubblingMouseEvents: false,
+    className: "dromap-line-selection-hitbox",
+    pmIgnore: true,
+    ...(paneName ? { pane: paneName } : {}),
+  } as L.PolylineOptions & { pmIgnore: boolean });
+}
+
+function syncLineHitboxLayers(
+  map: L.Map,
+  features: DroMapFeature[],
+  paneNamesById: Map<string, string>,
+) {
+  removeLineHitboxLayers(map);
+
+  for (const feature of features) {
+    const hitboxLayer = createLineHitboxLayer(
+      feature,
+      paneNamesById.get(feature.id),
+    );
+
+    if (!hitboxLayer) {
+      continue;
+    }
+
+    (hitboxLayer as DromapLineHitboxLayer).dromapHitboxOwnerId = feature.id;
+    hitboxLayer.addTo(map);
+  }
+}
+
+function syncZoneHatchingLayers(
+  map: L.Map,
+  features: DroMapFeature[],
+  paneNamesById: Map<string, string>,
+) {
+  removeZoneHatchingLayers(map);
+
+  for (const feature of features) {
+    if (feature.properties.type !== "zone") {
+      continue;
+    }
+
+    const hatchingLayer = createZoneHatchingLeafletLayer(
+      feature,
+      map,
+      L,
+      paneNamesById.get(feature.id),
+    );
+
+    if (!hatchingLayer) {
+      continue;
+    }
+
+    (hatchingLayer as DromapZoneHatchingLayer).dromapHatchOwnerId = feature.id;
+    hatchingLayer.eachLayer((layer) => {
+      (layer as DromapZoneHatchingLayer).dromapHatchOwnerId = feature.id;
+    });
+    hatchingLayer.addTo(map);
+  }
+}
+
+function syncZoneOutlineLayers(
+  map: L.Map,
+  features: DroMapFeature[],
+  paneNamesById: Map<string, string>,
+) {
+  removeZoneOutlineLayers(map);
+
+  for (const feature of features) {
+    if (feature.properties.type !== "zone") {
+      continue;
+    }
+
+    const outlineLayer = createAlignedZoneOutlineLeafletLayer(
+      feature,
+      map,
+      L,
+      paneNamesById.get(feature.id),
+    );
+
+    if (!outlineLayer) {
+      continue;
+    }
+
+    (outlineLayer as DromapZoneOutlineLayer).dromapZoneOutlineOwnerId = feature.id;
+    outlineLayer.eachLayer((layer) => {
+      (layer as DromapZoneOutlineLayer).dromapZoneOutlineOwnerId = feature.id;
+    });
+    outlineLayer.addTo(map);
+  }
+}
+
+function syncLineArrowLayers(
+  map: L.Map,
+  features: DroMapFeature[],
+  paneNamesById: Map<string, string>,
+) {
   removeLineArrowLayers(map);
 
   for (const feature of features) {
+    const paneName = paneNamesById.get(feature.id);
     const bodyLayer = createLineArrowBodyLeafletLayer(
       feature,
       map,
       L,
-      getPathOptions(feature, { interactionOnly: false }),
+      getPathOptions(feature, {
+        interactionOnly: false,
+        paneName,
+      }),
     );
 
     if (bodyLayer) {
@@ -106,7 +401,7 @@ function syncLineArrowLayers(map: L.Map, features: DroMapFeature[]) {
       bodyLayer.addTo(map);
     }
 
-    const arrowLayer = createLineArrowLeafletLayer(feature, map, L);
+    const arrowLayer = createLineArrowLeafletLayer(feature, map, L, paneName);
 
     if (!arrowLayer) {
       continue;
@@ -120,79 +415,112 @@ function syncLineArrowLayers(map: L.Map, features: DroMapFeature[]) {
   }
 }
 
+type LayerWithBringToFront = L.Layer & {
+  bringToFront?: () => void;
+};
+
+function layerCanBringToFront(layer: L.Layer): layer is LayerWithBringToFront {
+  return typeof (layer as LayerWithBringToFront).bringToFront === "function";
+}
+
+function applyFeatureLayerDrawOrder(
+  map: L.Map,
+  featuresByDrawOrder: DroMapFeature[],
+  paneNamesById: Map<string, string>,
+  activeTool: string,
+) {
+  const orderIndexByFeatureId = new Map<string, number>();
+  const layersByFeatureId = new Map<string, L.Layer[]>();
+
+  featuresByDrawOrder.forEach((feature, index) => {
+    orderIndexByFeatureId.set(feature.id, index);
+
+    const paneName = paneNamesById.get(feature.id);
+    const pane = paneName ? map.getPane(paneName) : null;
+
+    if (pane) {
+      pane.style.zIndex = String(
+        DROMAP_FEATURE_PANE_BASE_Z_INDEX + index * DROMAP_FEATURE_PANE_STEP,
+      );
+      pane.style.pointerEvents = getPanePointerEventsForTool(activeTool);
+    }
+  });
+
+  map.eachLayer((layer) => {
+    const ownerId = getLayerDrawOrderOwnerId(layer);
+
+    if (!ownerId || !orderIndexByFeatureId.has(ownerId)) {
+      return;
+    }
+
+    const currentLayers = layersByFeatureId.get(ownerId) ?? [];
+    currentLayers.push(layer);
+    layersByFeatureId.set(ownerId, currentLayers);
+
+    const orderIndex = orderIndexByFeatureId.get(ownerId) ?? 0;
+
+    if (layer instanceof L.Marker) {
+      layer.setZIndexOffset(0);
+    }
+  });
+
+  for (const feature of featuresByDrawOrder) {
+    const layers = layersByFeatureId.get(feature.id) ?? [];
+
+    for (const layer of layers) {
+      if (layerCanBringToFront(layer)) {
+        layer.bringToFront?.();
+      }
+    }
+  }
+}
+
 function getPathOptions(
   feature: DroMapFeature,
-  options: { interactionOnly?: boolean } = {},
+  options: { interactionOnly?: boolean; paneName?: string } = {},
 ): L.PathOptions {
   const style = feature.properties.style;
   const shouldHideFullArrowLine =
     options.interactionOnly === true && featureHasLineArrow(feature);
 
-  const displayOpacity =
-    featureHasLineArrow(feature) ? getLineArrowStyle(feature).opacity : style.opacity ?? 1;
+  const displayOpacity = featureHasLineArrow(feature)
+    ? getLineArrowStyle(feature).opacity
+    : (style.opacity ?? 1);
+
+  const isZone = feature.properties.type === "zone";
+  const zoneStrokeOpacity = isZone
+    ? getZoneVisibleStrokeOpacity(feature)
+    : displayOpacity;
+  const zoneFillOpacity = isZone ? getZoneVisibleFillOpacity(feature) : 0;
+  const useAlignedZoneOutline = isZone && shouldUseAlignedZoneOutline(feature);
 
   return {
     color: style.color ?? "#e63946",
-    opacity: shouldHideFullArrowLine ? 0 : displayOpacity,
-    weight: style.weight ?? 3,
+    opacity: shouldHideFullArrowLine || useAlignedZoneOutline ? 0 : zoneStrokeOpacity,
+    weight: getZoneStrokeEnabled(feature) && !useAlignedZoneOutline ? (style.weight ?? 3) : 0,
+    stroke: !isZone || (getZoneStrokeEnabled(feature) && !useAlignedZoneOutline),
+    fill: isZone ? true : false,
     fillColor: style.fillColor ?? style.color ?? "#e63946",
-    fillOpacity:
-      feature.properties.type === "zone" ? style.fillOpacity ?? 0.3 : 0,
-    dashArray: getLeafletDashArray(feature),
+    fillOpacity: zoneFillOpacity,
+    dashArray: useAlignedZoneOutline ? undefined : getLeafletDashArray(feature),
     lineCap: "round",
     lineJoin: "round",
+    className: "dromap-selectable-layer",
+    ...(options.paneName ? { pane: options.paneName } : {}),
   };
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
 function createTextIcon(feature: DroMapFeature) {
-  const text = feature.properties.label?.trim() || "Texte";
-  const color = feature.properties.style.color ?? "#111827";
-  const opacity = clamp(feature.properties.style.opacity ?? 1, 0, 1);
-  const fontSize = clamp(feature.properties.style.fontSize ?? 22, 10, 72);
-
-  const width = clamp(Math.round(text.length * fontSize * 0.62 + 24), 56, 420);
-  const height = Math.round(fontSize * 1.35 + 14);
+  const renderedText = createTextDivIconRender(feature, {
+    minWidth: 56,
+    maxWidth: 520,
+  });
 
   return L.divIcon({
     className: "dromap-text-icon",
-    iconSize: [width, height],
-    iconAnchor: [width / 2, height / 2],
-    html: `
-      <span
-        style="
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          box-sizing:border-box;
-          width:${width}px;
-          height:${height}px;
-          color:${color};
-          opacity:${opacity};
-          font-size:${fontSize}px;
-          font-weight:700;
-          line-height:1.15;
-          white-space:nowrap;
-          text-align:center;
-          text-shadow:
-            0 1px 3px rgba(255,255,255,0.95),
-            0 1px 5px rgba(0,0,0,0.25);
-          pointer-events:none;
-        "
-      >${escapeHtml(text)}</span>
-    `,
+    iconSize: [renderedText.width, renderedText.height],
+    iconAnchor: [renderedText.anchorX, renderedText.anchorY],
+    html: renderedText.html,
   });
 }
 
@@ -209,12 +537,16 @@ function lngLatToLatLng(coordinates: [number, number]): L.LatLngExpression {
   return [lat, lng];
 }
 
-function createLayerFromFeature(feature: DroMapFeature): L.Layer | null {
+function createLayerFromFeature(
+  feature: DroMapFeature,
+  paneName?: string,
+): L.Layer | null {
   const geometry = feature.geometry;
 
   if (geometry.type === "Point") {
     return L.marker(lngLatToLatLng(geometry.coordinates), {
       icon: createPointIcon(feature),
+      ...(paneName ? { pane: paneName } : {}),
     });
   }
 
@@ -223,8 +555,12 @@ function createLayerFromFeature(feature: DroMapFeature): L.Layer | null {
       lngLatToLatLng(coordinate),
     );
 
-    return L.polyline(latLngs,
-      getPathOptions(feature, { interactionOnly: featureHasLineArrow(feature) }),
+    return L.polyline(
+      latLngs,
+      getPathOptions(feature, {
+        interactionOnly: featureHasLineArrow(feature),
+        paneName,
+      }),
     );
   }
 
@@ -233,7 +569,7 @@ function createLayerFromFeature(feature: DroMapFeature): L.Layer | null {
       ring.map((coordinate) => lngLatToLatLng(coordinate)),
     );
 
-    return L.polygon(rings, getPathOptions(feature));
+    return L.polygon(rings, getPathOptions(feature, { paneName }));
   }
 
   return null;
@@ -242,7 +578,12 @@ function createLayerFromFeature(feature: DroMapFeature): L.Layer | null {
 function updateExistingLayerFromFeature(
   layer: L.Layer,
   feature: DroMapFeature,
+  paneName?: string,
 ): boolean {
+  if (!layerUsesExpectedPane(layer, paneName)) {
+    return false;
+  }
+
   const geometry = feature.geometry;
 
   if (geometry.type === "Point" && layer instanceof L.Marker) {
@@ -259,7 +600,10 @@ function updateExistingLayerFromFeature(
 
     layer.setLatLngs(latLngs);
     layer.setStyle(
-      getPathOptions(feature, { interactionOnly: featureHasLineArrow(feature) }),
+      getPathOptions(feature, {
+        interactionOnly: featureHasLineArrow(feature),
+        paneName,
+      }),
     );
     refreshGeomanEditHandles(layer);
     return true;
@@ -271,7 +615,7 @@ function updateExistingLayerFromFeature(
     );
 
     layer.setLatLngs(rings);
-    layer.setStyle(getPathOptions(feature));
+    layer.setStyle(getPathOptions(feature, { paneName }));
     refreshGeomanEditHandles(layer);
     return true;
   }
@@ -283,9 +627,17 @@ export function FeaturesStoreRenderer() {
   const map = useMap();
 
   const features = useEditorTestFeaturesStore((state) => state.features);
+  const layers = useEditorTestLayersStore((state) => state.layers);
+  const activeTool = useEditorTestToolStore((state) => state.activeTool);
+  const workspaceBounds = useEditorTestWorkspaceStore((state) => state.workspaceBounds);
 
   useEffect(() => {
-    const featureIds = new Set(features.map((feature) => feature.id));
+    const renderableFeatures = getRenderableFeaturesForLayers(features, layers, {
+      workspaceBounds,
+    });
+    const featuresByDrawOrder = getFeaturesByDrawOrder(renderableFeatures);
+    const paneNamesById = getFeaturePaneNamesById(map, featuresByDrawOrder, activeTool);
+    const featureIds = new Set(renderableFeatures.map((feature) => feature.id));
 
     map.eachLayer((layer) => {
       const featureId = getLayerFeatureId(layer);
@@ -295,11 +647,21 @@ export function FeaturesStoreRenderer() {
       }
     });
 
-    for (const feature of features) {
+    if (shouldUseInteractiveFeatureHitboxes(activeTool)) {
+      syncLineHitboxLayers(map, featuresByDrawOrder, paneNamesById);
+    } else {
+      removeLineHitboxLayers(map);
+    }
+
+    for (const feature of featuresByDrawOrder) {
       const existingLayer = findLayerByFeatureId(map, feature.id);
 
       if (existingLayer) {
-        const updated = updateExistingLayerFromFeature(existingLayer, feature);
+        const updated = updateExistingLayerFromFeature(
+          existingLayer,
+          feature,
+          paneNamesById.get(feature.id),
+        );
 
         if (updated) {
           continue;
@@ -308,7 +670,10 @@ export function FeaturesStoreRenderer() {
         map.removeLayer(existingLayer);
       }
 
-      const layer = createLayerFromFeature(feature);
+      const layer = createLayerFromFeature(
+        feature,
+        paneNamesById.get(feature.id),
+      );
 
       if (!layer) {
         continue;
@@ -319,19 +684,28 @@ export function FeaturesStoreRenderer() {
       layer.addTo(map);
     }
 
-    syncLineArrowLayers(map, features);
+    syncLineArrowLayers(map, featuresByDrawOrder, paneNamesById);
+    syncZoneHatchingLayers(map, featuresByDrawOrder, paneNamesById);
+    syncZoneOutlineLayers(map, featuresByDrawOrder, paneNamesById);
+    applyFeatureLayerDrawOrder(map, featuresByDrawOrder, paneNamesById, activeTool);
 
     const handleViewportChange = () => {
-      syncLineArrowLayers(map, features);
+      syncLineArrowLayers(map, featuresByDrawOrder, paneNamesById);
+      syncZoneHatchingLayers(map, featuresByDrawOrder, paneNamesById);
+      syncZoneOutlineLayers(map, featuresByDrawOrder, paneNamesById);
+      applyFeatureLayerDrawOrder(map, featuresByDrawOrder, paneNamesById, activeTool);
     };
 
-    map.on("zoomend resize", handleViewportChange);
+    map.on("moveend zoomend resize", handleViewportChange);
 
     return () => {
-      map.off("zoomend resize", handleViewportChange);
+      map.off("moveend zoomend resize", handleViewportChange);
       removeLineArrowLayers(map);
+      removeLineHitboxLayers(map);
+      removeZoneHatchingLayers(map);
+      removeZoneOutlineLayers(map);
     };
-  }, [features, map]);
+  }, [features, layers, activeTool, map, workspaceBounds]);
 
   return null;
 }

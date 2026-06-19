@@ -4,13 +4,25 @@ import {
   boundsFromRectangle,
   toLatLngBounds,
 } from "@/lib/dromap/workspace-bounds";
-import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
+import type {
+  WorkspaceBounds,
+  WorkspaceClampBounds,
+} from "@/lib/dromap/workspace-bounds";
 
 const WORKSPACE_RECT_STYLE: L.PathOptions = {
-  color: "#d97706",
+  // La zone de travail ne doit plus poser de voile jaunâtre sur la carte.
+  // Elle reste seulement visible pendant la sélection/modification de zone,
+  // avec un contour neutre et aucun remplissage. En mode édition, elle est
+  // complètement retirée par WorkspaceBoundsLayer.
+  color: "#2563eb",
+  opacity: 0.9,
   weight: 2,
-  fillColor: "#fbbf24",
-  fillOpacity: 0.12,
+  dashArray: "6 6",
+  fill: false,
+  fillOpacity: 0,
+  interactive: false,
+  bubblingMouseEvents: false,
+  className: "dromap-workspace-rectangle",
 };
 
 type DroMapWorkspaceRectangle = L.Rectangle & {
@@ -19,6 +31,19 @@ type DroMapWorkspaceRectangle = L.Rectangle & {
 
 let workspaceRectangleLayer: DroMapWorkspaceRectangle | null = null;
 
+function disableWorkspaceLayerPointerEvents(layer: L.Rectangle) {
+  const element = layer.getElement() as SVGElement | HTMLElement | null;
+
+  if (!element) {
+    return;
+  }
+
+  element.classList.remove("leaflet-interactive");
+  element.classList.remove("dromap-selectable-layer");
+  element.style.pointerEvents = "none";
+  element.style.cursor = "default";
+}
+
 function configureWorkspaceLayer(layer: L.Rectangle): DroMapWorkspaceRectangle {
   const workspaceLayer = layer as DroMapWorkspaceRectangle;
 
@@ -26,6 +51,8 @@ function configureWorkspaceLayer(layer: L.Rectangle): DroMapWorkspaceRectangle {
   workspaceLayer.setStyle(WORKSPACE_RECT_STYLE);
   workspaceLayer.options.pmIgnore = true;
   workspaceLayer.options.interactive = false;
+  workspaceLayer.options.bubblingMouseEvents = false;
+  disableWorkspaceLayerPointerEvents(workspaceLayer);
 
   return workspaceLayer;
 }
@@ -34,6 +61,7 @@ function configureWorkspaceLayer(layer: L.Rectangle): DroMapWorkspaceRectangle {
 export function replaceWorkspaceRectangle(
   map: L.Map,
   layer: L.Rectangle,
+  clampBounds?: WorkspaceClampBounds | null,
 ): WorkspaceBounds {
   if (workspaceRectangleLayer && map.hasLayer(workspaceRectangleLayer)) {
     map.removeLayer(workspaceRectangleLayer);
@@ -42,7 +70,10 @@ export function replaceWorkspaceRectangle(
   const configuredLayer = configureWorkspaceLayer(layer);
   workspaceRectangleLayer = configuredLayer;
 
-  return boundsFromRectangle(configuredLayer);
+  const bounds = boundsFromRectangle(configuredLayer, clampBounds);
+  configuredLayer.setBounds(toLatLngBounds(bounds));
+
+  return bounds;
 }
 
 /**
@@ -68,6 +99,7 @@ export function ensureWorkspaceRectangleOnMap(
   const configuredLayer = configureWorkspaceLayer(layer);
 
   configuredLayer.addTo(map);
+  configureWorkspaceLayer(configuredLayer);
   workspaceRectangleLayer = configuredLayer;
 }
 

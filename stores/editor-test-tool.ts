@@ -6,7 +6,11 @@ export type EditorTestActiveTool =
   | "marker"
   | "line"
   | "freehand"
+  | "trace-line"
   | "zone"
+  | "freehand-zone"
+  | "fill-zone"
+  | "shape"
   | "text";
 
 type EditorTestToolState = {

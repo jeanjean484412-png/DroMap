@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 export type ExportLegendPosition = "right" | "left" | "bottom";
+export type ExportScaleBarStyle = "bar" | "alternating" | "line" | "boxed";
 
 export type ExportFormat =
   | "auto"
@@ -12,6 +13,7 @@ export type ExportFormat =
 
 type EditorTestExportState = {
   isExportPanelOpen: boolean;
+  isImportPanelOpen: boolean;
   legendTitle: string;
   legendPosition: ExportLegendPosition;
   exportFormat: ExportFormat;
@@ -23,6 +25,9 @@ type EditorTestExportState = {
   legendItemFontSize: number;
   legendSectionTitleFontSize: number;
 
+  scaleBarEnabled: boolean;
+  scaleBarStyle: ExportScaleBarStyle;
+
   hiddenLegendFeatureIds: string[];
   legendFeatureOrder: string[];
   legendGroupOrder: string[];
@@ -32,6 +37,8 @@ type EditorTestExportState = {
 
   openExportPanel: () => void;
   closeExportPanel: () => void;
+  openImportPanel: () => void;
+  closeImportPanel: () => void;
   setLegendTitle: (title: string) => void;
   setLegendPosition: (position: ExportLegendPosition) => void;
   setExportFormat: (format: ExportFormat) => void;
@@ -42,6 +49,8 @@ type EditorTestExportState = {
   setLegendTitleFontSize: (fontSize: number) => void;
   setLegendItemFontSize: (fontSize: number) => void;
   setLegendSectionTitleFontSize: (fontSize: number) => void;
+  setScaleBarEnabled: (enabled: boolean) => void;
+  setScaleBarStyle: (style: ExportScaleBarStyle) => void;
 
   setLegendFeatureOrder: (featureIds: string[]) => void;
   setLegendGroupOrder: (groupKeys: string[]) => void;
@@ -101,6 +110,7 @@ function createNewSectionName(existingSections: string[]) {
 
 export const useEditorTestExportStore = create<EditorTestExportState>((set) => ({
   isExportPanelOpen: false,
+  isImportPanelOpen: false,
   legendTitle: "Légende",
   legendPosition: "right",
   exportFormat: "auto",
@@ -112,6 +122,9 @@ export const useEditorTestExportStore = create<EditorTestExportState>((set) => (
   legendItemFontSize: 24,
   legendSectionTitleFontSize: 20,
 
+  scaleBarEnabled: false,
+  scaleBarStyle: "alternating",
+
   hiddenLegendFeatureIds: [],
   legendFeatureOrder: [],
   legendGroupOrder: [],
@@ -120,11 +133,19 @@ export const useEditorTestExportStore = create<EditorTestExportState>((set) => (
   legendGroupSections: {},
 
   openExportPanel: () => {
-    set({ isExportPanelOpen: true });
+    set({ isExportPanelOpen: true, isImportPanelOpen: false });
   },
 
   closeExportPanel: () => {
     set({ isExportPanelOpen: false });
+  },
+
+  openImportPanel: () => {
+    set({ isImportPanelOpen: true, isExportPanelOpen: false });
+  },
+
+  closeImportPanel: () => {
+    set({ isImportPanelOpen: false });
   },
 
   setLegendTitle: (title) => {
@@ -161,6 +182,14 @@ export const useEditorTestExportStore = create<EditorTestExportState>((set) => (
 
   setLegendSectionTitleFontSize: (fontSize) => {
     set({ legendSectionTitleFontSize: fontSize });
+  },
+
+  setScaleBarEnabled: (enabled) => {
+    set({ scaleBarEnabled: enabled });
+  },
+
+  setScaleBarStyle: (style) => {
+    set({ scaleBarStyle: style });
   },
 
   setLegendFeatureOrder: (featureIds) => {
@@ -313,6 +342,8 @@ export const useEditorTestExportStore = create<EditorTestExportState>((set) => (
       legendTitleFontSize: 32,
       legendItemFontSize: 24,
       legendSectionTitleFontSize: 20,
+      scaleBarEnabled: false,
+      scaleBarStyle: "alternating",
       hiddenLegendFeatureIds: [],
       legendFeatureOrder: [],
       legendGroupOrder: [],

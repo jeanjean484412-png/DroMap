@@ -6,6 +6,7 @@ import L from "leaflet";
 import "@geoman-io/leaflet-geoman-free";
 import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 
+import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
 import { applyGeomanForEditorMode } from "@/lib/dromap/geoman-toolbar";
 import {
   bindLayerGeomanEvents,
@@ -18,6 +19,13 @@ import {
   replaceWorkspaceRectangle,
 } from "@/lib/dromap/workspace-rectangle";
 import { configureLeafletIcons, defaultMarkerIcon } from "@/lib/leaflet-icon";
+import { getWorkspaceClampBoundsFromLatLngBounds } from "@/lib/dromap/workspace-bounds";
+import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
+import {
+  DROMAP_WORLD_BOUNDS,
+  dromapBasemapBoundsToLeafletBounds,
+  getBasemapWorkspaceBounds,
+} from "./basemap-viewport-bounds";
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 
@@ -45,7 +53,21 @@ export default function GeomanControls() {
           event.shape === "Rectangle" &&
           event.layer instanceof L.Rectangle
         ) {
-          const bounds = replaceWorkspaceRectangle(map, event.layer);
+          const basemapState = useEditorTestBasemapStore.getState();
+          const activeBasemapBounds = basemapState.activeBasemapBounds;
+          const basemap = getDromapBasemapConfig(basemapState.basemapId);
+          const viewportClampBounds = activeBasemapBounds
+            ? dromapBasemapBoundsToLeafletBounds(activeBasemapBounds)
+            : DROMAP_WORLD_BOUNDS;
+          const workspaceClampBounds = getBasemapWorkspaceBounds(
+            basemap,
+            viewportClampBounds,
+          );
+          const bounds = replaceWorkspaceRectangle(
+            map,
+            event.layer,
+            getWorkspaceClampBoundsFromLatLngBounds(workspaceClampBounds),
+          );
           useEditorTestWorkspaceStore.getState().setWorkspaceBounds(bounds);
 
           window.setTimeout(() => {

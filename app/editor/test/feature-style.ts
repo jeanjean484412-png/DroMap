@@ -21,7 +21,7 @@ export const DROMAP_DASH_STYLES: {
 
 export const DEFAULT_MARKER_SIZE = 18;
 export const MIN_MARKER_SIZE = 8;
-export const MAX_MARKER_SIZE = 42;
+export const MAX_MARKER_SIZE = 120;
 
 export function getFeatureDashStyle(feature: FeatureWithStyle): DroMapDashStyle {
   const rawValue = feature.properties?.style?.dashStyle;

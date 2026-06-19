@@ -6,8 +6,16 @@ import { useMap } from "react-leaflet";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
 import { getLeafletDashArray } from "./feature-style";
+import { shouldUseAlignedZoneOutline } from "./zone-outline";
 import { createMarkerLeafletIcon } from "./marker-symbol";
 import { featureHasLineArrow, getLineArrowStyle } from "./line-arrow";
+import { createTextDivIconRender } from "./text-rendering";
+import {
+  getZoneFillEnabled,
+  getZoneStrokeEnabled,
+  getZoneVisibleFillOpacity,
+  getZoneVisibleStrokeOpacity,
+} from "./zone-style";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
 
 function clamp(value: number, min: number, max: number) {
@@ -24,51 +32,17 @@ function safeColor(color: unknown, fallback = "#e63946") {
   return fallback;
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
 function createTextIcon(feature: DroMapFeature) {
-  const text = feature.properties.label?.trim() || "Texte";
-  const color = safeColor(feature.properties.style.color, "#111827");
-  const opacity = clamp(feature.properties.style.opacity ?? 1, 0, 1);
-  const fontSize = clamp(feature.properties.style.fontSize ?? 22, 10, 72);
-
-  const width = clamp(Math.round(text.length * fontSize * 0.62 + 24), 56, 420);
-  const height = Math.round(fontSize * 1.35 + 14);
+  const renderedText = createTextDivIconRender(feature, {
+    minWidth: 56,
+    maxWidth: 520,
+  });
 
   return L.divIcon({
     className: "dromap-text-icon",
-    iconSize: [width, height],
-    iconAnchor: [width / 2, height / 2],
-    html: `
-      <span
-        style="
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          box-sizing:border-box;
-          width:${width}px;
-          height:${height}px;
-          color:${color};
-          opacity:${opacity};
-          font-size:${fontSize}px;
-          font-weight:700;
-          line-height:1.15;
-          white-space:nowrap;
-          text-align:center;
-          text-shadow:
-            0 1px 3px rgba(255,255,255,0.95),
-            0 1px 5px rgba(0,0,0,0.25);
-          pointer-events:none;
-        "
-      >${escapeHtml(text)}</span>
-    `,
+    iconSize: [renderedText.width, renderedText.height],
+    iconAnchor: [renderedText.anchorX, renderedText.anchorY],
+    html: renderedText.html,
   });
 }
 
@@ -84,8 +58,7 @@ function applyFeatureStyleToLayer(layer: L.Layer, feature: DroMapFeature) {
     featureHasLineArrow(feature) && rawOpacity <= 0.05
       ? getLineArrowStyle(feature).opacity
       : rawOpacity;
-  const fillOpacity = clamp(style.fillOpacity ?? 0.3, 0, 1);
-  const weight = clamp(style.weight ?? 3, 1, 20);
+  const weight = clamp(style.weight ?? 3, 0, 20);
   const dashArray = getLeafletDashArray(feature);
 
   const isText = type === "text";
@@ -107,14 +80,26 @@ function applyFeatureStyleToLayer(layer: L.Layer, feature: DroMapFeature) {
 
   if ((isLine || isZone) && layer instanceof L.Path) {
     const isHiddenInteractionLine = isLine && featureHasLineArrow(feature);
+    const zoneStrokeEnabled = isZone && getZoneStrokeEnabled(feature);
+    const zoneFillEnabled = isZone && getZoneFillEnabled(feature);
+    const useAlignedZoneOutline = isZone && shouldUseAlignedZoneOutline(feature);
 
     layer.setStyle({
       color,
-      opacity: isHiddenInteractionLine ? 0 : opacity,
-      weight,
+      opacity: isHiddenInteractionLine
+        ? 0
+        : isZone
+          ? useAlignedZoneOutline
+            ? 0
+            : getZoneVisibleStrokeOpacity(feature)
+          : opacity,
+      weight: isZone ? (zoneStrokeEnabled && !useAlignedZoneOutline ? weight : 0) : weight,
+      stroke: isZone ? zoneStrokeEnabled && !useAlignedZoneOutline : true,
+      fill: isZone ? true : false,
       fillColor,
-      fillOpacity: isZone ? fillOpacity : 0,
-      dashArray,
+      fillOpacity:
+        isZone && zoneFillEnabled ? getZoneVisibleFillOpacity(feature) : 0,
+      dashArray: useAlignedZoneOutline ? undefined : dashArray,
       lineCap: "round",
       lineJoin: "round",
     });

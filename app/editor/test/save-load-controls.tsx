@@ -4,18 +4,61 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
+import { normalizeFeatureDrawOrdersForPersistence } from "@/lib/dromap/feature-order";
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
+import type { DromapBasemapId } from "@/lib/dromap/basemap";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
+import {
+  type DroMapLayer,
+  useEditorTestLayersStore,
+} from "@/stores/editor-test-layers";
+import {
+  type DromapGeoJsonLayer,
+  useEditorTestGeoJsonLayersStore,
+} from "@/stores/editor-test-geojson-layers";
 import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
+import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
+import {
+  type ExportFormat,
+  type ExportLegendPosition,
+  type ExportScaleBarStyle,
+  useEditorTestExportStore,
+} from "@/stores/editor-test-export";
+import { bringFloatingPanelToFront, getInitialFloatingPanelZIndex } from "./floating-panel-z-index";
 
 const LOCAL_SAVE_KEY = "dromap-editor-test-save-v1";
+
+type LocalExportSettings = {
+  legendTitle: string;
+  legendPosition: ExportLegendPosition;
+  exportFormat: ExportFormat;
+  legendBackgroundColor: string;
+  legendSideWidth: number;
+  legendBottomHeight: number;
+  legendTitleFontSize: number;
+  legendItemFontSize: number;
+  legendSectionTitleFontSize: number;
+  scaleBarEnabled: boolean;
+  scaleBarStyle: ExportScaleBarStyle;
+  hiddenLegendFeatureIds: string[];
+  legendFeatureOrder: string[];
+  legendGroupOrder: string[];
+  legendSectionOrder: string[];
+  legendGroupLabels: Record<string, string>;
+  legendGroupSections: Record<string, string>;
+};
 
 type LocalSavePayload = {
   schemaVersion: 1;
   savedAt: string;
   features: DroMapFeature[];
   workspaceBounds: WorkspaceBounds | null;
+  basemapId?: DromapBasemapId;
+  layers?: DroMapLayer[];
+  activeLayerId?: string;
+  geoJsonLayers?: DromapGeoJsonLayer[];
+  exportSettings?: LocalExportSettings;
 };
 
 type FloatingPanelPosition = {
@@ -38,6 +81,175 @@ function isLocalSavePayload(value: unknown): value is LocalSavePayload {
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function clampNumber(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+) {
+  const numberValue =
+    typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+  return Math.min(Math.max(numberValue, min), max);
+}
+
+function parseStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function parseStringRecord(value: unknown) {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+}
+
+function parseLegendPosition(value: unknown): ExportLegendPosition {
+  return value === "left" || value === "bottom" || value === "right"
+    ? value
+    : "right";
+}
+
+function parseExportFormat(value: unknown): ExportFormat {
+  return value === "16-9" ||
+    value === "4-3" ||
+    value === "a4-landscape" ||
+    value === "a4-portrait" ||
+    value === "square" ||
+    value === "auto"
+    ? value
+    : "auto";
+}
+
+function parseScaleBarStyle(value: unknown): ExportScaleBarStyle {
+  return value === "bar" ||
+    value === "line" ||
+    value === "boxed" ||
+    value === "alternating"
+    ? value
+    : "alternating";
+}
+
+function getDefaultLocalExportSettings(): LocalExportSettings {
+  return {
+    legendTitle: "Légende",
+    legendPosition: "right",
+    exportFormat: "auto",
+    legendBackgroundColor: "#ffffff",
+    legendSideWidth: 420,
+    legendBottomHeight: 0,
+    legendTitleFontSize: 32,
+    legendItemFontSize: 24,
+    legendSectionTitleFontSize: 20,
+    scaleBarEnabled: false,
+    scaleBarStyle: "alternating",
+    hiddenLegendFeatureIds: [],
+    legendFeatureOrder: [],
+    legendGroupOrder: [],
+    legendSectionOrder: [],
+    legendGroupLabels: {},
+    legendGroupSections: {},
+  };
+}
+
+function createLocalExportSettingsSnapshot(): LocalExportSettings {
+  const exportState = useEditorTestExportStore.getState();
+
+  return {
+    legendTitle: exportState.legendTitle,
+    legendPosition: exportState.legendPosition,
+    exportFormat: exportState.exportFormat,
+    legendBackgroundColor: exportState.legendBackgroundColor,
+    legendSideWidth: exportState.legendSideWidth,
+    legendBottomHeight: exportState.legendBottomHeight,
+    legendTitleFontSize: exportState.legendTitleFontSize,
+    legendItemFontSize: exportState.legendItemFontSize,
+    legendSectionTitleFontSize: exportState.legendSectionTitleFontSize,
+    scaleBarEnabled: exportState.scaleBarEnabled,
+    scaleBarStyle: exportState.scaleBarStyle,
+    hiddenLegendFeatureIds: [...exportState.hiddenLegendFeatureIds],
+    legendFeatureOrder: [...exportState.legendFeatureOrder],
+    legendGroupOrder: [...exportState.legendGroupOrder],
+    legendSectionOrder: [...exportState.legendSectionOrder],
+    legendGroupLabels: { ...exportState.legendGroupLabels },
+    legendGroupSections: { ...exportState.legendGroupSections },
+  };
+}
+
+function normalizeLocalExportSettings(value: unknown): LocalExportSettings {
+  const defaults = getDefaultLocalExportSettings();
+
+  if (!isRecord(value)) {
+    return defaults;
+  }
+
+  return {
+    legendTitle:
+      typeof value.legendTitle === "string"
+        ? value.legendTitle
+        : defaults.legendTitle,
+    legendPosition: parseLegendPosition(value.legendPosition),
+    exportFormat: parseExportFormat(value.exportFormat),
+    legendBackgroundColor:
+      typeof value.legendBackgroundColor === "string"
+        ? value.legendBackgroundColor
+        : defaults.legendBackgroundColor,
+    legendSideWidth: clampNumber(
+      value.legendSideWidth,
+      defaults.legendSideWidth,
+      240,
+      900,
+    ),
+    legendBottomHeight: clampNumber(
+      value.legendBottomHeight,
+      defaults.legendBottomHeight,
+      0,
+      900,
+    ),
+    legendTitleFontSize: clampNumber(
+      value.legendTitleFontSize,
+      defaults.legendTitleFontSize,
+      12,
+      72,
+    ),
+    legendItemFontSize: clampNumber(
+      value.legendItemFontSize,
+      defaults.legendItemFontSize,
+      10,
+      56,
+    ),
+    legendSectionTitleFontSize: clampNumber(
+      value.legendSectionTitleFontSize,
+      defaults.legendSectionTitleFontSize,
+      10,
+      56,
+    ),
+    scaleBarEnabled: value.scaleBarEnabled === true,
+    scaleBarStyle: parseScaleBarStyle(value.scaleBarStyle),
+    hiddenLegendFeatureIds: parseStringArray(value.hiddenLegendFeatureIds),
+    legendFeatureOrder: parseStringArray(value.legendFeatureOrder),
+    legendGroupOrder: parseStringArray(value.legendGroupOrder),
+    legendSectionOrder: parseStringArray(value.legendSectionOrder),
+    legendGroupLabels: parseStringRecord(value.legendGroupLabels),
+    legendGroupSections: parseStringRecord(value.legendGroupSections),
+  };
+}
+
+function restoreLocalExportSettings(value: unknown) {
+  useEditorTestExportStore.setState(normalizeLocalExportSettings(value));
+}
+
 function getPanelPosition(button: HTMLButtonElement): FloatingPanelPosition {
   const rect = button.getBoundingClientRect();
   const panelWidth = 260;
@@ -45,7 +257,10 @@ function getPanelPosition(button: HTMLButtonElement): FloatingPanelPosition {
   const preferredLeft = rect.right + 12;
 
   return {
-    top: Math.max(16, Math.min(rect.top, window.innerHeight - panelHeight - 16)),
+    top: Math.max(
+      16,
+      Math.min(rect.top, window.innerHeight - panelHeight - 16),
+    ),
     left: Math.max(
       16,
       Math.min(preferredLeft, window.innerWidth - panelWidth - 16),
@@ -55,8 +270,21 @@ function getPanelPosition(button: HTMLButtonElement): FloatingPanelPosition {
 
 export function SaveLoadControls() {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const saveTimeoutRef = useRef<number | null>(null);
+  const closeTimeoutRef = useRef<number | null>(null);
 
   const features = useEditorTestFeaturesStore((state) => state.features);
+  const layers = useEditorTestLayersStore((state) => state.layers);
+  const activeLayerId = useEditorTestLayersStore(
+    (state) => state.activeLayerId,
+  );
+  const setLayers = useEditorTestLayersStore((state) => state.setLayers);
+  const geoJsonLayers = useEditorTestGeoJsonLayersStore(
+    (state) => state.geoJsonLayers,
+  );
+  const setGeoJsonLayers = useEditorTestGeoJsonLayersStore(
+    (state) => state.setGeoJsonLayers,
+  );
   const replaceFeatures = useEditorTestFeaturesStore(
     (state) => state.replaceFeatures,
   );
@@ -78,16 +306,37 @@ export function SaveLoadControls() {
     (state) => state.clearSelectedFeatureId,
   );
 
+  const basemapId = useEditorTestBasemapStore((state) => state.basemapId);
+  const setBasemapIdFromUnknown = useEditorTestBasemapStore(
+    (state) => state.setBasemapIdFromUnknown,
+  );
+
   const [hasMounted, setHasMounted] = useState(false);
   const [hasLocalSave, setHasLocalSave] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [panelPosition, setPanelPosition] =
     useState<FloatingPanelPosition | null>(null);
+  const [panelZIndex, setPanelZIndex] = useState(
+    getInitialFloatingPanelZIndex(),
+  );
 
   useEffect(() => {
     setHasMounted(true);
     setHasLocalSave(localStorage.getItem(LOCAL_SAVE_KEY) !== null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        window.clearTimeout(saveTimeoutRef.current);
+      }
+
+      if (closeTimeoutRef.current) {
+        window.clearTimeout(closeTimeoutRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -131,16 +380,53 @@ export function SaveLoadControls() {
   }
 
   function handleSave() {
-    const payload: LocalSavePayload = {
-      schemaVersion: 1,
-      savedAt: new Date().toISOString(),
-      features,
-      workspaceBounds,
-    };
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current);
+    }
 
-    localStorage.setItem(LOCAL_SAVE_KEY, JSON.stringify(payload));
-    setHasLocalSave(true);
-    setStatus(`${features.length} objet(s) sauvegardé(s).`);
+    if (closeTimeoutRef.current) {
+      window.clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+
+    setPanelZIndex(bringFloatingPanelToFront());
+    setIsSaving(true);
+    setStatus("Sauvegarde locale en attente...");
+
+    const featuresSnapshot = features;
+    const workspaceBoundsSnapshot = workspaceBounds;
+    const basemapIdSnapshot = basemapId;
+    const layersSnapshot = layers;
+    const activeLayerIdSnapshot = activeLayerId;
+    const geoJsonLayersSnapshot = geoJsonLayers;
+    const exportSettingsSnapshot = createLocalExportSettingsSnapshot();
+
+    saveTimeoutRef.current = window.setTimeout(() => {
+      const featuresToSave =
+        normalizeFeatureDrawOrdersForPersistence(featuresSnapshot);
+
+      const payload: LocalSavePayload = {
+        schemaVersion: 1,
+        savedAt: new Date().toISOString(),
+        features: featuresToSave,
+        workspaceBounds: workspaceBoundsSnapshot,
+        basemapId: basemapIdSnapshot,
+        layers: layersSnapshot,
+        activeLayerId: activeLayerIdSnapshot,
+        geoJsonLayers: geoJsonLayersSnapshot,
+        exportSettings: exportSettingsSnapshot,
+      };
+
+      localStorage.setItem(LOCAL_SAVE_KEY, JSON.stringify(payload));
+      saveTimeoutRef.current = null;
+      setIsSaving(false);
+      setHasLocalSave(true);
+      setStatus("Enregistré avec succès.");
+      closeTimeoutRef.current = window.setTimeout(() => {
+        setIsOpen(false);
+        closeTimeoutRef.current = null;
+      }, 900);
+    }, 250);
   }
 
   function handleLoad() {
@@ -159,7 +445,13 @@ export function SaveLoadControls() {
         return;
       }
 
-      replaceFeatures(parsedSave.features);
+      setLayers(parsedSave.layers ?? [], parsedSave.activeLayerId ?? null);
+      setGeoJsonLayers(parsedSave.geoJsonLayers ?? []);
+      replaceFeatures(
+        normalizeFeatureDrawOrdersForPersistence(parsedSave.features),
+      );
+      setBasemapIdFromUnknown(parsedSave.basemapId);
+      restoreLocalExportSettings(parsedSave.exportSettings);
       clearSelectedFeatureId();
 
       if (parsedSave.workspaceBounds) {
@@ -169,7 +461,10 @@ export function SaveLoadControls() {
         clearWorkspaceBounds();
       }
 
-      setStatus(`${parsedSave.features.length} objet(s) chargé(s).`);
+      setStatus(
+        `${parsedSave.features.length} objet(s) et ${(parsedSave.geoJsonLayers ?? []).length} calque(s) GeoJSON chargé(s).`,
+      );
+      setIsOpen(false);
     } catch {
       setStatus("Lecture impossible.");
     }
@@ -191,11 +486,14 @@ export function SaveLoadControls() {
     isOpen && panelPosition
       ? createPortal(
           <section
-            className="fixed z-[3000] w-64 rounded-2xl border border-black/10 bg-white/95 p-3 text-xs shadow-2xl backdrop-blur"
+            className="fixed w-64 rounded-2xl border border-black/10 bg-white/95 p-3 text-xs shadow-2xl backdrop-blur"
             style={{
               top: panelPosition.top,
               left: panelPosition.left,
+              zIndex: panelZIndex,
             }}
+            onMouseDown={() => setPanelZIndex(bringFloatingPanelToFront())}
+            onFocusCapture={() => setPanelZIndex(bringFloatingPanelToFront())}
           >
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
@@ -220,9 +518,10 @@ export function SaveLoadControls() {
               <button
                 type="button"
                 onClick={handleSave}
-                className="rounded-xl bg-neutral-900 px-3 py-2 font-medium text-white transition hover:bg-neutral-700"
+                disabled={isSaving}
+                className="rounded-xl bg-neutral-900 px-3 py-2 font-medium text-white transition hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-400"
               >
-                Enregistrer
+                {isSaving ? "Sauvegarde..." : "Enregistrer"}
               </button>
 
               <button
@@ -268,6 +567,7 @@ export function SaveLoadControls() {
             setPanelPosition(getPanelPosition(buttonRef.current));
           }
 
+          setPanelZIndex(bringFloatingPanelToFront());
           setIsOpen((current) => !current);
         }}
         title="Sauvegarde locale"

@@ -3,6 +3,17 @@
 import { useEffect, useState } from "react";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
 
+const GEOMAN_CURSOR_REPLAY_EVENT = "dromap:replay-map-pointer";
+
+function replayMapPointerSoon() {
+  window.setTimeout(() => {
+    window.dispatchEvent(new Event(GEOMAN_CURSOR_REPLAY_EVENT));
+  }, 0);
+  window.setTimeout(() => {
+    window.dispatchEvent(new Event(GEOMAN_CURSOR_REPLAY_EVENT));
+  }, 120);
+}
+
 export function UndoRedoControls() {
   const [hasMounted, setHasMounted] = useState(false);
 
@@ -22,11 +33,21 @@ export function UndoRedoControls() {
   const canUndo = past.length > 0;
   const canRedo = future.length > 0;
 
+  const handleUndo = () => {
+    undo();
+    replayMapPointerSoon();
+  };
+
+  const handleRedo = () => {
+    redo();
+    replayMapPointerSoon();
+  };
+
   return (
     <div className="flex justify-center gap-2">
       <button
         type="button"
-        onClick={undo}
+        onClick={handleUndo}
         disabled={!canUndo}
         title="Annuler"
         aria-label="Annuler"
@@ -37,7 +58,7 @@ export function UndoRedoControls() {
 
       <button
         type="button"
-        onClick={redo}
+        onClick={handleRedo}
         disabled={!canRedo}
         title="Rétablir"
         aria-label="Rétablir"

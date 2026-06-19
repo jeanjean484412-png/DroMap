@@ -354,13 +354,13 @@ export function getEstimatedLegendItemHeight(
     26,
   );
   const symbolSize = clampExportNumber(
-    Math.round(appearance.itemFontSize * 1.55),
-    30,
-    56,
+    Math.round(appearance.itemFontSize * 2),
+    40,
+    74,
   );
 
   return Math.max(
-    symbolSize + 8,
+    symbolSize + 10,
     appearance.itemFontSize + typeFontSize + 14,
   );
 }
