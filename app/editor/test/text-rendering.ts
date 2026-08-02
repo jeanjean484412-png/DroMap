@@ -1,7 +1,7 @@
 import type { DroMapFeature } from "@/lib/dromap/feature";
 
 export const DEFAULT_TEXT_CONTENT = "Texte";
-export const MIN_TEXT_FONT_SIZE = 10;
+export const MIN_TEXT_FONT_SIZE = 1;
 export const MAX_TEXT_FONT_SIZE = 72;
 export const DEFAULT_TEXT_FONT_SIZE = 22;
 export const TEXT_LINE_HEIGHT_RATIO = 1.15;
@@ -15,6 +15,56 @@ export const DEFAULT_TEXT_BORDER_COLOR = "#111827";
 export const DEFAULT_TEXT_BORDER_WIDTH = 2;
 export const MIN_TEXT_BORDER_WIDTH = 1;
 export const MAX_TEXT_BORDER_WIDTH = 8;
+export const DEFAULT_TEXT_OUTLINE_COLOR = "#ffffff";
+export const DEFAULT_TEXT_OUTLINE_WIDTH = 1.5;
+export const MIN_TEXT_OUTLINE_WIDTH = 0;
+export const MAX_TEXT_OUTLINE_WIDTH = 6;
+
+export const MIN_TEXT_MAP_SCALE = 0.125;
+export const MAX_TEXT_MAP_SCALE = 8;
+
+/**
+ * Convertit un ecart de zoom Leaflet en facteur graphique.
+ * Un niveau de zoom en plus double la taille geographique du texte,
+ * comme pour les autres elements attaches a la carte.
+ */
+export function getTextMapZoomScale(
+  currentZoom: number,
+  referenceZoom: number,
+) {
+  if (!Number.isFinite(currentZoom) || !Number.isFinite(referenceZoom)) {
+    return 1;
+  }
+
+  return clampTextNumber(
+    2 ** (currentZoom - referenceZoom),
+    MIN_TEXT_MAP_SCALE,
+    MAX_TEXT_MAP_SCALE,
+  );
+}
+
+const legacyTextReferenceZoomById = new Map<string, number>();
+
+export function getTextFeatureReferenceZoom(
+  feature: DroMapFeature,
+  fallbackZoom: number,
+) {
+  const rawValue = Number(feature.properties?.style?.textReferenceZoom);
+
+  if (Number.isFinite(rawValue)) {
+    legacyTextReferenceZoomById.set(feature.id, rawValue);
+    return rawValue;
+  }
+
+  const cachedZoom = legacyTextReferenceZoomById.get(feature.id);
+  if (Number.isFinite(cachedZoom)) {
+    return cachedZoom as number;
+  }
+
+  const safeFallback = Number.isFinite(fallbackZoom) ? fallbackZoom : 0;
+  legacyTextReferenceZoomById.set(feature.id, safeFallback);
+  return safeFallback;
+}
 
 const TEXT_WIDTH_CHARACTER_RATIO = 0.76;
 const TEXT_MAX_SAFETY_WIDTH = 4096;
@@ -82,6 +132,14 @@ export function getTextFeatureFontSize(feature: DroMapFeature) {
   return clampTextNumber(rawValue, MIN_TEXT_FONT_SIZE, MAX_TEXT_FONT_SIZE);
 }
 
+export function getTextFeatureBold(feature: DroMapFeature) {
+  return feature.properties?.style?.textBold === true;
+}
+
+export function getTextFeatureItalic(feature: DroMapFeature) {
+  return feature.properties?.style?.textItalic === true;
+}
+
 export function getTextFeatureRotation(feature: DroMapFeature) {
   const rawValue = Number(feature.properties?.style?.textRotation ?? 0);
 
@@ -138,6 +196,30 @@ export function getTextBorderWidth(feature: DroMapFeature) {
   }
 
   return clampTextNumber(rawValue, MIN_TEXT_BORDER_WIDTH, MAX_TEXT_BORDER_WIDTH);
+}
+
+export function getTextOutlineEnabled(feature: DroMapFeature) {
+  // Les anciens projets ne possèdent pas encore ce champ : le contour blanc
+  // est donc activé par défaut, conformément au rendu actuel de DroMap.
+  return feature.properties?.style?.textOutlineEnabled !== false;
+}
+
+export function getTextOutlineColor(feature: DroMapFeature) {
+  const color = feature.properties?.style?.textOutlineColor;
+
+  return typeof color === "string" && isHexColor(color)
+    ? color
+    : DEFAULT_TEXT_OUTLINE_COLOR;
+}
+
+export function getTextOutlineWidth(feature: DroMapFeature) {
+  const rawValue = Number(feature.properties?.style?.textOutlineWidth);
+
+  if (!Number.isFinite(rawValue)) {
+    return DEFAULT_TEXT_OUTLINE_WIDTH;
+  }
+
+  return clampTextNumber(rawValue, MIN_TEXT_OUTLINE_WIDTH, MAX_TEXT_OUTLINE_WIDTH);
 }
 
 export function splitTextLines(value: unknown, fallback = DEFAULT_TEXT_CONTENT) {
@@ -248,33 +330,49 @@ export function hexToRgba(color: string, opacity = 1) {
 
 export function createTextDivIconRender(
   feature: DroMapFeature,
-  options: { minWidth?: number; maxWidth?: number } = {},
+  options: { minWidth?: number; maxWidth?: number; scale?: number } = {},
 ): TextDivIconRender {
   const text = getTextFeatureContent(feature);
   const color = feature.properties.style.color ?? "#111827";
   const opacity = clampTextNumber(feature.properties.style.opacity ?? 1, 0, 1);
-  const fontSize = getTextFeatureFontSize(feature);
+  const scale = clampTextNumber(options.scale ?? 1, MIN_TEXT_MAP_SCALE, MAX_TEXT_MAP_SCALE);
+  const fontSize = getTextFeatureFontSize(feature) * scale;
   const rotation = getTextFeatureRotation(feature);
-  const metrics = measureTextBlock(text, fontSize, {
+  const isBold = getTextFeatureBold(feature);
+  const isItalic = getTextFeatureItalic(feature);
+  const measuredMetrics = measureTextBlock(text, fontSize, {
     minWidth: options.minWidth ?? 56,
     maxWidth: options.maxWidth ?? 520,
   });
+  const widthSafetyFactor = (isBold ? 1.06 : 1) * (isItalic ? 1.04 : 1);
+  const metrics = {
+    ...measuredMetrics,
+    width: Math.ceil(measuredMetrics.width * widthSafetyFactor),
+  };
   const rotatedSize = getRotatedBoxSize(metrics.width, metrics.height, rotation);
   const hasBackground = getTextBackgroundEnabled(feature);
   const hasBorder = getTextBorderEnabled(feature);
   const backgroundColor = getTextBackgroundColor(feature);
   const backgroundOpacity = getTextBackgroundOpacity(feature);
   const borderColor = getTextBorderColor(feature);
-  const borderWidth = getTextBorderWidth(feature);
+  const borderWidth = getTextBorderWidth(feature) * scale;
+  const hasOutline = getTextOutlineEnabled(feature);
+  const outlineColor = getTextOutlineColor(feature);
+  const outlineWidth = getTextOutlineWidth(feature) * scale;
   const boxBackground = hasBackground
     ? hexToRgba(backgroundColor, backgroundOpacity)
     : "transparent";
   const boxBorder = hasBorder
     ? `${borderWidth}px solid ${borderColor}`
     : "0 solid transparent";
-  const textShadow = hasBackground || hasBorder
+  const textShadow = hasOutline
     ? "none"
-    : "0 1px 3px rgba(255,255,255,0.95), 0 1px 5px rgba(0,0,0,0.25)";
+    : hasBackground || hasBorder
+      ? "none"
+      : "0 1px 3px rgba(255,255,255,0.95), 0 1px 5px rgba(0,0,0,0.25)";
+  const textStroke = hasOutline && outlineWidth > 0
+    ? `${outlineWidth}px ${outlineColor}`
+    : "0 transparent";
 
   return {
     width: rotatedSize.width,
@@ -311,15 +409,18 @@ export function createTextDivIconRender(
             height:${metrics.height}px;
             transform:translate(-50%, -50%) rotate(${rotation}deg);
             transform-origin:center center;
-            border-radius:6px;
+            border-radius:${6 * scale}px;
             background:${boxBackground};
             border:${boxBorder};
             color:${hexToRgba(color, opacity)};
             font-size:${metrics.fontSize}px;
-            font-weight:700;
+            font-weight:${isBold ? 700 : 400};
+            font-style:${isItalic ? "italic" : "normal"};
             line-height:${metrics.lineHeight}px;
             white-space:normal;
             text-align:center;
+            -webkit-text-stroke:${textStroke};
+            paint-order:stroke fill;
             text-shadow:${textShadow};
             pointer-events:none;
           "

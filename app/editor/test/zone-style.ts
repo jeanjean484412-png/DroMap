@@ -32,6 +32,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function isRenderedFeature(feature: DroMapFeature) {
+  return Number.isFinite(Number(feature.properties?.style?.renderScale));
+}
+
 function isLegacyDotsMode(feature: DroMapFeature) {
   return feature.properties?.style?.zoneHatchingStyle === "dots";
 }
@@ -76,16 +80,16 @@ export function getZoneHatchingColor(feature: DroMapFeature) {
 export function getZoneHatchingWeight(feature: DroMapFeature) {
   return clamp(
     Number(feature.properties?.style?.zoneHatchingWeight ?? 2),
-    MIN_ZONE_HATCHING_WEIGHT,
-    MAX_ZONE_HATCHING_WEIGHT,
+    isRenderedFeature(feature) ? 0.25 : MIN_ZONE_HATCHING_WEIGHT,
+    isRenderedFeature(feature) ? 512 : MAX_ZONE_HATCHING_WEIGHT,
   );
 }
 
 export function getZoneHatchingSpacing(feature: DroMapFeature) {
   return clamp(
     Number(feature.properties?.style?.zoneHatchingSpacing ?? 14),
-    MIN_ZONE_HATCHING_SPACING,
-    MAX_ZONE_HATCHING_SPACING,
+    isRenderedFeature(feature) ? 0.5 : MIN_ZONE_HATCHING_SPACING,
+    isRenderedFeature(feature) ? 4096 : MAX_ZONE_HATCHING_SPACING,
   );
 }
 
@@ -117,8 +121,8 @@ export function getZoneDotsRadius(feature: DroMapFeature) {
 
   return clamp(
     Number(feature.properties?.style?.zoneDotsRadius ?? fallback),
-    MIN_ZONE_DOTS_RADIUS,
-    MAX_ZONE_DOTS_RADIUS,
+    isRenderedFeature(feature) ? 0.25 : MIN_ZONE_DOTS_RADIUS,
+    isRenderedFeature(feature) ? 1024 : MAX_ZONE_DOTS_RADIUS,
   );
 }
 
@@ -129,8 +133,8 @@ export function getZoneDotsSpacing(feature: DroMapFeature) {
 
   return clamp(
     Number(feature.properties?.style?.zoneDotsSpacing ?? fallback),
-    MIN_ZONE_DOTS_SPACING,
-    MAX_ZONE_DOTS_SPACING,
+    isRenderedFeature(feature) ? 0.5 : MIN_ZONE_DOTS_SPACING,
+    isRenderedFeature(feature) ? 4096 : MAX_ZONE_DOTS_SPACING,
   );
 }
 

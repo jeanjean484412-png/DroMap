@@ -5,10 +5,14 @@ import L from "leaflet";
 import { useMap } from "react-leaflet";
 
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
-import { useEditorTestLayersStore } from "@/stores/editor-test-layers";
+import {
+  isFeatureEffectivelyLocked,
+  useEditorTestLayersStore,
+} from "@/stores/editor-test-layers";
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
 import { useEditorTestToolStore } from "@/stores/editor-test-tool";
+import { useEditorTestTextEditStore } from "@/stores/editor-test-text-edit";
 
 type DroMapLeafletLayer = L.Layer & {
   dromapFeatureId?: string;
@@ -73,18 +77,28 @@ export function SelectedFeatureMapInteractions() {
   const features = useEditorTestFeaturesStore((state) => state.features);
   const layersSignature = useEditorTestLayersStore((state) =>
     state.layers
-      .map((layer) => `${layer.id}:${layer.visible ? "visible" : "hidden"}:${layer.order}`)
+      .map(
+        (layer) =>
+          `${layer.id}:${layer.visible ? "visible" : "hidden"}:${layer.order}`,
+      )
       .join("|"),
   );
 
   const selectedFeatureId = useEditorTestSelectionStore(
     (state) => state.selectedFeatureId,
   );
-
+  const multiSelectionEnabled = useEditorTestSelectionStore(
+    (state) => state.multiSelectionEnabled,
+  );
   const setSelectedFeatureId = useEditorTestSelectionStore(
     (state) => state.setSelectedFeatureId,
   );
-
+  const toggleFeatureSelection = useEditorTestSelectionStore(
+    (state) => state.toggleFeatureSelection,
+  );
+  const setMultiSelectionEnabled = useEditorTestSelectionStore(
+    (state) => state.setMultiSelectionEnabled,
+  );
   const clearSelectedFeatureId = useEditorTestSelectionStore(
     (state) => state.clearSelectedFeatureId,
   );
@@ -99,10 +113,14 @@ export function SelectedFeatureMapInteractions() {
     let ignoreNextMapClick = false;
 
     const pointerDownByFeatureId = new Map<string, PointerDownState>();
+    const featuresById = new Map(
+      features.map((feature) => [feature.id, feature]),
+    );
 
     const layerHandlers: Array<{
       layer: L.Layer;
       clickHandler: L.LeafletEventHandlerFn;
+      doubleClickHandler: L.LeafletEventHandlerFn;
       mouseDownHandler: L.LeafletEventHandlerFn;
     }> = [];
 
@@ -116,7 +134,11 @@ export function SelectedFeatureMapInteractions() {
         return;
       }
 
-      clearSelectedFeatureId();
+      // En sélection multiple, un clic dans le vide sert à continuer à viser
+      // d'autres objets : la sélection reste volontairement intacte.
+      if (!multiSelectionEnabled) {
+        clearSelectedFeatureId();
+      }
     };
 
     map.on("click", handleMapClick);
@@ -160,20 +182,64 @@ export function SelectedFeatureMapInteractions() {
           return;
         }
 
-        if (selectedFeatureId === featureId) {
-          clearSelectedFeatureId();
+        // Le second clic d'un double-clic ne doit pas modifier la sélection
+        // juste avant l'ouverture de l'éditeur direct du texte.
+        if (
+          mouseEvent.originalEvent?.detail &&
+          mouseEvent.originalEvent.detail >= 2
+        ) {
           return;
         }
 
+        if (multiSelectionEnabled) {
+          toggleFeatureSelection(featureId);
+          return;
+        }
+
+        // Un second clic sur le même objet le garde sélectionné. Pour
+        // désélectionner en mode simple, il suffit de cliquer sur la carte.
+        if (selectedFeatureId !== featureId) {
+          setSelectedFeatureId(featureId);
+        }
+      };
+
+      const handleLayerDoubleClick: L.LeafletEventHandlerFn = (event) => {
+        const mouseEvent = event as L.LeafletMouseEvent;
+        const feature = featuresById.get(featureId);
+
+        if (mouseEvent.originalEvent) {
+          L.DomEvent.stop(mouseEvent.originalEvent);
+        }
+
+        ignoreNextMapClick = true;
+
+        if (
+          !feature ||
+          feature.properties.type !== "text" ||
+          feature.geometry.type !== "Point" ||
+          isFeatureEffectivelyLocked(
+            feature,
+            useEditorTestLayersStore.getState().layers,
+          )
+        ) {
+          return;
+        }
+
+        setMultiSelectionEnabled(false);
         setSelectedFeatureId(featureId);
+        useEditorTestTextEditStore
+          .getState()
+          .startEditingTextFeature(featureId);
       };
 
       layer.on("mousedown", handleLayerMouseDown);
       layer.on("click", handleLayerClick);
+      layer.on("dblclick", handleLayerDoubleClick);
 
       layerHandlers.push({
         layer,
         clickHandler: handleLayerClick,
+        doubleClickHandler: handleLayerDoubleClick,
         mouseDownHandler: handleLayerMouseDown,
       });
     });
@@ -182,10 +248,13 @@ export function SelectedFeatureMapInteractions() {
       map.off("click", handleMapClick);
       pointerDownByFeatureId.clear();
 
-      layerHandlers.forEach(({ layer, clickHandler, mouseDownHandler }) => {
-        layer.off("click", clickHandler);
-        layer.off("mousedown", mouseDownHandler);
-      });
+      layerHandlers.forEach(
+        ({ layer, clickHandler, doubleClickHandler, mouseDownHandler }) => {
+          layer.off("click", clickHandler);
+          layer.off("dblclick", doubleClickHandler);
+          layer.off("mousedown", mouseDownHandler);
+        },
+      );
     };
   }, [
     map,
@@ -194,7 +263,10 @@ export function SelectedFeatureMapInteractions() {
     features,
     layersSignature,
     selectedFeatureId,
+    multiSelectionEnabled,
     setSelectedFeatureId,
+    toggleFeatureSelection,
+    setMultiSelectionEnabled,
     clearSelectedFeatureId,
   ]);
 

@@ -55,6 +55,8 @@ type TextStylePreset = {
   color: string;
   opacity: number;
   fontSize: number;
+  textBold: boolean;
+  textItalic: boolean;
   textRotation: number;
   textBackgroundEnabled: boolean;
   textBackgroundColor: string;
@@ -62,6 +64,9 @@ type TextStylePreset = {
   textBorderEnabled: boolean;
   textBorderColor: string;
   textBorderWidth: number;
+  textOutlineEnabled: boolean;
+  textOutlineColor: string;
+  textOutlineWidth: number;
 };
 
 type EditorTestDrawingOptionsState = {
@@ -73,6 +78,7 @@ type EditorTestDrawingOptionsState = {
 
   updateMarkerStyle: (style: Partial<MarkerStylePreset>) => void;
   setMarkerBuiltinSymbol: (symbolId: DroMapMarkerBuiltinSymbol) => void;
+  setMarkerSymbol: (symbol: DroMapMarkerSymbol) => void;
   updateLineStyle: (style: Partial<LineStylePreset>) => void;
   updateZoneStyle: (style: Partial<ZoneStylePreset>) => void;
   updateTextStyle: (style: Partial<TextStylePreset>) => void;
@@ -130,6 +136,8 @@ export const useEditorTestDrawingOptionsStore =
       color: "#111827",
       opacity: 1,
       fontSize: 22,
+      textBold: false,
+      textItalic: false,
       textRotation: 0,
       textBackgroundEnabled: false,
       textBackgroundColor: "#ffffff",
@@ -137,6 +145,9 @@ export const useEditorTestDrawingOptionsStore =
       textBorderEnabled: false,
       textBorderColor: "#111827",
       textBorderWidth: 2,
+      textOutlineEnabled: true,
+      textOutlineColor: "#ffffff",
+      textOutlineWidth: 1.5,
     },
 
     updateMarkerStyle: (style) =>
@@ -153,6 +164,11 @@ export const useEditorTestDrawingOptionsStore =
           type: "builtin",
           id: symbolId,
         },
+      }),
+
+    setMarkerSymbol: (symbol) =>
+      set({
+        markerSymbol: symbol,
       }),
 
     updateLineStyle: (style) =>

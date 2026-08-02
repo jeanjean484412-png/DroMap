@@ -13,7 +13,6 @@ import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 import {
   DROMAP_WORLD_BOUNDS,
-  dromapBasemapBoundsToLeafletBounds,
   getBasemapViewportBounds,
   getBasemapWorkspaceBounds,
   leafletBoundsToDromapBasemapBounds,
@@ -21,6 +20,9 @@ import {
 
 const WORKSPACE_FIT_PADDING: [number, number] = [32, 32];
 const GEOMAN_CURSOR_REPLAY_EVENT = "dromap:replay-map-pointer";
+const CONTINUOUS_WHEEL_ZOOM_DATASET_KEY = "dromapContinuousWheelZoom";
+const CONTINUOUS_WHEEL_ZOOM_END_EVENT =
+  "dromap:continuous-wheel-zoom-end";
 const TILE_BASEMAP_EXTRA_SHARP_ZOOM = 1.35;
 const SOLID_BASEMAP_EXTRA_GRAPHIC_ZOOM = 5;
 
@@ -112,7 +114,7 @@ function readCurrentMaxBounds(map: L.Map): L.LatLngBounds | null {
       return maxBounds;
     }
 
-    return L.latLngBounds(maxBounds as L.LatLngBoundsLiteral);
+    return L.latLngBounds(maxBounds as L.LatLngExpression[]);
   } catch {
     return null;
   }
@@ -322,9 +324,83 @@ function getWorldAxisConstraint(
   );
 }
 
+type ViewConstraintOptions = {
+  animate?: boolean;
+};
+
+function getConstrainedProjectedCenter(
+  map: L.Map,
+  bounds: L.LatLngBounds,
+  currentCenter: L.Point,
+  axisConstraintFactory: (
+    boundsStart: number,
+    boundsEnd: number,
+    viewportSize: number,
+  ) => AxisConstraint,
+) {
+  const zoom = map.getZoom();
+  const northWest = map.project(bounds.getNorthWest(), zoom);
+  const southEast = map.project(bounds.getSouthEast(), zoom);
+  const size = map.getSize();
+  const xConstraint = axisConstraintFactory(
+    northWest.x,
+    southEast.x,
+    size.x,
+  );
+  const yConstraint = axisConstraintFactory(
+    northWest.y,
+    southEast.y,
+    size.y,
+  );
+
+  return L.point(
+    clamp(currentCenter.x, xConstraint),
+    clamp(currentCenter.y, yConstraint),
+  );
+}
+
+function applyConstrainedProjectedCenter(
+  map: L.Map,
+  currentCenter: L.Point,
+  constrainedCenter: L.Point,
+  options: ViewConstraintOptions = {},
+) {
+  const distance = constrainedCenter.distanceTo(currentCenter);
+
+  if (distance <= VIEW_CONSTRAINT_EPSILON_PX) {
+    return false;
+  }
+
+  const zoom = map.getZoom();
+  const targetCenter = map.unproject(constrainedCenter, zoom);
+  const viewportSize = map.getSize();
+  const maximumAnimatedDistance = Math.max(
+    160,
+    Math.max(viewportSize.x, viewportSize.y) * 0.42,
+  );
+  const shouldAnimate =
+    options.animate === true && distance <= maximumAnimatedDistance;
+
+  if (shouldAnimate) {
+    map.panTo(targetCenter, {
+      animate: true,
+      duration: 0.18,
+      easeLinearity: 0.28,
+      noMoveStart: true,
+    });
+  } else {
+    map.setView(targetCenter, zoom, {
+      animate: false,
+    });
+  }
+
+  return true;
+}
+
 function constrainViewToPannableWorld(
   map: L.Map,
   basemapBounds: L.LatLngBounds = DROMAP_WORLD_BOUNDS,
+  options: ViewConstraintOptions = {},
 ) {
   const zoom = map.getZoom();
 
@@ -332,29 +408,20 @@ function constrainViewToPannableWorld(
     return false;
   }
 
-  const northWest = map.project(basemapBounds.getNorthWest(), zoom);
-  const southEast = map.project(basemapBounds.getSouthEast(), zoom);
-  const size = map.getSize();
   const currentCenter = map.project(map.getCenter(), zoom);
-
-  const xConstraint = getWorldAxisConstraint(northWest.x, southEast.x, size.x);
-  const yConstraint = getWorldAxisConstraint(northWest.y, southEast.y, size.y);
-  const constrainedCenter = L.point(
-    clamp(currentCenter.x, xConstraint),
-    clamp(currentCenter.y, yConstraint),
+  const constrainedCenter = getConstrainedProjectedCenter(
+    map,
+    basemapBounds,
+    currentCenter,
+    getWorldAxisConstraint,
   );
 
-  if (
-    constrainedCenter.distanceTo(currentCenter) <= VIEW_CONSTRAINT_EPSILON_PX
-  ) {
-    return false;
-  }
-
-  map.setView(map.unproject(constrainedCenter, zoom), zoom, {
-    animate: false,
-  });
-
-  return true;
+  return applyConstrainedProjectedCenter(
+    map,
+    currentCenter,
+    constrainedCenter,
+    options,
+  );
 }
 
 function getPreWorkspacePannableBounds(basemapBounds: L.LatLngBounds) {
@@ -396,44 +463,44 @@ function getPreWorkspacePannableBounds(basemapBounds: L.LatLngBounds) {
   );
 }
 
-function constrainViewToWorkspace(map: L.Map, workspaceBounds: L.LatLngBounds) {
+/**
+ * Applique les contraintes de zone de travail puis de fond en un seul
+ * déplacement. L'ancienne logique appelait deux setView() successifs à la fin
+ * d'un zoom. Selon la position de la zone, cela produisait un double
+ * repositionnement perceptible comme un saut de l'image.
+ */
+function constrainViewToWorkspaceAndWorld(
+  map: L.Map,
+  workspaceBounds: L.LatLngBounds,
+  basemapBounds: L.LatLngBounds,
+  options: ViewConstraintOptions = {},
+) {
   const zoom = map.getZoom();
 
   if (!Number.isFinite(zoom)) {
     return false;
   }
 
-  const northWest = map.project(workspaceBounds.getNorthWest(), zoom);
-  const southEast = map.project(workspaceBounds.getSouthEast(), zoom);
-  const size = map.getSize();
   const currentCenter = map.project(map.getCenter(), zoom);
-
-  const xConstraint = getWorkspaceAxisConstraint(
-    northWest.x,
-    southEast.x,
-    size.x,
+  const workspaceConstrainedCenter = getConstrainedProjectedCenter(
+    map,
+    workspaceBounds,
+    currentCenter,
+    getWorkspaceAxisConstraint,
   );
-  const yConstraint = getWorkspaceAxisConstraint(
-    northWest.y,
-    southEast.y,
-    size.y,
-  );
-  const constrainedCenter = L.point(
-    clamp(currentCenter.x, xConstraint),
-    clamp(currentCenter.y, yConstraint),
+  const fullyConstrainedCenter = getConstrainedProjectedCenter(
+    map,
+    basemapBounds,
+    workspaceConstrainedCenter,
+    getWorldAxisConstraint,
   );
 
-  if (
-    constrainedCenter.distanceTo(currentCenter) <= VIEW_CONSTRAINT_EPSILON_PX
-  ) {
-    return false;
-  }
-
-  map.setView(map.unproject(constrainedCenter, zoom), zoom, {
-    animate: false,
-  });
-
-  return true;
+  return applyConstrainedProjectedCenter(
+    map,
+    currentCenter,
+    fullyConstrainedCenter,
+    options,
+  );
 }
 
 export default function MapViewController() {
@@ -450,9 +517,6 @@ export default function MapViewController() {
   );
   const workspaceBounds = useEditorTestWorkspaceStore(
     (state) => state.workspaceBounds,
-  );
-  const activeBasemapBounds = useEditorTestBasemapStore(
-    (state) => state.activeBasemapBounds,
   );
   const activeTool = useEditorTestToolStore((state) => state.activeTool);
 
@@ -527,7 +591,9 @@ export default function MapViewController() {
 
     consumedMapBoundsFitRequestIdRef.current = mapBoundsFitRequest.requestId;
 
-    const targetBounds = toLatLngBounds(mapBoundsFitRequest.bounds);
+    const targetBounds = L.latLngBounds(
+      toLatLngBounds(mapBoundsFitRequest.bounds),
+    );
 
     if (!targetBounds.isValid()) {
       return;
@@ -542,11 +608,15 @@ export default function MapViewController() {
         ? basemap.maxZoom
         : 22,
     );
+    const requestedMaxZoom = mapBoundsFitRequest.maxZoom ?? 14;
+    const shouldAnimate = mapBoundsFitRequest.animate === true;
+
     map.fitBounds(targetBounds, {
       padding: GEOJSON_IMPORT_FIT_PADDING,
-      animate: false,
+      animate: shouldAnimate,
+      duration: shouldAnimate ? 0.45 : undefined,
       maxZoom: Math.min(
-        14,
+        requestedMaxZoom,
         basemap.kind === "tile" || basemap.kind === "maplibre"
           ? basemap.maxZoom
           : 22,
@@ -562,13 +632,19 @@ export default function MapViewController() {
     }
 
     const snapshot = readNavigationSnapshot(map);
-    const workspaceLatLngBounds = toLatLngBounds(workspaceBounds);
-    const rawBasemapConstraintBounds = activeBasemapBounds
-      ? dromapBasemapBoundsToLeafletBounds(activeBasemapBounds)
-      : DROMAP_WORLD_BOUNDS;
+    const workspaceLatLngBounds = L.latLngBounds(
+      toLatLngBounds(workspaceBounds),
+    );
+    /**
+     * Une fois la zone validée, la navigation appartient à la zone de travail,
+     * pas au fond actif. Utiliser ici les limites géométriques du nouveau fond
+     * pays pouvait déplacer la vue au changement de fond. On conserve donc la
+     * même contrainte monde (avec l'extension antiméridien éventuelle) et la
+     * zone de travail reste l'unique référence locale.
+     */
     const basemapConstraintBounds = getBasemapWorkspaceBounds(
       getDromapBasemapConfig(basemapId),
-      rawBasemapConstraintBounds,
+      DROMAP_WORLD_BOUNDS,
     );
     const shouldFit = useEditorTestWorkspaceStore
       .getState()
@@ -576,8 +652,9 @@ export default function MapViewController() {
 
     let animationFrameId: number | null = null;
     let isApplyingViewConstraint = false;
+    let smoothZoomConstraintUntil = 0;
 
-    const constrainEditorViewport = () => {
+    const constrainEditorViewport = (options: ViewConstraintOptions = {}) => {
       if (isApplyingViewConstraint || isWorkspaceConstraintSuspended()) {
         return;
       }
@@ -585,49 +662,63 @@ export default function MapViewController() {
       isApplyingViewConstraint = true;
 
       try {
-        constrainViewToWorkspace(map, workspaceLatLngBounds);
-        constrainViewToPannableWorld(map, basemapConstraintBounds);
+        constrainViewToWorkspaceAndWorld(
+          map,
+          workspaceLatLngBounds,
+          basemapConstraintBounds,
+          options,
+        );
       } finally {
         isApplyingViewConstraint = false;
       }
     };
 
-    const refreshZoomConstraints = () => {
+    const refreshZoomConstraints = (
+      options: ViewConstraintOptions = {},
+    ) => {
       const lockedBasemapZoom =
         useEditorTestWorkspaceStore.getState().workspaceBasemapZoom;
-      const minZoom = getLockedMinZoom(lockedBasemapZoom, map.getZoom());
-      const maxZoom = getLockedMaxZoom(lockedBasemapZoom, map.getMaxZoom());
-      const safeMaxZoom = Math.max(minZoom, maxZoom);
+      const currentZoom = map.getZoom();
+      const lockedMinZoom = getLockedMinZoom(lockedBasemapZoom, currentZoom);
+      const lockedMaxZoom = getLockedMaxZoom(
+        lockedBasemapZoom,
+        map.getMaxZoom(),
+      );
 
-      map.setMinZoom(minZoom);
+      /**
+       * « Sélectionner le monde » crée seulement les mêmes bornes qu’un tracé
+       * manuel autour du monde. Après validation, aucun mode de zoom spécial
+       * n’est appliqué : la zone, le masque, le fond et les objets suivent le
+       * zoom Leaflet ordinaire de l’éditeur.
+       */
+      const safeMinZoom = Math.min(lockedMinZoom, currentZoom);
+      const safeMaxZoom = Math.max(safeMinZoom, lockedMaxZoom, currentZoom);
+
+      map.setMinZoom(safeMinZoom);
       map.setMaxZoom(safeMaxZoom);
 
-      if (map.getZoom() < minZoom) {
-        map.setZoom(minZoom, { animate: false });
-      }
-
-      if (map.getZoom() > safeMaxZoom) {
-        map.setZoom(safeMaxZoom, { animate: false });
-      }
-
       if (!isWorkspaceConstraintSuspended()) {
-        constrainEditorViewport();
+        constrainEditorViewport(options);
       }
     };
 
-    const scheduleRefreshZoomConstraints = () => {
+    const scheduleRefreshZoomConstraints = (
+      options: ViewConstraintOptions = {},
+    ) => {
       if (animationFrameId !== null) {
         window.cancelAnimationFrame(animationFrameId);
       }
 
       animationFrameId = window.requestAnimationFrame(() => {
         animationFrameId = null;
-        refreshZoomConstraints();
+        refreshZoomConstraints(options);
         requestDrawCursorReplay();
       });
     };
 
-    const scheduleWorkspaceConstraint = () => {
+    const scheduleWorkspaceConstraint = (
+      options: ViewConstraintOptions = {},
+    ) => {
       if (isWorkspaceConstraintSuspended()) {
         requestDrawCursorReplay();
         return;
@@ -639,8 +730,58 @@ export default function MapViewController() {
 
       animationFrameId = window.requestAnimationFrame(() => {
         animationFrameId = null;
-        constrainEditorViewport();
+        constrainEditorViewport(options);
         requestDrawCursorReplay();
+      });
+    };
+
+    const isContinuousWheelZoomActive = () =>
+      map.getContainer().dataset[CONTINUOUS_WHEEL_ZOOM_DATASET_KEY] ===
+      "true";
+
+    const finalizeContinuousWheelZoom = () => {
+      smoothZoomConstraintUntil = window.performance.now() + 260;
+      scheduleRefreshZoomConstraints({ animate: true });
+    };
+
+    const handleZoomEnd = () => {
+      /**
+       * Un trackpad envoie de nombreux micro-zooms successifs. Recontraindre la
+       * vue à chaque zoomend produirait un petit recentrage répété et donc une
+       * sensation de vibration. Pendant le geste continu, on laisse Leaflet
+       * suivre le trackpad puis on applique une seule contrainte à la fin.
+       */
+      if (isContinuousWheelZoomActive()) {
+        requestDrawCursorReplay();
+        return;
+      }
+
+      /**
+       * Leaflet termine d'abord son animation de zoom, puis DroMap recale si
+       * nécessaire la vue pour garder suffisamment de zone visible. Ce petit
+       * recalage est maintenant animé au lieu d'être appliqué par un setView
+       * instantané, ce qui évite l'impression de saut.
+       */
+      smoothZoomConstraintUntil = window.performance.now() + 260;
+      scheduleRefreshZoomConstraints({ animate: true });
+    };
+
+    const handleResize = () => {
+      scheduleRefreshZoomConstraints();
+    };
+
+    const handleDrag = () => {
+      scheduleWorkspaceConstraint();
+    };
+
+    const handleMoveEnd = () => {
+      if (isContinuousWheelZoomActive()) {
+        requestDrawCursorReplay();
+        return;
+      }
+
+      scheduleWorkspaceConstraint({
+        animate: window.performance.now() < smoothZoomConstraintUntil,
       });
     };
 
@@ -661,9 +802,8 @@ export default function MapViewController() {
     }
 
     /**
-     * maxBounds Leaflet est volontairement retiré en édition : il bloque trop
-     * fort aux bords. DroMap applique à la place une contrainte graphique :
-     * zone de travail visible + petite marge grise autour du monde.
+     * Comme pour toute zone tracée manuellement, les contraintes sont gérées
+     * par DroMap plutôt que par maxBounds Leaflet.
      */
     map.options.maxBoundsViscosity = 0;
     map.setMaxBounds(null as unknown as L.LatLngBoundsExpression);
@@ -676,20 +816,30 @@ export default function MapViewController() {
         activeTool !== "trace-line",
     });
 
-    map.on("zoomend", scheduleRefreshZoomConstraints);
-    map.on("resize", scheduleRefreshZoomConstraints);
-    map.on("drag", scheduleWorkspaceConstraint);
-    map.on("moveend", scheduleWorkspaceConstraint);
+    const mapContainer = map.getContainer();
+
+    map.on("zoomend", handleZoomEnd);
+    map.on("resize", handleResize);
+    map.on("drag", handleDrag);
+    map.on("moveend", handleMoveEnd);
+    mapContainer.addEventListener(
+      CONTINUOUS_WHEEL_ZOOM_END_EVENT,
+      finalizeContinuousWheelZoom,
+    );
 
     return () => {
       if (animationFrameId !== null) {
         window.cancelAnimationFrame(animationFrameId);
       }
 
-      map.off("zoomend", scheduleRefreshZoomConstraints);
-      map.off("resize", scheduleRefreshZoomConstraints);
-      map.off("drag", scheduleWorkspaceConstraint);
-      map.off("moveend", scheduleWorkspaceConstraint);
+      map.off("zoomend", handleZoomEnd);
+      map.off("resize", handleResize);
+      map.off("drag", handleDrag);
+      map.off("moveend", handleMoveEnd);
+      mapContainer.removeEventListener(
+        CONTINUOUS_WHEEL_ZOOM_END_EVENT,
+        finalizeContinuousWheelZoom,
+      );
 
       restoreNavigationSnapshot(map, snapshot);
     };
@@ -698,7 +848,6 @@ export default function MapViewController() {
     currentMode,
     workspaceBounds,
     basemapId,
-    activeBasemapBounds,
     activeTool,
   ]);
 

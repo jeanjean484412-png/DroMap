@@ -31,6 +31,8 @@ import {
 } from "@/stores/editor-test-geojson-layers";
 import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
 import { bringFloatingPanelToFront, getInitialFloatingPanelZIndex } from "./floating-panel-z-index";
+import { ColorPicker } from "./color-picker";
+import { SavedLayersLibraryModal } from "./saved-layers-library-modal";
 
 function cloneJsonValue<T>(value: T): T {
   if (typeof structuredClone === "function") {
@@ -188,6 +190,7 @@ export function LayersPanel() {
     getInitialFloatingPanelZIndex(),
   );
   const [dialog, setDialog] = useState<LayerDialogState | null>(null);
+  const [isSavedLayersLibraryOpen, setIsSavedLayersLibraryOpen] = useState(false);
   const [dialogName, setDialogName] = useState("");
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [sliderDrafts, setSliderDrafts] = useState<Record<string, number>>({});
@@ -293,7 +296,12 @@ export function LayersPanel() {
   );
 
   const appliedSavedLayerIds = useMemo(
-    () => new Set(layers.map((layer) => layer.sourceSavedLayerId).filter(Boolean)),
+    () =>
+      new Set(
+        layers
+          .map((layer) => layer.sourceSavedLayerId)
+          .filter((id): id is string => typeof id === "string" && id.length > 0),
+      ),
     [layers],
   );
 
@@ -483,13 +491,27 @@ export function LayersPanel() {
     if (targetFeatureCount === 0) {
       openMessageDialog(
         "Conversion impossible",
-        "Ce calque GeoJSON ne contient aucun élément compatible à transformer en objet DroMap.",
+        "Ce calque GeoJSON ne contient aucun élément compatible à ajouter comme objet DroMap éditable.",
       );
       return;
     }
 
     const nextLayerId = createLayer(layer.name);
-    const convertedFeatures = convertGeoJsonLayerToDromapFeatures(layer, nextLayerId);
+    const convertedFeatures = convertGeoJsonLayerToDromapFeatures(
+      layer,
+      nextLayerId,
+    ).map((feature) => {
+      const { lockOverride: _lockOverride, ...nextProperties } =
+        feature.properties;
+
+      return {
+        ...feature,
+        properties: {
+          ...nextProperties,
+          locked: false,
+        },
+      };
+    });
 
     useEditorTestLayersStore.setState((state) => ({
       layers: state.layers.map((dromapLayer) =>
@@ -499,7 +521,10 @@ export function LayersPanel() {
               name: layer.name,
               visible: layer.visible,
               opacity: layer.opacity,
-              locked: layer.locked,
+              // La transformation sert précisément à rendre les éléments éditables.
+              // Un verrouillage du calque GeoJSON source ne doit donc jamais être
+              // recopié comme verrouillage par défaut du nouveau calque DroMap.
+              locked: false,
               sourceGeoJsonLayerId: layer.id,
               sourceGeoJsonLayerName: layer.name,
               sourceGeoJsonSourceName: layer.sourceName ?? null,
@@ -844,7 +869,7 @@ export function LayersPanel() {
       case "delete-geojson-layer":
         return "Supprimer le calque GeoJSON";
       case "convert-geojson-layer":
-        return "Transformer en objets DroMap";
+        return "Ajouter comme objets éditables";
       case "delete-saved-layer":
         return "Supprimer le calque enregistré";
       case "delete-saved-geojson-layer":
@@ -885,7 +910,7 @@ export function LayersPanel() {
       case "delete-geojson-layer":
         return `Le calque “${dialog.layer.name}” sera retiré de cette carte. Le fichier GeoJSON source ne sera pas modifié.`;
       case "convert-geojson-layer":
-        return `Ce calque contient ${dialog.targetFeatureCount.toLocaleString()} éléments qui deviendront des objets DroMap éditables. C’est très lourd : la carte, la légende, les exports et l’onglet Objets risquent de laguer fortement. Garde plutôt le calque GeoJSON léger si tu n’as pas besoin d’éditer chaque élément séparément.`;
+        return `Ce calque contient ${dialog.targetFeatureCount.toLocaleString()} éléments qui seront ajoutés comme objets DroMap éditables individuellement. C’est très lourd : la carte, la légende, les exports et l’onglet Objets risquent de laguer fortement. Garde plutôt le calque GeoJSON léger si tu n’as pas besoin d’éditer chaque élément séparément.`;
       case "delete-saved-layer":
         return "Les cartes déjà créées ne seront pas modifiées.";
       case "delete-saved-geojson-layer":
@@ -988,7 +1013,7 @@ export function LayersPanel() {
                 : isDestructive
                   ? "Supprimer"
                   : isHeavyConversion
-                    ? "Transformer quand même"
+                    ? "Ajouter quand même"
                     : isLayerToGeoJsonConversion
                       ? "Re-transformer"
                       : "Valider"}
@@ -1007,11 +1032,37 @@ export function LayersPanel() {
           setPanelZIndex(bringFloatingPanelToFront());
           setIsOpen(true);
         }}
-        className="absolute right-4 top-[5.25rem] z-[1000] rounded-xl border border-black/10 bg-white/95 px-4 py-2 text-sm font-medium text-slate-800 shadow-lg backdrop-blur transition hover:bg-slate-50"
+        className="group absolute right-4 top-[5.25rem] z-[1000] flex min-w-56 cursor-pointer items-center justify-between gap-3 rounded-2xl border-2 border-indigo-200 bg-white/95 px-3 py-2.5 text-left text-sm text-slate-900 shadow-xl backdrop-blur transition hover:-translate-y-0.5 hover:border-indigo-400 hover:bg-white hover:shadow-2xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-100"
       >
-        Calques
-        <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
-          {activeLayer ? activeLayer.name : "Dessin direct"}
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm transition group-hover:bg-indigo-500">
+            <svg
+              aria-hidden="true"
+              width="19"
+              height="19"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.9"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z" />
+              <path d="m4 12 8 4.5 8-4.5" />
+              <path d="m4 16.5 8 4.5 8-4.5" />
+            </svg>
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[11px] font-black uppercase tracking-wide text-indigo-700">
+              Calques
+            </span>
+            <span className="block max-w-32 truncate font-bold text-slate-950">
+              {activeLayer ? activeLayer.name : "Dessin direct"}
+            </span>
+          </span>
+        </span>
+        <span className="shrink-0 rounded-lg bg-indigo-50 px-2 py-1 text-[11px] font-black text-indigo-700 transition group-hover:bg-indigo-100">
+          Gérer →
         </span>
       </button>
     );
@@ -1247,6 +1298,31 @@ export function LayersPanel() {
                           {layer.locked ? " · verrouillé" : ""}
                           {!layer.visible ? " · masqué" : ""}
                         </div>
+                        {layer.sourceLabel || layer.sourceLicense ? (
+                          <div className="mt-1 text-[11px] leading-relaxed text-sky-800">
+                            {layer.sourceLabel ? (
+                              <>
+                                Source : {layer.sourceUrl ? (
+                                  <a
+                                    href={layer.sourceUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-semibold underline decoration-sky-300 underline-offset-2 hover:text-sky-950"
+                                  >
+                                    {layer.sourceLabel}
+                                  </a>
+                                ) : (
+                                  <span className="font-semibold">
+                                    {layer.sourceLabel}
+                                  </span>
+                                )}
+                              </>
+                            ) : null}
+                            {layer.sourceLabel && layer.sourceLicense ? " · " : ""}
+                            {layer.sourceLicense ? layer.sourceLicense : null}
+                            {layer.sourceVersion ? ` · ${layer.sourceVersion}` : ""}
+                          </div>
+                        ) : null}
                       </div>
 
                       <div className="flex shrink-0 items-center gap-1">
@@ -1305,9 +1381,12 @@ export function LayersPanel() {
                     <button
                       type="button"
                       onClick={() => handleConvertGeoJsonLayer(layer)}
-                      className="mt-2 w-full rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+                      className="mt-2 flex w-full flex-col items-center justify-center rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-center text-xs font-semibold leading-tight text-amber-900 hover:bg-amber-100"
                     >
-                      Transformer en objets DroMap
+                      <span>Transformer en objets DroMap</span>
+                      <span className="mt-0.5 text-[10px] font-medium text-amber-700">
+                        éditables individuellement
+                      </span>
                     </button>
 
                     <label className="mt-3 block text-xs font-medium text-slate-700">
@@ -1357,28 +1436,28 @@ export function LayersPanel() {
                     </label>
 
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                      <label className="space-y-1 text-slate-700">
-                        <span>Trait / points</span>
-                        <input
-                          type="color"
+                      <div className="space-y-1 text-slate-700">
+                        <span className="block">Trait / points</span>
+                        <ColorPicker
                           value={layer.style.strokeColor}
-                          onChange={(event) =>
-                            updateGeoJsonLayerStyle(layer.id, { strokeColor: event.target.value })
+                          onChange={(strokeColor) =>
+                            updateGeoJsonLayerStyle(layer.id, { strokeColor })
                           }
-                          className="h-8 w-full rounded border border-slate-300 bg-white p-1"
+                          ariaLabel="Couleur du trait et des points GeoJSON"
+                          className="w-full"
                         />
-                      </label>
-                      <label className="space-y-1 text-slate-700">
-                        <span>Fond zones</span>
-                        <input
-                          type="color"
+                      </div>
+                      <div className="space-y-1 text-slate-700">
+                        <span className="block">Fond zones</span>
+                        <ColorPicker
                           value={layer.style.fillColor}
-                          onChange={(event) =>
-                            updateGeoJsonLayerStyle(layer.id, { fillColor: event.target.value })
+                          onChange={(fillColor) =>
+                            updateGeoJsonLayerStyle(layer.id, { fillColor })
                           }
-                          className="h-8 w-full rounded border border-slate-300 bg-white p-1"
+                          ariaLabel="Couleur du fond des zones GeoJSON"
+                          className="w-full"
                         />
-                      </label>
+                      </div>
                       <label className="space-y-1 text-slate-700">
                         <span>Épaisseur</span>
                         <input
@@ -1460,144 +1539,68 @@ export function LayersPanel() {
             )}
           </section>
 
-          <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="mb-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Base de calques enregistrés
-              </div>
-              <div className="mt-0.5 text-xs leading-relaxed text-slate-500">
-                Un calque enregistré garde ses objets, leurs styles, labels et réglages de légende. L’ajouter à une carte crée une copie indépendante.
-              </div>
-            </div>
-
-            {savedLayers.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500">
-                Aucun calque enregistré pour l’instant.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {savedLayers.map((savedLayer) => {
-                  const isAlreadyApplied = appliedSavedLayerIds.has(savedLayer.id);
-
-                  return (
-                    <article
-                      key={savedLayer.id}
-                      className="rounded-xl border border-slate-200 bg-slate-50 p-3"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="truncate font-semibold text-slate-950">
-                            {savedLayer.name}
-                          </div>
-                          <div className="mt-0.5 text-xs text-slate-500">
-                            {savedLayer.features.length} objet{savedLayer.features.length > 1 ? "s" : ""} · {new Date(savedLayer.savedAt).toLocaleDateString()}
-                            {isAlreadyApplied ? " · déjà sur la carte" : ""}
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => handleApplySavedLayer(savedLayer)}
-                          disabled={isAlreadyApplied}
-                          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-white"
-                        >
-                          {isAlreadyApplied ? "Ajouté" : "Ajouter"}
-                        </button>
-                      </div>
-
-                      <div className="mt-2 grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleRenameSavedLayer(savedLayer)}
-                          className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
-                        >
-                          Renommer
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteSavedLayer(savedLayer)}
-                          className="rounded-lg border border-red-100 bg-white px-2 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50"
-                        >
-                          Supprimer
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
-          <section className="rounded-xl border border-sky-100 bg-white p-3 shadow-sm">
-            <div className="mb-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-sky-600">
-                Base de calques GeoJSON enregistrés
-              </div>
-              <div className="mt-0.5 text-xs leading-relaxed text-slate-500">
-                Un calque GeoJSON enregistré garde ses données et son style global. L’ajouter à une carte crée une copie indépendante.
-              </div>
-            </div>
-
-            {savedGeoJsonLayers.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500">
-                Aucun calque GeoJSON enregistré pour l’instant.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {savedGeoJsonLayers.map((savedLayer) => {
-                  const isAlreadyApplied = appliedSavedGeoJsonLayerIds.has(savedLayer.id);
-
-                  return (
-                    <article
-                      key={savedLayer.id}
-                      className="rounded-xl border border-sky-100 bg-sky-50/70 p-3"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="truncate font-semibold text-slate-950">
-                            {savedLayer.name}
-                          </div>
-                          <div className="mt-0.5 text-xs text-slate-500">
-                            {savedLayer.layer.featureCount} entité{savedLayer.layer.featureCount > 1 ? "s" : ""} · {savedLayer.layer.coordinateCount.toLocaleString()} coordonnée{savedLayer.layer.coordinateCount > 1 ? "s" : ""} · {new Date(savedLayer.savedAt).toLocaleDateString()}
-                            {isAlreadyApplied ? " · déjà sur la carte" : ""}
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => handleApplySavedGeoJsonLayer(savedLayer)}
-                          disabled={isAlreadyApplied}
-                          className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-white"
-                        >
-                          {isAlreadyApplied ? "Ajouté" : "Ajouter"}
-                        </button>
-                      </div>
-
-                      <div className="mt-2 grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleRenameSavedGeoJsonLayer(savedLayer)}
-                          className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
-                        >
-                          Renommer
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteSavedGeoJsonLayer(savedLayer)}
-                          className="rounded-lg border border-red-100 bg-white px-2 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50"
-                        >
-                          Supprimer
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
+          <section className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-3 shadow-sm">
+            <button
+              type="button"
+              onClick={() => {
+                setPanelZIndex(bringFloatingPanelToFront());
+                setIsSavedLayersLibraryOpen(true);
+              }}
+              className="group flex w-full items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-white px-3 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-100"
+            >
+              <span className="flex min-w-0 items-center gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm transition group-hover:bg-indigo-500">
+                  <svg
+                    aria-hidden="true"
+                    width="21"
+                    height="21"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.9"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z" />
+                    <path d="m4 12 8 4.5 8-4.5" />
+                    <path d="m4 16.5 8 4.5 8-4.5" />
+                  </svg>
+                </span>
+                <span className="min-w-0">
+                  <span className="block font-black text-slate-950">
+                    Mes calques enregistrés
+                  </span>
+                  <span className="mt-0.5 block text-xs leading-snug text-slate-500">
+                    {savedLayers.length + savedGeoJsonLayers.length === 0
+                      ? "Aucun calque enregistré pour l’instant."
+                      : `${savedLayers.length + savedGeoJsonLayers.length} calque${savedLayers.length + savedGeoJsonLayers.length > 1 ? "s" : ""} avec prévisualisation`}
+                  </span>
+                </span>
+              </span>
+              <span className="shrink-0 rounded-lg bg-indigo-50 px-2.5 py-1.5 text-xs font-black text-indigo-700 transition group-hover:bg-indigo-100">
+                Ouvrir →
+              </span>
+            </button>
           </section>
 
         </div>
       </aside>
+
+      <SavedLayersLibraryModal
+        isOpen={isSavedLayersLibraryOpen}
+        zIndex={panelZIndex + 5}
+        savedLayers={savedLayers}
+        savedGeoJsonLayers={savedGeoJsonLayers}
+        appliedSavedLayerIds={appliedSavedLayerIds}
+        appliedSavedGeoJsonLayerIds={appliedSavedGeoJsonLayerIds}
+        onClose={() => setIsSavedLayersLibraryOpen(false)}
+        onApplySavedLayer={handleApplySavedLayer}
+        onRenameSavedLayer={handleRenameSavedLayer}
+        onDeleteSavedLayer={handleDeleteSavedLayer}
+        onApplySavedGeoJsonLayer={handleApplySavedGeoJsonLayer}
+        onRenameSavedGeoJsonLayer={handleRenameSavedGeoJsonLayer}
+        onDeleteSavedGeoJsonLayer={handleDeleteSavedGeoJsonLayer}
+      />
 
       {renderDialog()}
     </>

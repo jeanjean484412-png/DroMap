@@ -2,16 +2,19 @@
 
 import dynamic from "next/dynamic";
 
+import { ActiveToolOutsideWorkspaceClickGuard } from "./active-tool-outside-workspace-click-guard";
 import { BasemapControls } from "./basemap-controls";
-import { DebugPanel } from "./debug-panel";
 import { EditorKeyboardShortcuts } from "./editor-keyboard-shortcuts";
 import { ExportControls } from "./export-controls";
 import { CreditsPanel } from "./credits-panel";
+import { DroMapAiPanel } from "./dromap-ai-panel";
+import { CustomMarkersBootstrap } from "./custom-markers-bootstrap";
 import { ExportSetupPanel } from "./export-setup-panel";
 import GraphicZoomViewport from "./graphic-zoom-viewport";
 import { LayersPanel } from "./layers-panel";
 import { LegendPanel } from "./legend-panel";
 import ModeToolbar from "./mode-toolbar";
+import { PlaceSearchControl } from "./place-search-control";
 import { SelectedFeatureActions } from "./selected-feature-actions";
 
 const TestMap = dynamic(() => import("./test-map"), {
@@ -104,12 +107,16 @@ export default function EditorTestPage() {
       `}</style>
 
       <EditorKeyboardShortcuts />
+      <CustomMarkersBootstrap />
+      <ActiveToolOutsideWorkspaceClickGuard />
 
       <GraphicZoomViewport>
         <TestMap />
       </GraphicZoomViewport>
 
       <ModeToolbar />
+      <PlaceSearchControl />
+      <DroMapAiPanel />
       <BasemapControls />
       <SelectedFeatureActions />
       <ExportControls />
@@ -117,7 +124,6 @@ export default function EditorTestPage() {
       <LegendPanel />
       <LayersPanel />
       <ExportSetupPanel />
-      <DebugPanel />
     </main>
   );
 }

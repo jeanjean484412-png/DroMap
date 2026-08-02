@@ -1,5 +1,9 @@
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
-import type { ExportScaleBarStyle } from "@/stores/editor-test-export";
+import type {
+  ExportMapElementCustomPosition,
+  ExportMapElementPosition,
+  ExportScaleBarStyle,
+} from "@/stores/editor-test-export";
 import type { ExportCanvasRect } from "./export-layout";
 
 export type ExportScaleBarModel = {
@@ -117,7 +121,12 @@ function drawRoundedRect(
   ctx.lineTo(x + width - safeRadius, y);
   ctx.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
   ctx.lineTo(x + width, y + height - safeRadius);
-  ctx.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+  ctx.quadraticCurveTo(
+    x + width,
+    y + height,
+    x + width - safeRadius,
+    y + height,
+  );
   ctx.lineTo(x + safeRadius, y + height);
   ctx.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
   ctx.lineTo(x, y + safeRadius);
@@ -130,6 +139,8 @@ export function drawExportScaleBarOnCanvas(
   input: {
     enabled: boolean;
     style: ExportScaleBarStyle;
+    position: ExportMapElementPosition;
+    mapPosition?: ExportMapElementCustomPosition | null;
     workspaceBounds: WorkspaceBounds | null;
     mapRect: ExportCanvasRect;
   },
@@ -148,40 +159,72 @@ export function drawExportScaleBarOnCanvas(
   }
 
   const margin = 16;
-  const paddingX = input.style === "boxed" ? 10 : 8;
-  const paddingY = input.style === "boxed" ? 8 : 6;
+  const paddingX = input.style === "boxed" ? 7 : 0;
+  const paddingY = input.style === "boxed" ? 5 : 0;
   const barHeight = 8;
   const labelHeight = 16;
   const boxWidth = model.widthPx + paddingX * 2;
   const boxHeight = labelHeight + barHeight + paddingY * 2 + 4;
-  const x = input.mapRect.x + margin;
-  const y = input.mapRect.y + input.mapRect.height - margin - boxHeight;
+  const isRight = input.position.endsWith("right");
+  const isBottom = input.position.startsWith("bottom");
+  const fallbackX = isRight
+    ? input.mapRect.x + input.mapRect.width - margin - boxWidth
+    : input.mapRect.x + margin;
+  const fallbackY = isBottom
+    ? input.mapRect.y + input.mapRect.height - margin - boxHeight
+    : input.mapRect.y + margin;
+  const customPosition = input.mapPosition;
+  const minX = input.mapRect.x + margin;
+  const maxX = Math.max(
+    minX,
+    input.mapRect.x + input.mapRect.width - margin - boxWidth,
+  );
+  const minY = input.mapRect.y + margin;
+  const maxY = Math.max(
+    minY,
+    input.mapRect.y + input.mapRect.height - margin - boxHeight,
+  );
+  const x = customPosition
+    ? clamp(
+        input.mapRect.x + customPosition.x * input.mapRect.width - boxWidth / 2,
+        minX,
+        maxX,
+      )
+    : fallbackX;
+  const y = customPosition
+    ? clamp(
+        input.mapRect.y + customPosition.y * input.mapRect.height - boxHeight / 2,
+        minY,
+        maxY,
+      )
+    : fallbackY;
   const barX = x + paddingX;
   const barY = y + paddingY + labelHeight + 3;
 
   ctx.save();
-  ctx.font = "600 12px Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  ctx.font =
+    "600 12px Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
   ctx.textBaseline = "top";
   ctx.lineJoin = "round";
   ctx.lineCap = "butt";
 
-  drawRoundedRect(ctx, x, y, boxWidth, boxHeight, input.style === "boxed" ? 8 : 6);
-  ctx.fillStyle = input.style === "boxed" ? "rgba(255, 255, 255, 0.94)" : "rgba(255, 255, 255, 0.82)";
-  ctx.fill();
-
   if (input.style === "boxed") {
-    ctx.strokeStyle = "rgba(15, 23, 42, 0.28)";
+    drawRoundedRect(ctx, x, y, boxWidth, boxHeight, 5);
+    ctx.strokeStyle = "rgba(15, 23, 42, 0.72)";
     ctx.lineWidth = 1;
     ctx.stroke();
   }
 
+  ctx.strokeStyle = "rgba(255,255,255,0.96)";
+  ctx.lineWidth = 4;
+  ctx.strokeText(model.label, barX, y + paddingY);
   ctx.fillStyle = "#0f172a";
   ctx.fillText(model.label, barX, y + paddingY);
 
   if (input.style === "line") {
     const tickHeight = 10;
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255,255,255,0.96)";
+    ctx.lineWidth = 5;
     ctx.beginPath();
     ctx.moveTo(barX, barY + barHeight / 2);
     ctx.lineTo(barX + model.widthPx, barY + barHeight / 2);
@@ -191,6 +234,9 @@ export function drawExportScaleBarOnCanvas(
     ctx.lineTo(barX + model.widthPx / 2, barY + barHeight / 2 + tickHeight / 2);
     ctx.moveTo(barX + model.widthPx, barY + barHeight / 2 - tickHeight / 2);
     ctx.lineTo(barX + model.widthPx, barY + barHeight / 2 + tickHeight / 2);
+    ctx.stroke();
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
     ctx.stroke();
   } else if (input.style === "alternating" || input.style === "boxed") {
     const segments = 4;

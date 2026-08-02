@@ -5,11 +5,16 @@ import L from "leaflet";
 import { useMap } from "react-leaflet";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
+import { scaleFeatureForVisualZoom } from "@/lib/dromap/feature-visual-scale";
 import { getLeafletDashArray } from "./feature-style";
 import { shouldUseAlignedZoneOutline } from "./zone-outline";
 import { createMarkerLeafletIcon } from "./marker-symbol";
 import { featureHasLineArrow, getLineArrowStyle } from "./line-arrow";
-import { createTextDivIconRender } from "./text-rendering";
+import {
+  createTextDivIconRender,
+  getTextFeatureReferenceZoom,
+  getTextMapZoomScale,
+} from "./text-rendering";
 import {
   getZoneFillEnabled,
   getZoneStrokeEnabled,
@@ -17,6 +22,8 @@ import {
   getZoneVisibleStrokeOpacity,
 } from "./zone-style";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
+import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
+import { useEditorTestCustomMarkersStore } from "@/stores/editor-test-custom-markers";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -32,8 +39,10 @@ function safeColor(color: unknown, fallback = "#e63946") {
   return fallback;
 }
 
-function createTextIcon(feature: DroMapFeature) {
+function createTextIcon(feature: DroMapFeature, currentZoom: number) {
+  const referenceZoom = getTextFeatureReferenceZoom(feature, currentZoom);
   const renderedText = createTextDivIconRender(feature, {
+    scale: getTextMapZoomScale(currentZoom, referenceZoom),
     minWidth: 56,
     maxWidth: 520,
   });
@@ -46,7 +55,11 @@ function createTextIcon(feature: DroMapFeature) {
   });
 }
 
-function applyFeatureStyleToLayer(layer: L.Layer, feature: DroMapFeature) {
+function applyFeatureStyleToLayer(
+  layer: L.Layer,
+  feature: DroMapFeature,
+  currentZoom: number,
+) {
   const style = feature.properties?.style ?? {};
   const type = feature.properties?.type;
   const geometryType = feature.geometry?.type;
@@ -58,7 +71,12 @@ function applyFeatureStyleToLayer(layer: L.Layer, feature: DroMapFeature) {
     featureHasLineArrow(feature) && rawOpacity <= 0.05
       ? getLineArrowStyle(feature).opacity
       : rawOpacity;
-  const weight = clamp(style.weight ?? 3, 0, 20);
+  const isRenderedCopy = Number.isFinite(Number(style.renderScale));
+  const weight = clamp(
+    style.weight ?? 3,
+    isRenderedCopy ? 0.1 : 0,
+    isRenderedCopy ? 512 : 20,
+  );
   const dashArray = getLeafletDashArray(feature);
 
   const isText = type === "text";
@@ -68,7 +86,7 @@ function applyFeatureStyleToLayer(layer: L.Layer, feature: DroMapFeature) {
 
   if (isText && layer instanceof L.Marker) {
     layer.setOpacity(1);
-    layer.setIcon(createTextIcon(feature));
+    layer.setIcon(createTextIcon(feature, currentZoom));
     return;
   }
 
@@ -110,6 +128,12 @@ export function FeaturesStyleSync() {
   const map = useMap();
 
   const features = useEditorTestFeaturesStore((state) => state.features);
+  const customMarkers = useEditorTestCustomMarkersStore(
+    (state) => state.customMarkers,
+  );
+  const workspaceBasemapZoom = useEditorTestWorkspaceStore(
+    (state) => state.workspaceBasemapZoom,
+  );
 
   useEffect(() => {
     const featuresById = new Map(
@@ -125,9 +149,22 @@ export function FeaturesStyleSync() {
       const feature = featuresById.get(featureId);
       if (!feature) return;
 
-      applyFeatureStyleToLayer(layer, feature);
+      const currentZoom = map.getZoom();
+      const fallbackReferenceZoom =
+        typeof workspaceBasemapZoom === "number" &&
+        Number.isFinite(workspaceBasemapZoom)
+          ? workspaceBasemapZoom
+          : currentZoom;
+      const displayFeature = scaleFeatureForVisualZoom(
+        feature,
+        currentZoom,
+        fallbackReferenceZoom,
+        { scaleText: false },
+      );
+
+      applyFeatureStyleToLayer(layer, displayFeature, currentZoom);
     });
-  }, [map, features]);
+  }, [map, features, customMarkers, workspaceBasemapZoom]);
 
   return null;
 }

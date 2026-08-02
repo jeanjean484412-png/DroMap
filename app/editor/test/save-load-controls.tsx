@@ -19,29 +19,65 @@ import {
 import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
+import { useEditorTestMapLabelsStore } from "@/stores/editor-test-map-labels";
+import {
+  type DroMapCustomMarkerDefinition,
+  useEditorTestCustomMarkersStore,
+} from "@/stores/editor-test-custom-markers";
 import {
   type ExportFormat,
+  type ExportLegendCustomEntry,
+  type ExportLegendMapPosition,
   type ExportLegendPosition,
+  type ExportLegendSymbolStyle,
+  type ExportMapElementPosition,
+  type ExportNorthArrowStyle,
   type ExportScaleBarStyle,
   useEditorTestExportStore,
 } from "@/stores/editor-test-export";
-import { bringFloatingPanelToFront, getInitialFloatingPanelZIndex } from "./floating-panel-z-index";
+import { normalizeLegendSymbolStyle } from "./export-custom-legend";
+import {
+  bringFloatingPanelToFront,
+  getInitialFloatingPanelZIndex,
+} from "./floating-panel-z-index";
 
 const LOCAL_SAVE_KEY = "dromap-editor-test-save-v1";
 
 type LocalExportSettings = {
   legendTitle: string;
   legendPosition: ExportLegendPosition;
+  legendMapPosition: ExportLegendMapPosition;
+  legendMapTitlePosition: ExportLegendMapPosition;
   exportFormat: ExportFormat;
+  showBasemapLabels: boolean;
   legendBackgroundColor: string;
   legendSideWidth: number;
   legendBottomHeight: number;
   legendTitleFontSize: number;
   legendItemFontSize: number;
   legendSectionTitleFontSize: number;
+  legendSymbolSize: number;
+  legendItemGap: number;
+  legendLabelGap: number;
+  legendLabelLineHeight: number;
+  legendSectionGap: number;
+  legendMapBorderEnabled: boolean;
+  legendMapBorderColor: string;
+  legendMapBorderWidth: number;
+  legendMapBorderRadius: number;
+  legendMapPadding: number;
+  customLegendEntries: ExportLegendCustomEntry[];
+  legendSymbolOverrides: Record<string, ExportLegendSymbolStyle>;
   scaleBarEnabled: boolean;
   scaleBarStyle: ExportScaleBarStyle;
+  scaleBarPosition: ExportMapElementPosition;
+  scaleBarMapPosition: ExportLegendMapPosition | null;
+  northArrowEnabled: boolean;
+  northArrowStyle: ExportNorthArrowStyle;
+  northArrowPosition: ExportMapElementPosition;
+  northArrowMapPosition: ExportLegendMapPosition | null;
   hiddenLegendFeatureIds: string[];
+  hiddenLegendGroupKeys: string[];
   legendFeatureOrder: string[];
   legendGroupOrder: string[];
   legendSectionOrder: string[];
@@ -55,9 +91,15 @@ type LocalSavePayload = {
   features: DroMapFeature[];
   workspaceBounds: WorkspaceBounds | null;
   basemapId?: DromapBasemapId;
+  showCountryNeighborContext?: boolean;
+  showAllFeatureLabels?: boolean;
+  showAllGeoJsonFeatureLabels?: boolean;
+  featureMapLabelScale?: number;
+  featureMapLabelOutlineWidth?: number;
   layers?: DroMapLayer[];
   activeLayerId?: string;
   geoJsonLayers?: DromapGeoJsonLayer[];
+  customMarkers?: DroMapCustomMarkerDefinition[];
   exportSettings?: LocalExportSettings;
 };
 
@@ -115,10 +157,95 @@ function parseStringRecord(value: unknown) {
   );
 }
 
+function parseLegendSymbolOverrides(
+  value: unknown,
+): Record<string, ExportLegendSymbolStyle> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([groupKey, style]) => {
+      if (!isRecord(style)) {
+        return [];
+      }
+
+      return [[groupKey, normalizeLegendSymbolStyle(style)]];
+    }),
+  );
+}
+
+function parseCustomLegendEntries(value: unknown): ExportLegendCustomEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item, index) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+
+    const symbol =
+      item.symbol === "line" ||
+      item.symbol === "arrow" ||
+      item.symbol === "zone" ||
+      item.symbol === "text"
+        ? item.symbol
+        : "marker";
+    const dashStyle =
+      item.dashStyle === "dashed" || item.dashStyle === "dotted"
+        ? item.dashStyle
+        : "solid";
+
+    return [
+      {
+        id:
+          typeof item.id === "string" && item.id.trim().length > 0
+            ? item.id
+            : `legend-import-${index}`,
+        label: typeof item.label === "string" ? item.label : "Nouvel élément",
+        section: typeof item.section === "string" ? item.section : "Général",
+        symbol,
+        color: typeof item.color === "string" ? item.color : "#111827",
+        fillColor:
+          typeof item.fillColor === "string" ? item.fillColor : "#ffffff",
+        dashStyle,
+        symbolStyle: isRecord(item.symbolStyle)
+          ? normalizeLegendSymbolStyle(item.symbolStyle, symbol)
+          : undefined,
+      },
+    ];
+  });
+}
+
 function parseLegendPosition(value: unknown): ExportLegendPosition {
-  return value === "left" || value === "bottom" || value === "right"
+  return value === "left" ||
+    value === "bottom" ||
+    value === "right" ||
+    value === "map"
     ? value
     : "right";
+}
+
+function parseLegendMapPosition(
+  value: unknown,
+  fallback: ExportLegendMapPosition = { x: 0, y: 0.84 },
+): ExportLegendMapPosition {
+  if (!isRecord(value)) {
+    return { ...fallback };
+  }
+
+  return {
+    x: clampNumber(value.x, fallback.x, 0, 1),
+    y: clampNumber(value.y, fallback.y, 0, 1),
+  };
+}
+
+function parseOptionalMapElementPosition(
+  value: unknown,
+): ExportLegendMapPosition | null {
+  if (!isRecord(value)) return null;
+  return parseLegendMapPosition(value, { x: 0.5, y: 0.5 });
 }
 
 function parseExportFormat(value: unknown): ExportFormat {
@@ -141,20 +268,63 @@ function parseScaleBarStyle(value: unknown): ExportScaleBarStyle {
     : "alternating";
 }
 
+function parseNorthArrowStyle(value: unknown): ExportNorthArrowStyle {
+  return value === "classic" ||
+    value === "simple" ||
+    value === "compass" ||
+    value === "needle"
+    ? value
+    : "classic";
+}
+
+function parseMapElementPosition(
+  value: unknown,
+  fallback: ExportMapElementPosition,
+): ExportMapElementPosition {
+  return value === "top-left" ||
+    value === "top-right" ||
+    value === "bottom-left" ||
+    value === "bottom-right"
+    ? value
+    : fallback;
+}
+
 function getDefaultLocalExportSettings(): LocalExportSettings {
   return {
     legendTitle: "Légende",
     legendPosition: "right",
+    legendMapPosition: { x: 0, y: 0.84 },
+    legendMapTitlePosition: { x: 0.5, y: 0 },
     exportFormat: "auto",
+    showBasemapLabels: true,
     legendBackgroundColor: "#ffffff",
     legendSideWidth: 420,
     legendBottomHeight: 0,
     legendTitleFontSize: 32,
     legendItemFontSize: 24,
     legendSectionTitleFontSize: 20,
-    scaleBarEnabled: false,
+    legendSymbolSize: 48,
+    legendItemGap: 16,
+    legendLabelGap: 18,
+    legendLabelLineHeight: 1.2,
+    legendSectionGap: 16,
+    legendMapBorderEnabled: true,
+    legendMapBorderColor: "#ffffff",
+    legendMapBorderWidth: 1,
+    legendMapBorderRadius: 12,
+    legendMapPadding: 10,
+    customLegendEntries: [],
+    legendSymbolOverrides: {},
+    scaleBarEnabled: true,
     scaleBarStyle: "alternating",
+    scaleBarPosition: "bottom-left",
+    scaleBarMapPosition: null,
+    northArrowEnabled: true,
+    northArrowStyle: "classic",
+    northArrowPosition: "top-right",
+    northArrowMapPosition: null,
     hiddenLegendFeatureIds: [],
+    hiddenLegendGroupKeys: [],
     legendFeatureOrder: [],
     legendGroupOrder: [],
     legendSectionOrder: [],
@@ -169,16 +339,50 @@ function createLocalExportSettingsSnapshot(): LocalExportSettings {
   return {
     legendTitle: exportState.legendTitle,
     legendPosition: exportState.legendPosition,
+    legendMapPosition: { ...exportState.legendMapPosition },
+    legendMapTitlePosition: { ...exportState.legendMapTitlePosition },
     exportFormat: exportState.exportFormat,
+    showBasemapLabels: exportState.showBasemapLabels,
     legendBackgroundColor: exportState.legendBackgroundColor,
     legendSideWidth: exportState.legendSideWidth,
     legendBottomHeight: exportState.legendBottomHeight,
     legendTitleFontSize: exportState.legendTitleFontSize,
     legendItemFontSize: exportState.legendItemFontSize,
     legendSectionTitleFontSize: exportState.legendSectionTitleFontSize,
+    legendSymbolSize: exportState.legendSymbolSize,
+    legendItemGap: exportState.legendItemGap,
+    legendLabelGap: exportState.legendLabelGap,
+    legendLabelLineHeight: exportState.legendLabelLineHeight,
+    legendSectionGap: exportState.legendSectionGap,
+    legendMapBorderEnabled: exportState.legendMapBorderEnabled,
+    legendMapBorderColor: exportState.legendMapBorderColor,
+    legendMapBorderWidth: exportState.legendMapBorderWidth,
+    legendMapBorderRadius: exportState.legendMapBorderRadius,
+    legendMapPadding: exportState.legendMapPadding,
+    customLegendEntries: exportState.customLegendEntries.map((entry) => ({
+      ...entry,
+      symbolStyle: entry.symbolStyle ? { ...entry.symbolStyle } : undefined,
+    })),
+    legendSymbolOverrides: Object.fromEntries(
+      Object.entries(exportState.legendSymbolOverrides).map(([key, style]) => [
+        key,
+        { ...style },
+      ]),
+    ),
     scaleBarEnabled: exportState.scaleBarEnabled,
     scaleBarStyle: exportState.scaleBarStyle,
+    scaleBarPosition: exportState.scaleBarPosition,
+    scaleBarMapPosition: exportState.scaleBarMapPosition
+      ? { ...exportState.scaleBarMapPosition }
+      : null,
+    northArrowEnabled: exportState.northArrowEnabled,
+    northArrowStyle: exportState.northArrowStyle,
+    northArrowPosition: exportState.northArrowPosition,
+    northArrowMapPosition: exportState.northArrowMapPosition
+      ? { ...exportState.northArrowMapPosition }
+      : null,
     hiddenLegendFeatureIds: [...exportState.hiddenLegendFeatureIds],
+    hiddenLegendGroupKeys: [...exportState.hiddenLegendGroupKeys],
     legendFeatureOrder: [...exportState.legendFeatureOrder],
     legendGroupOrder: [...exportState.legendGroupOrder],
     legendSectionOrder: [...exportState.legendSectionOrder],
@@ -200,7 +404,19 @@ function normalizeLocalExportSettings(value: unknown): LocalExportSettings {
         ? value.legendTitle
         : defaults.legendTitle,
     legendPosition: parseLegendPosition(value.legendPosition),
+    legendMapPosition: parseLegendMapPosition(
+      value.legendMapPosition,
+      defaults.legendMapPosition,
+    ),
+    legendMapTitlePosition: parseLegendMapPosition(
+      value.legendMapTitlePosition,
+      defaults.legendMapTitlePosition,
+    ),
     exportFormat: parseExportFormat(value.exportFormat),
+    showBasemapLabels:
+      value.showBasemapLabels === undefined
+        ? defaults.showBasemapLabels
+        : value.showBasemapLabels !== false,
     legendBackgroundColor:
       typeof value.legendBackgroundColor === "string"
         ? value.legendBackgroundColor
@@ -235,9 +451,89 @@ function normalizeLocalExportSettings(value: unknown): LocalExportSettings {
       10,
       56,
     ),
-    scaleBarEnabled: value.scaleBarEnabled === true,
+    legendSymbolSize: clampNumber(
+      value.legendSymbolSize,
+      defaults.legendSymbolSize,
+      24,
+      144,
+    ),
+    legendItemGap: clampNumber(
+      value.legendItemGap,
+      defaults.legendItemGap,
+      0,
+      40,
+    ),
+    legendLabelGap: clampNumber(
+      value.legendLabelGap,
+      defaults.legendLabelGap,
+      0,
+      48,
+    ),
+    legendLabelLineHeight: clampNumber(
+      value.legendLabelLineHeight,
+      defaults.legendLabelLineHeight,
+      0.8,
+      1.8,
+    ),
+    legendSectionGap: clampNumber(
+      value.legendSectionGap,
+      defaults.legendSectionGap,
+      0,
+      48,
+    ),
+    legendMapBorderEnabled: value.legendMapBorderEnabled !== false,
+    legendMapBorderColor:
+      typeof value.legendMapBorderColor === "string"
+        ? value.legendMapBorderColor
+        : defaults.legendMapBorderColor,
+    legendMapBorderWidth: clampNumber(
+      value.legendMapBorderWidth,
+      defaults.legendMapBorderWidth,
+      1,
+      12,
+    ),
+    legendMapBorderRadius: clampNumber(
+      value.legendMapBorderRadius,
+      defaults.legendMapBorderRadius,
+      0,
+      40,
+    ),
+    legendMapPadding: clampNumber(
+      value.legendMapPadding,
+      defaults.legendMapPadding,
+      0,
+      48,
+    ),
+    customLegendEntries: parseCustomLegendEntries(value.customLegendEntries),
+    legendSymbolOverrides: parseLegendSymbolOverrides(
+      value.legendSymbolOverrides,
+    ),
+    scaleBarEnabled:
+      value.scaleBarEnabled === undefined
+        ? defaults.scaleBarEnabled
+        : value.scaleBarEnabled !== false,
     scaleBarStyle: parseScaleBarStyle(value.scaleBarStyle),
+    scaleBarPosition: parseMapElementPosition(
+      value.scaleBarPosition,
+      defaults.scaleBarPosition,
+    ),
+    scaleBarMapPosition: parseOptionalMapElementPosition(
+      value.scaleBarMapPosition,
+    ),
+    northArrowEnabled:
+      value.northArrowEnabled === undefined
+        ? defaults.northArrowEnabled
+        : value.northArrowEnabled !== false,
+    northArrowStyle: parseNorthArrowStyle(value.northArrowStyle),
+    northArrowPosition: parseMapElementPosition(
+      value.northArrowPosition,
+      defaults.northArrowPosition,
+    ),
+    northArrowMapPosition: parseOptionalMapElementPosition(
+      value.northArrowMapPosition,
+    ),
     hiddenLegendFeatureIds: parseStringArray(value.hiddenLegendFeatureIds),
+    hiddenLegendGroupKeys: parseStringArray(value.hiddenLegendGroupKeys),
     legendFeatureOrder: parseStringArray(value.legendFeatureOrder),
     legendGroupOrder: parseStringArray(value.legendGroupOrder),
     legendSectionOrder: parseStringArray(value.legendSectionOrder),
@@ -285,6 +581,12 @@ export function SaveLoadControls() {
   const setGeoJsonLayers = useEditorTestGeoJsonLayersStore(
     (state) => state.setGeoJsonLayers,
   );
+  const customMarkers = useEditorTestCustomMarkersStore(
+    (state) => state.customMarkers,
+  );
+  const mergeCustomMarkers = useEditorTestCustomMarkersStore(
+    (state) => state.mergeCustomMarkers,
+  );
   const replaceFeatures = useEditorTestFeaturesStore(
     (state) => state.replaceFeatures,
   );
@@ -307,8 +609,38 @@ export function SaveLoadControls() {
   );
 
   const basemapId = useEditorTestBasemapStore((state) => state.basemapId);
+  const showCountryNeighborContext = useEditorTestBasemapStore(
+    (state) => state.showCountryNeighborContext,
+  );
+  const setShowCountryNeighborContext = useEditorTestBasemapStore(
+    (state) => state.setShowCountryNeighborContext,
+  );
   const setBasemapIdFromUnknown = useEditorTestBasemapStore(
     (state) => state.setBasemapIdFromUnknown,
+  );
+  const showAllFeatureLabels = useEditorTestMapLabelsStore(
+    (state) => state.showAllFeatureLabels,
+  );
+  const setShowAllFeatureLabels = useEditorTestMapLabelsStore(
+    (state) => state.setShowAllFeatureLabels,
+  );
+  const showAllGeoJsonFeatureLabels = useEditorTestMapLabelsStore(
+    (state) => state.showAllGeoJsonFeatureLabels,
+  );
+  const setShowAllGeoJsonFeatureLabels = useEditorTestMapLabelsStore(
+    (state) => state.setShowAllGeoJsonFeatureLabels,
+  );
+  const featureMapLabelScale = useEditorTestMapLabelsStore(
+    (state) => state.featureMapLabelScale,
+  );
+  const setFeatureMapLabelScale = useEditorTestMapLabelsStore(
+    (state) => state.setFeatureMapLabelScale,
+  );
+  const featureMapLabelOutlineWidth = useEditorTestMapLabelsStore(
+    (state) => state.featureMapLabelOutlineWidth,
+  );
+  const setFeatureMapLabelOutlineWidth = useEditorTestMapLabelsStore(
+    (state) => state.setFeatureMapLabelOutlineWidth,
   );
 
   const [hasMounted, setHasMounted] = useState(false);
@@ -396,9 +728,15 @@ export function SaveLoadControls() {
     const featuresSnapshot = features;
     const workspaceBoundsSnapshot = workspaceBounds;
     const basemapIdSnapshot = basemapId;
+    const showCountryNeighborContextSnapshot = showCountryNeighborContext;
+    const showAllFeatureLabelsSnapshot = showAllFeatureLabels;
+    const showAllGeoJsonFeatureLabelsSnapshot = showAllGeoJsonFeatureLabels;
+    const featureMapLabelScaleSnapshot = featureMapLabelScale;
+    const featureMapLabelOutlineWidthSnapshot = featureMapLabelOutlineWidth;
     const layersSnapshot = layers;
     const activeLayerIdSnapshot = activeLayerId;
     const geoJsonLayersSnapshot = geoJsonLayers;
+    const customMarkersSnapshot = customMarkers;
     const exportSettingsSnapshot = createLocalExportSettingsSnapshot();
 
     saveTimeoutRef.current = window.setTimeout(() => {
@@ -411,9 +749,15 @@ export function SaveLoadControls() {
         features: featuresToSave,
         workspaceBounds: workspaceBoundsSnapshot,
         basemapId: basemapIdSnapshot,
+        showCountryNeighborContext: showCountryNeighborContextSnapshot,
+        showAllFeatureLabels: showAllFeatureLabelsSnapshot,
+        showAllGeoJsonFeatureLabels: showAllGeoJsonFeatureLabelsSnapshot,
+        featureMapLabelScale: featureMapLabelScaleSnapshot,
+        featureMapLabelOutlineWidth: featureMapLabelOutlineWidthSnapshot,
         layers: layersSnapshot,
         activeLayerId: activeLayerIdSnapshot,
         geoJsonLayers: geoJsonLayersSnapshot,
+        customMarkers: customMarkersSnapshot,
         exportSettings: exportSettingsSnapshot,
       };
 
@@ -447,10 +791,22 @@ export function SaveLoadControls() {
 
       setLayers(parsedSave.layers ?? [], parsedSave.activeLayerId ?? null);
       setGeoJsonLayers(parsedSave.geoJsonLayers ?? []);
+      mergeCustomMarkers(parsedSave.customMarkers ?? []);
       replaceFeatures(
         normalizeFeatureDrawOrdersForPersistence(parsedSave.features),
       );
       setBasemapIdFromUnknown(parsedSave.basemapId);
+      setShowCountryNeighborContext(
+        parsedSave.showCountryNeighborContext !== false,
+      );
+      setShowAllFeatureLabels(parsedSave.showAllFeatureLabels === true);
+      setShowAllGeoJsonFeatureLabels(
+        parsedSave.showAllGeoJsonFeatureLabels === true,
+      );
+      setFeatureMapLabelScale(parsedSave.featureMapLabelScale ?? 1);
+      setFeatureMapLabelOutlineWidth(
+        parsedSave.featureMapLabelOutlineWidth ?? 1.5,
+      );
       restoreLocalExportSettings(parsedSave.exportSettings);
       clearSelectedFeatureId();
 

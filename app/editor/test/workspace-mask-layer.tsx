@@ -5,6 +5,7 @@ import L from "leaflet";
 import { useMap } from "react-leaflet";
 
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
+import { isFullWorldWorkspaceBounds } from "@/lib/dromap/workspace-bounds";
 import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
@@ -139,6 +140,89 @@ function addMaskRectangle(
   L.rectangle(bounds, options).addTo(group);
 }
 
+function applyScreenMaskRectangle(
+  element: HTMLDivElement,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+) {
+  element.style.display = width > 0.5 && height > 0.5 ? "block" : "none";
+  element.style.left = `${Math.floor(left)}px`;
+  element.style.top = `${Math.floor(top)}px`;
+  element.style.width = `${Math.ceil(Math.max(0, width))}px`;
+  element.style.height = `${Math.ceil(Math.max(0, height))}px`;
+}
+
+function addFullWorldScreenMask(
+  map: L.Map,
+  bounds: WorkspaceBoundsNumbers,
+) {
+  const mapContainer = map.getContainer();
+  const overlay = document.createElement("div");
+  const strips = Array.from({ length: 4 }, () => {
+    const strip = document.createElement("div");
+
+    strip.style.position = "absolute";
+    strip.style.background = "#d1d5db";
+    strip.style.pointerEvents = "none";
+    overlay.appendChild(strip);
+
+    return strip;
+  });
+
+  overlay.setAttribute("aria-hidden", "true");
+  overlay.style.position = "absolute";
+  overlay.style.inset = "0";
+  overlay.style.zIndex = "650";
+  overlay.style.pointerEvents = "none";
+  overlay.style.overflow = "hidden";
+  mapContainer.appendChild(overlay);
+
+  const updateMask = () => {
+    const size = map.getSize();
+    const northWest = map.latLngToContainerPoint([bounds.north, bounds.west]);
+    const southEast = map.latLngToContainerPoint([bounds.south, bounds.east]);
+    const worldLeft = Math.min(northWest.x, southEast.x);
+    const worldRight = Math.max(northWest.x, southEast.x);
+    const worldTop = Math.min(northWest.y, southEast.y);
+    const worldBottom = Math.max(northWest.y, southEast.y);
+    const clippedLeft = Math.max(0, Math.min(size.x, worldLeft));
+    const clippedRight = Math.max(0, Math.min(size.x, worldRight));
+    const clippedTop = Math.max(0, Math.min(size.y, worldTop));
+    const clippedBottom = Math.max(0, Math.min(size.y, worldBottom));
+    const middleHeight = Math.max(0, clippedBottom - clippedTop);
+
+    // Nord, sud, ouest puis est. Le calcul en pixels écran fonctionne aussi
+    // au-delà des limites de projection Web Mercator, contrairement à quatre
+    // rectangles géographiques qui s'écraseraient près des pôles.
+    applyScreenMaskRectangle(strips[0], 0, 0, size.x, clippedTop);
+    applyScreenMaskRectangle(
+      strips[1],
+      0,
+      clippedBottom,
+      size.x,
+      size.y - clippedBottom,
+    );
+    applyScreenMaskRectangle(strips[2], 0, clippedTop, clippedLeft, middleHeight);
+    applyScreenMaskRectangle(
+      strips[3],
+      clippedRight,
+      clippedTop,
+      size.x - clippedRight,
+      middleHeight,
+    );
+  };
+
+  map.on("move zoom resize zoomanim", updateMask);
+  updateMask();
+
+  return () => {
+    map.off("move zoom resize zoomanim", updateMask);
+    overlay.remove();
+  };
+}
+
 export function WorkspaceMaskLayer() {
   const map = useMap();
 
@@ -154,8 +238,13 @@ export function WorkspaceMaskLayer() {
   useEffect(() => {
     if (currentMode !== "edit") return;
 
+    const isFullWorldWorkspace = isFullWorldWorkspaceBounds(workspaceBounds);
     const bounds = getWorkspaceBoundsNumbers(workspaceBounds);
     if (!bounds) return;
+
+    if (isFullWorldWorkspace) {
+      return addFullWorldScreenMask(map, bounds);
+    }
 
     let pane = map.getPane("workspaceMaskPane");
 

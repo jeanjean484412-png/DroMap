@@ -1,5 +1,8 @@
 export type DromapBasemapId = string;
 
+export type DromapBasemapExportQualityMode =
+  "standard-only" | "vector" | "raster-native-detail";
+
 export type DromapBasemapBounds = {
   west: number;
   south: number;
@@ -54,6 +57,16 @@ export type DromapBasemapBoundaryLayer = {
    */
   minimumPolygonPartSpan?: number;
   hideDisputed?: boolean;
+  /**
+   * Couche purement contextuelle : elle dessine seulement les premiers
+   * tronçons des pays qui partagent une frontière terrestre avec le pays
+   * principal. Elle n'est jamais utilisée pour le remplissage, le suivi de
+   * trait ou le calcul automatique de l'emprise du fond.
+   */
+  displayRole?: "country-neighbor-context";
+  neighborContextDepthRatio?: number;
+  neighborContextMinDepth?: number;
+  neighborContextMaxDepth?: number;
   continent?: string;
   countryIsoA2?: string;
   countryIsoA3?: string;
@@ -83,12 +96,55 @@ export type DromapBasemapBoundaryOverlay = {
   layers: DromapBasemapBoundaryLayer[];
 };
 
+export function isDromapCountryNeighborContextLayer(
+  layer: DromapBasemapBoundaryLayer,
+) {
+  return layer.displayRole === "country-neighbor-context";
+}
+
+export function getDromapDisplayedBoundaryOverlay(
+  boundaryOverlay: DromapBasemapBoundaryOverlay | undefined,
+  showCountryNeighborContext: boolean,
+): DromapBasemapBoundaryOverlay | undefined {
+  if (!boundaryOverlay) {
+    return undefined;
+  }
+
+  const layers = boundaryOverlay.layers.filter(
+    (layer) =>
+      showCountryNeighborContext || !isDromapCountryNeighborContextLayer(layer),
+  );
+
+  return layers.length > 0 ? { ...boundaryOverlay, layers } : undefined;
+}
+
+export function dromapBasemapHasCountryNeighborContext(
+  basemap: DromapBasemapConfig,
+) {
+  return Boolean(
+    basemap.boundaryOverlay?.layers.some(isDromapCountryNeighborContextLayer),
+  );
+}
+
 type DromapBasemapCommon = {
   id: DromapBasemapId;
   label: string;
   description: string;
   exportBackground: string;
   boundaryOverlay?: DromapBasemapBoundaryOverlay;
+  /**
+   * standard-only : le canvas peut être agrandi, mais le fond ne reçoit pas
+   * davantage de détail natif.
+   * vector : MapLibre rerend le fond directement à la résolution de sortie.
+   * raster-native-detail : l’export peut demander des tuiles raster plus
+   * précises tout en conservant exactement la même emprise géographique.
+   */
+  exportQualityMode?: DromapBasemapExportQualityMode;
+  /**
+   * Cadrage initial conseillé lorsque ce fond est choisi avant la création
+   * d'une zone de travail. Une zone déjà validée n'est jamais remplacée.
+   */
+  viewportBounds?: DromapBasemapBounds;
   /**
    * Étend uniquement le fond blanc pédagogique affiché derrière les frontières.
    * Cela permet de raccrocher visuellement un pays à cheval sur l'antiméridien
@@ -107,6 +163,12 @@ type DromapTileBasemap = DromapBasemapCommon & {
    */
   screenTileUrl?: string;
   attribution: string;
+  /**
+   * Dernier niveau réellement fourni par le service de tuiles.
+   * Leaflet peut continuer à zoomer au-delà en agrandissant cette tuile, ce
+   * qui évite des tuiles manquantes lors d'un changement de fond à zoom élevé.
+   */
+  maxNativeZoom?: number;
   maxZoom: number;
   getExportTileUrl: (zoom: number, x: number, y: number) => string;
 };
@@ -121,6 +183,8 @@ type DromapMapLibreBasemap = DromapBasemapCommon & {
   styleUrl: string;
   attribution: string;
   maxZoom: number;
+  /** Fond raster interne utilisé uniquement si le style vectoriel ne charge pas. */
+  fallbackTileBasemapId?: DromapBasemapId;
 };
 
 type DromapSolidBasemap = DromapBasemapCommon & {
@@ -129,9 +193,7 @@ type DromapSolidBasemap = DromapBasemapCommon & {
 };
 
 export type DromapBasemapConfig =
-  | DromapTileBasemap
-  | DromapMapLibreBasemap
-  | DromapSolidBasemap;
+  DromapTileBasemap | DromapMapLibreBasemap | DromapSolidBasemap;
 
 export type DromapBasemapMenuItem =
   | {
@@ -189,6 +251,12 @@ const FRANCE_REGIONS_SIMPLIFIED_URL =
 
 const FRANCE_DEPARTMENTS_SIMPLIFIED_URL =
   "https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements-version-simplifiee.geojson";
+
+const FRANCE_COUNTRY_DEFINITION = {
+  isoA2: "FR",
+  isoA3: "FRA",
+  fallbackLabel: "France",
+} satisfies CountryBasemapDefinition;
 
 const CARTO_SUBDOMAINS = ["a", "b", "c", "d"];
 
@@ -652,6 +720,7 @@ const METROPOLITAN_BOUNDS_BY_ISO_A3: Partial<
   AUS: { west: 112, south: -44.5, east: 154.5, north: -9 },
   DNK: { west: 7.5, south: 54.3, east: 15.7, north: 58.2 },
   ESP: { west: -10.5, south: 35, east: 5.1, north: 44.5 },
+  FRA: { west: -5.8, south: 41, east: 10, north: 51.5 },
   GBR: { west: -9.5, south: 49.5, east: 2.5, north: 61.2 },
   NLD: { west: 3, south: 50.5, east: 7.5, north: 54 },
   NOR: { west: 4, south: 57, east: 32.5, north: 72.5 },
@@ -679,6 +748,37 @@ function shouldUnwrapRussiaAntimeridian(
   return countryDefinition.isoA3 === "RUS";
 }
 
+function createCountryNeighborContextLayer(
+  countryDefinition: CountryBasemapDefinition,
+): DromapBasemapBoundaryLayer {
+  const label = getFrenchCountryLabel(countryDefinition);
+  const unwrapAntimeridian = shouldUnwrapRussiaAntimeridian(countryDefinition);
+
+  return {
+    kind: "admin0-countries",
+    dataUrl: NATURAL_EARTH_50M_ADMIN0_COUNTRIES_URL,
+    displayRole: "country-neighbor-context",
+    countryIsoA2: countryDefinition.isoA2,
+    countryIsoA3: countryDefinition.isoA3,
+    countryName: label,
+    metropolitanBounds: getCountryMetropolitanBounds(countryDefinition),
+    antimeridianMode: unwrapAntimeridian ? "unwrap-east" : undefined,
+    antimeridianWestThreshold: -120,
+    hideAntimeridianSeam: unwrapAntimeridian,
+    suppressInteriorRings: true,
+    hideDisputed: true,
+    // Le contexte dépasse volontairement la marge automatique de la
+    // zone de travail. Le contour voisin se termine ainsi hors cadre plutôt
+    // qu'au milieu de la carte, tout en restant limité aux abords immédiats.
+    neighborContextDepthRatio: 0.24,
+    neighborContextMinDepth: 1,
+    neighborContextMaxDepth: 6.5,
+    strokeColor: "#64748b",
+    strokeOpacity: 0.72,
+    strokeWeight: 0.78,
+  };
+}
+
 const STATIC_BASEMAPS: DromapBasemapConfig[] = [
   {
     id: "osm",
@@ -697,25 +797,27 @@ const STATIC_BASEMAPS: DromapBasemapConfig[] = [
   {
     id: "openfreemap-liberty",
     kind: "maplibre",
-    label: "OpenFreeMap Liberty",
+    label: "Classique",
     description:
-      "Fond vectoriel gratuit basé sur OpenStreetMap/OpenMapTiles, sans clé API.",
+      "Fond vectoriel classique, lisible et gratuit, basé sur OpenStreetMap/OpenMapTiles.",
     styleUrl: "https://tiles.openfreemap.org/styles/liberty",
     attribution:
       '&copy; <a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 20,
+    exportQualityMode: "vector",
     exportBackground: "#f8fafc",
   },
   {
     id: "openfreemap-positron",
     kind: "maplibre",
-    label: "OpenFreeMap Clair",
+    label: "Clair",
     description:
-      "Fond vectoriel clair, gratuit, lisible pour les cartes pédagogiques.",
+      "Fond vectoriel clair et discret, adapté aux cartes pédagogiques.",
     styleUrl: "https://tiles.openfreemap.org/styles/positron",
     attribution:
       '&copy; <a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 20,
+    exportQualityMode: "vector",
     exportBackground: "#f8fafc",
   },
   {
@@ -728,7 +830,74 @@ const STATIC_BASEMAPS: DromapBasemapConfig[] = [
     attribution:
       '&copy; <a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 20,
+    exportQualityMode: "vector",
     exportBackground: "#f8fafc",
+  },
+  {
+    id: "ign-satellite",
+    kind: "tile",
+    label: "Vue satellite",
+    description:
+      "Photographies aériennes IGN de la France et des territoires ultramarins.",
+    tileUrl:
+      "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}",
+    attribution:
+      '&copy; <a href="https://www.ign.fr/">IGN</a> / <a href="https://cartes.gouv.fr/">Géoplateforme</a>',
+    maxNativeZoom: 19,
+    maxZoom: 22,
+    exportQualityMode: "raster-native-detail",
+    exportBackground: "#111827",
+    viewportBounds: {
+      west: -5.8,
+      south: 41.0,
+      east: 10.0,
+      north: 51.5,
+    },
+    getExportTileUrl: (zoom, x, y) =>
+      `https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg&TILEMATRIXSET=PM&TILEMATRIX=${zoom}&TILEROW=${y}&TILECOL=${x}`,
+  },
+  {
+    id: "ign-plan-raster",
+    kind: "tile",
+    label: "Plan IGN (secours raster)",
+    description:
+      "Version raster interne utilisée seulement si le Plan IGN vectoriel ne peut pas charger.",
+    tileUrl:
+      "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}",
+    attribution:
+      '&copy; <a href="https://www.ign.fr/">IGN</a> / <a href="https://cartes.gouv.fr/">Géoplateforme</a>',
+    maxNativeZoom: 19,
+    maxZoom: 22,
+    exportBackground: "#f8fafc",
+    viewportBounds: {
+      west: -5.8,
+      south: 41.0,
+      east: 10.0,
+      north: 51.5,
+    },
+    getExportTileUrl: (zoom, x, y) =>
+      `https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX=${zoom}&TILEROW=${y}&TILECOL=${x}`,
+  },
+  {
+    id: "ign-plan",
+    kind: "maplibre",
+    label: "Plan IGN",
+    description:
+      "Plan cartographique officiel IGN en tuiles vectorielles, net en export haute résolution.",
+    styleUrl:
+      "https://data.geopf.fr/annexes/ressources/vectorTiles/styles/PLAN.IGN/standard.json",
+    attribution:
+      '&copy; <a href="https://www.ign.fr/">IGN</a> / <a href="https://cartes.gouv.fr/">Géoplateforme</a>',
+    maxZoom: 20,
+    exportQualityMode: "vector",
+    fallbackTileBasemapId: "ign-plan-raster",
+    exportBackground: "#f8fafc",
+    viewportBounds: {
+      west: -5.8,
+      south: 41.0,
+      east: 10.0,
+      north: 51.5,
+    },
   },
   {
     id: "carto-light",
@@ -805,7 +974,7 @@ const STATIC_BASEMAPS: DromapBasemapConfig[] = [
   {
     id: "blank-white",
     kind: "solid",
-    label: "Blanc uni",
+    label: "Fond blanc",
     description: "Fond blanc vide, sans tuiles, sans textes ni frontières.",
     background: "#ffffff",
     exportBackground: "#ffffff",
@@ -871,6 +1040,7 @@ const STATIC_BASEMAPS: DromapBasemapConfig[] = [
     boundaryOverlay: {
       type: "pedagogical-boundaries",
       layers: [
+        createCountryNeighborContextLayer(FRANCE_COUNTRY_DEFINITION),
         {
           kind: "france-outline",
           dataUrl: FRANCE_OUTLINE_FROM_REGIONS_URL,
@@ -892,6 +1062,7 @@ const STATIC_BASEMAPS: DromapBasemapConfig[] = [
     boundaryOverlay: {
       type: "pedagogical-boundaries",
       layers: [
+        createCountryNeighborContextLayer(FRANCE_COUNTRY_DEFINITION),
         {
           kind: "france-regions",
           dataUrl: FRANCE_REGIONS_SIMPLIFIED_URL,
@@ -921,6 +1092,7 @@ const STATIC_BASEMAPS: DromapBasemapConfig[] = [
     boundaryOverlay: {
       type: "pedagogical-boundaries",
       layers: [
+        createCountryNeighborContextLayer(FRANCE_COUNTRY_DEFINITION),
         {
           kind: "france-departments",
           dataUrl: FRANCE_DEPARTMENTS_SIMPLIFIED_URL,
@@ -1003,6 +1175,7 @@ function createCountryBasemap(
     boundaryOverlay: {
       type: "pedagogical-boundaries",
       layers: [
+        createCountryNeighborContextLayer(countryDefinition),
         {
           kind: "admin0-countries",
           dataUrl: NATURAL_EARTH_50M_ADMIN0_COUNTRIES_URL,
@@ -1014,7 +1187,8 @@ function createCountryBasemap(
             ? "unwrap-east"
             : undefined,
           antimeridianWestThreshold: -120,
-          hideAntimeridianSeam: shouldUnwrapRussiaAntimeridian(countryDefinition),
+          hideAntimeridianSeam:
+            shouldUnwrapRussiaAntimeridian(countryDefinition),
           strokeColor: "#111827",
           strokeOpacity: 0.96,
           strokeWeight: 1.15,
@@ -1046,6 +1220,7 @@ function createCountryRegionsBasemap(
     boundaryOverlay: {
       type: "pedagogical-boundaries",
       layers: [
+        createCountryNeighborContextLayer(countryDefinition),
         {
           kind: "admin1-regions",
           dataUrl: admin1DataUrl,
@@ -1057,7 +1232,8 @@ function createCountryRegionsBasemap(
             ? "unwrap-east"
             : undefined,
           antimeridianWestThreshold: -120,
-          hideAntimeridianSeam: shouldUnwrapRussiaAntimeridian(countryDefinition),
+          hideAntimeridianSeam:
+            shouldUnwrapRussiaAntimeridian(countryDefinition),
           strokeColor: "#111827",
           strokeOpacity: 0.54,
           strokeWeight: 0.48,
@@ -1074,7 +1250,8 @@ function createCountryRegionsBasemap(
             ? "unwrap-east"
             : undefined,
           antimeridianWestThreshold: -120,
-          hideAntimeridianSeam: shouldUnwrapRussiaAntimeridian(countryDefinition),
+          hideAntimeridianSeam:
+            shouldUnwrapRussiaAntimeridian(countryDefinition),
           strokeColor: "#111827",
           strokeOpacity: 0.98,
           strokeWeight: 1.15,
@@ -1201,24 +1378,11 @@ export const DROMAP_BASEMAP_MENU_SECTIONS: DromapBasemapMenuSection[] = [
     description:
       "Fonds en ligne utiles pour dessiner sur une carte de référence.",
     items: [
-      { type: "basemap", basemapId: "osm" },
-      {
-        type: "group",
-        id: "openfreemap",
-        label: "OpenFreeMap gratuit",
-        description:
-          "Fonds vectoriels gratuits, sans clé API. À privilégier pour les essais SaaS sans fournisseur payant.",
-        defaultOpen: true,
-        items: [
-          { type: "basemap", basemapId: "openfreemap-liberty" },
-          { type: "basemap", basemapId: "openfreemap-positron" },
-          { type: "basemap", basemapId: "openfreemap-bright" },
-        ],
-      },
-      { type: "basemap", basemapId: "carto-no-labels" },
-      { type: "basemap", basemapId: "carto-light" },
-      { type: "basemap", basemapId: "carto-voyager" },
-      { type: "basemap", basemapId: "carto-voyager-no-labels" },
+      { type: "basemap", basemapId: "openfreemap-liberty" },
+      { type: "basemap", basemapId: "openfreemap-positron" },
+      { type: "basemap", basemapId: "ign-satellite" },
+      { type: "basemap", basemapId: "ign-plan" },
+      { type: "basemap", basemapId: "blank-white" },
     ],
   },
   {
@@ -1232,7 +1396,6 @@ export const DROMAP_BASEMAP_MENU_SECTIONS: DromapBasemapMenuSection[] = [
         id: "menu-world",
         label: "Monde",
         items: [
-          { type: "basemap", basemapId: "blank-white" },
           { type: "basemap", basemapId: "white-borders-basic" },
           { type: "basemap", basemapId: "white-borders" },
         ],
@@ -1242,7 +1405,21 @@ export const DROMAP_BASEMAP_MENU_SECTIONS: DromapBasemapMenuSection[] = [
   },
 ];
 
-export const DEFAULT_DROMAP_BASEMAP_ID: DromapBasemapId = "osm";
+export const DEFAULT_DROMAP_BASEMAP_ID: DromapBasemapId = "openfreemap-liberty";
+
+export function getDromapBasemapExportQualityMode(
+  basemap: DromapBasemapConfig,
+): DromapBasemapExportQualityMode {
+  if (basemap.exportQualityMode) {
+    return basemap.exportQualityMode;
+  }
+
+  return basemap.kind === "maplibre" ? "vector" : "standard-only";
+}
+
+export function supportsDromapHighQualityExport(basemap: DromapBasemapConfig) {
+  return getDromapBasemapExportQualityMode(basemap) !== "standard-only";
+}
 
 export function isDromapBasemapId(value: unknown): value is DromapBasemapId {
   return (

@@ -198,7 +198,9 @@ function getLayerVisualPriority(layer: LoadedTraceLineLayer) {
   // fond afin que le suivi accroche naturellement les lignes visibles importées
   // quand elles passent près d’une frontière du fond.
   const sourceBonus = layer.sourceKind === "geojson" ? 22 : 0;
-  return strokeWeight * strokeOpacity * 16 + layer.layerIndex * 28 + sourceBonus;
+  return (
+    strokeWeight * strokeOpacity * 16 + layer.layerIndex * 28 + sourceBonus
+  );
 }
 
 function getTracePositionKey(position: DromapBoundaryLineString[number]) {
@@ -314,7 +316,10 @@ function connectTraceLineStrings(lineStrings: DromapBoundaryLineString[]) {
 
         if (previous) {
           unused.delete(previous.index);
-          chain = [...reverseLineString(previous.lineString).slice(0, -1), ...chain];
+          chain = [
+            ...reverseLineString(previous.lineString).slice(0, -1),
+            ...chain,
+          ];
           didExtend = true;
         }
       }
@@ -383,12 +388,7 @@ function buildTraceCandidates(
     connectTraceLineStrings(loadedLayer.lineStrings)
       .filter((lineString) => lineStringIntersectsBounds(lineString, mapBounds))
       .map((lineString, index) =>
-        buildTraceCandidate(
-          lineString,
-          index,
-          map,
-          loadedLayer,
-        ),
+        buildTraceCandidate(lineString, index, map, loadedLayer),
       )
       .filter((candidate): candidate is TraceCandidate => candidate !== null),
   );
@@ -500,7 +500,8 @@ function scoreTraceProjection(
   const candidate = projection.candidate;
   const candidateIsActive = candidate.id === preferredCandidate?.id;
   const candidateIsSameLayer =
-    preferredCandidate && candidate.layerIndex === preferredCandidate.layerIndex;
+    preferredCandidate &&
+    candidate.layerIndex === preferredCandidate.layerIndex;
   let score =
     projection.distancePx -
     candidate.visualPriority -
@@ -592,7 +593,9 @@ function getVectorDotSimilarity(
     return -1;
   }
 
-  return (firstDx * secondDx + firstDy * secondDy) / (firstLength * secondLength);
+  return (
+    (firstDx * secondDx + firstDy * secondDy) / (firstLength * secondLength)
+  );
 }
 
 function shouldSwitchTraceCandidate(
@@ -619,7 +622,9 @@ function shouldSwitchTraceCandidate(
   }
 
   if (!activeProjection) {
-    return alternativeProjection.distancePx <= TRACE_INTENTIONAL_SWITCH_DISTANCE_PX;
+    return (
+      alternativeProjection.distancePx <= TRACE_INTENTIONAL_SWITCH_DISTANCE_PX
+    );
   }
 
   const cursorIsClearlyCloserToAlternative =
@@ -1044,7 +1049,6 @@ function addPreviewFeatureToLayerGroup(
   }
 }
 
-
 function collectGeoJsonTraceLineStringsFromGeometry(
   geometry: DromapGeoJsonGeometry,
 ): DromapBoundaryLineString[] {
@@ -1073,54 +1077,66 @@ function featureHasTraceableStroke(
 ) {
   const style = getEffectiveGeoJsonFeatureStyle(layer, feature);
 
-  return layer.visible !== false && layer.opacity > 0 && style.strokeOpacity > 0;
+  return (
+    layer.visible !== false && layer.opacity > 0 && style.strokeOpacity > 0
+  );
 }
 
 function getGeoJsonTraceLineLayers(
   geoJsonLayers: DromapGeoJsonLayer[],
   layerIndexOffset: number,
-  workspaceBounds: ReturnType<typeof useEditorTestWorkspaceStore.getState>["workspaceBounds"],
+  workspaceBounds: ReturnType<
+    typeof useEditorTestWorkspaceStore.getState
+  >["workspaceBounds"],
 ): LoadedTraceLineLayer[] {
-  return getRenderableGeoJsonLayers(geoJsonLayers).flatMap((layer, visibleLayerIndex) => {
-    const displayData = getGeoJsonLayerLoadedDisplayData(layer, workspaceBounds);
-    const lineStrings: DromapBoundaryLineString[] = [];
-    let maxStrokeWeight = Math.max(1, layer.style.strokeWeight ?? 2);
-    let maxStrokeOpacity = Math.max(0.05, layer.style.strokeOpacity ?? 1);
-
-    for (const feature of displayData.features) {
-      if (!featureHasTraceableStroke(layer, feature)) {
-        continue;
-      }
-
-      const featureLineStrings = collectGeoJsonTraceLineStringsFromGeometry(
-        feature.geometry,
+  return getRenderableGeoJsonLayers(geoJsonLayers).flatMap(
+    (layer, visibleLayerIndex) => {
+      const displayData = getGeoJsonLayerLoadedDisplayData(
+        layer,
+        workspaceBounds,
       );
+      const lineStrings: DromapBoundaryLineString[] = [];
+      let maxStrokeWeight = Math.max(1, layer.style.strokeWeight ?? 2);
+      let maxStrokeOpacity = Math.max(0.05, layer.style.strokeOpacity ?? 1);
 
-      if (featureLineStrings.length === 0) {
-        continue;
+      for (const feature of displayData.features) {
+        if (!featureHasTraceableStroke(layer, feature)) {
+          continue;
+        }
+
+        const featureLineStrings = collectGeoJsonTraceLineStringsFromGeometry(
+          feature.geometry,
+        );
+
+        if (featureLineStrings.length === 0) {
+          continue;
+        }
+
+        const featureStyle = getEffectiveGeoJsonFeatureStyle(layer, feature);
+        maxStrokeWeight = Math.max(maxStrokeWeight, featureStyle.strokeWeight);
+        maxStrokeOpacity = Math.max(
+          maxStrokeOpacity,
+          featureStyle.strokeOpacity,
+        );
+        lineStrings.push(...featureLineStrings);
       }
 
-      const featureStyle = getEffectiveGeoJsonFeatureStyle(layer, feature);
-      maxStrokeWeight = Math.max(maxStrokeWeight, featureStyle.strokeWeight);
-      maxStrokeOpacity = Math.max(maxStrokeOpacity, featureStyle.strokeOpacity);
-      lineStrings.push(...featureLineStrings);
-    }
+      if (lineStrings.length === 0) {
+        return [];
+      }
 
-    if (lineStrings.length === 0) {
-      return [];
-    }
-
-    return [
-      {
-        sourceId: `geojson:${layer.id}`,
-        sourceKind: "geojson" as const,
-        layerIndex: layerIndexOffset + visibleLayerIndex,
-        lineStrings,
-        strokeWeight: maxStrokeWeight,
-        strokeOpacity: maxStrokeOpacity * layer.opacity,
-      },
-    ];
-  });
+      return [
+        {
+          sourceId: `geojson:${layer.id}`,
+          sourceKind: "geojson" as const,
+          layerIndex: layerIndexOffset + visibleLayerIndex,
+          lineStrings,
+          strokeWeight: maxStrokeWeight,
+          strokeOpacity: maxStrokeOpacity * layer.opacity,
+        },
+      ];
+    },
+  );
 }
 
 async function loadBoundaryLineStringsForLayer(
@@ -1397,9 +1413,14 @@ export function TraceLineToolLayer() {
       if (boundaryOverlay) {
         try {
           loadedBasemapLineLayers = await Promise.all(
-            boundaryOverlay.layers.map((layerConfig, layerIndex) =>
-              loadBoundaryLineStringsForLayer(layerConfig, layerIndex),
-            ),
+            boundaryOverlay.layers
+              .filter(
+                (layerConfig) =>
+                  layerConfig.displayRole !== "country-neighbor-context",
+              )
+              .map((layerConfig, layerIndex) =>
+                loadBoundaryLineStringsForLayer(layerConfig, layerIndex),
+              ),
           );
         } catch (error) {
           console.warn("Suivi de trait indisponible sur ce fond :", error);

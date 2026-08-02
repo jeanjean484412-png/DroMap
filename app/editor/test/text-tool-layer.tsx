@@ -9,10 +9,14 @@ import type { DroMapFeature } from "@/lib/dromap/feature";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
+import { useEditorTestTextEditStore } from "@/stores/editor-test-text-edit";
 import { useEditorTestToolStore } from "@/stores/editor-test-tool";
 import { applyDrawingPresetToFeature } from "@/stores/editor-test-drawing-options";
 
-function createTextFeature(latLng: L.LatLng): DroMapFeature {
+function createTextFeature(
+  latLng: L.LatLng,
+  textReferenceZoom: number,
+): DroMapFeature {
   const feature: DroMapFeature = {
     type: "Feature",
     id: crypto.randomUUID(),
@@ -27,6 +31,9 @@ function createTextFeature(latLng: L.LatLng): DroMapFeature {
         color: "#111827",
         opacity: 1,
         fontSize: 22,
+        textBold: false,
+        textItalic: false,
+        textReferenceZoom,
         textRotation: 0,
         textBackgroundEnabled: false,
         textBackgroundColor: "#ffffff",
@@ -34,6 +41,9 @@ function createTextFeature(latLng: L.LatLng): DroMapFeature {
         textBorderEnabled: false,
         textBorderColor: "#111827",
         textBorderWidth: 2,
+        textOutlineEnabled: true,
+        textOutlineColor: "#ffffff",
+        textOutlineWidth: 1.5,
       },
       meta: { version: 1 },
     },
@@ -53,6 +63,12 @@ export function TextToolLayer() {
   const setSelectedFeatureId = useEditorTestSelectionStore(
     (state) => state.setSelectedFeatureId,
   );
+  const startEditingTextFeature = useEditorTestTextEditStore(
+    (state) => state.startEditingTextFeature,
+  );
+  const resetActiveTool = useEditorTestToolStore(
+    (state) => state.resetActiveTool,
+  );
 
   useEffect(() => {
     if (currentMode !== "edit" || activeTool !== "text") {
@@ -67,10 +83,12 @@ export function TextToolLayer() {
     container.style.cursor = "text";
 
     const handleMapClick = (event: L.LeafletMouseEvent) => {
-      const feature = createTextFeature(event.latlng);
+      const feature = createTextFeature(event.latlng, map.getZoom());
 
       addFeatureWithHistory(feature);
       setSelectedFeatureId(feature.id);
+      resetActiveTool();
+      startEditingTextFeature(feature.id);
     };
 
     map.on("click", handleMapClick);
@@ -79,7 +97,15 @@ export function TextToolLayer() {
       map.off("click", handleMapClick);
       container.style.cursor = previousCursor;
     };
-  }, [map, currentMode, activeTool, addFeatureWithHistory, setSelectedFeatureId]);
+  }, [
+    map,
+    currentMode,
+    activeTool,
+    addFeatureWithHistory,
+    resetActiveTool,
+    setSelectedFeatureId,
+    startEditingTextFeature,
+  ]);
 
   return null;
 }

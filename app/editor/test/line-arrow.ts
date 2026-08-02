@@ -345,18 +345,34 @@ export function getLineArrowStyle(feature: DroMapFeature): LineArrowStyle {
   const safeOpacity =
     featureHasLineArrow(feature) && rawOpacity <= 0.05 ? 1 : rawOpacity;
 
+  const renderScale = Number(style.renderScale);
+  const isRenderedCopy = Number.isFinite(renderScale);
+
   return {
     color: style.color ?? "#334155",
     opacity: clamp(safeOpacity, 0, 1),
-    weight: clamp(style.weight ?? 3, 1, 20),
+    weight: clamp(
+      style.weight ?? 3,
+      isRenderedCopy ? 0.1 : 1,
+      isRenderedCopy ? 512 : 20,
+    ),
   };
+}
+
+function getFeatureRenderScale(feature: DroMapFeature) {
+  const rawScale = Number(feature.properties?.style?.renderScale);
+
+  return Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 1;
 }
 
 export function getLineArrowSize(feature: DroMapFeature, graphicScale = 1) {
   const style = getLineArrowStyle(feature);
-  const baseSize = 14 + style.weight * 3.2;
+  const renderScale = getFeatureRenderScale(feature);
+  const totalScale = graphicScale * renderScale;
+  const baseWeight = style.weight / renderScale;
+  const baseSize = 14 + baseWeight * 3.2;
 
-  return clamp(baseSize * graphicScale, 18 * graphicScale, 72 * graphicScale);
+  return clamp(baseSize * totalScale, 18 * totalScale, 72 * totalScale);
 }
 
 function getLineArrowDashStyle(feature: DroMapFeature) {
@@ -404,7 +420,7 @@ function getLineArrowOrientationDistance(
   return Math.max(
     arrowSize * 0.9,
     style.weight * graphicScale * 4,
-    22 * graphicScale,
+    22 * graphicScale * getFeatureRenderScale(feature),
   );
 }
 

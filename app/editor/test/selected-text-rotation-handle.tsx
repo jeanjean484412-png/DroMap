@@ -15,6 +15,7 @@ import {
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
 import { useEditorTestToolStore } from "@/stores/editor-test-tool";
+import { useEditorTestTextEditStore } from "@/stores/editor-test-text-edit";
 import {
   getTextFeatureContent,
   getTextFeatureFontSize,
@@ -118,6 +119,9 @@ export function SelectedTextRotationHandle() {
   const selectedFeatureId = useEditorTestSelectionStore(
     (state) => state.selectedFeatureId,
   );
+  const editingTextFeatureId = useEditorTestTextEditStore(
+    (state) => state.editingTextFeatureId,
+  );
   const selectedFeature = useEditorTestFeaturesStore((state) =>
     state.features.find((feature) => feature.id === selectedFeatureId),
   );
@@ -155,6 +159,7 @@ export function SelectedTextRotationHandle() {
     currentMode === "edit" &&
     (activeTool === "select" || activeTool === "edit") &&
     isSelectedTextPointFeature(selectedFeature) &&
+    editingTextFeatureId !== selectedFeatureId &&
     isFeatureLayerVisible(selectedFeature, layers) &&
     !isFeatureEffectivelyLocked(selectedFeature, layers);
 

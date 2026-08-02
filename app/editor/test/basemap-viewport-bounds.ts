@@ -87,7 +87,6 @@ export function dromapBasemapBoundsToLeafletBounds(
   );
 }
 
-
 function getBackgroundBoundsForBasemap(basemap: DromapBasemapConfig) {
   if (!basemap.worldBackgroundBounds) {
     return null;
@@ -148,6 +147,10 @@ function shouldUseFullWorldBounds(basemap: DromapBasemapConfig) {
 export async function getBasemapViewportBounds(
   basemap: DromapBasemapConfig,
 ): Promise<L.LatLngBounds> {
+  if (basemap.viewportBounds) {
+    return dromapBasemapBoundsToLeafletBounds(basemap.viewportBounds);
+  }
+
   if (shouldUseFullWorldBounds(basemap)) {
     return cloneBounds(DROMAP_WORLD_BOUNDS);
   }
@@ -167,6 +170,10 @@ export async function getBasemapViewportBounds(
   const bounds = L.latLngBounds([]);
 
   for (const layer of boundaryOverlay.layers) {
+    if (layer.displayRole === "country-neighbor-context") {
+      continue;
+    }
+
     try {
       const featureCollection = await loadDromapBoundaryFeatureCollection(
         layer.dataUrl,

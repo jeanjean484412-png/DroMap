@@ -2,6 +2,7 @@ import type L from "leaflet";
 
 import {
   isBoundaryFillZoneFeature,
+  isFeatureGeometryLocked,
   isFeatureLocked,
   layerToDroMapFeature,
 } from "@/lib/dromap/feature";
@@ -43,6 +44,21 @@ function resetEditHistoryCommit(layer: L.Layer): void {
   dromapLayer.dromapEditHistoryCommitted = false;
 }
 
+function dispatchFeatureDragLifecycleEvent(
+  type: "dromap:feature-drag-start" | "dromap:feature-drag-end",
+  layer: L.Layer,
+): void {
+  if (typeof window === "undefined") return;
+
+  window.dispatchEvent(
+    new CustomEvent(type, {
+      detail: {
+        featureId: getLayerFeatureId(layer) ?? null,
+      },
+    }),
+  );
+}
+
 export function syncCreateToStore(event: GeomanLayerEvent): void {
   const feature = layerToDroMapFeature(event.layer, event.shape);
   if (!feature) return;
@@ -67,6 +83,7 @@ export function syncEditToStore(event: GeomanLayerEvent): void {
   if (
     isFeatureLocked(existing) ||
     isFeatureEffectivelyLocked(existing, useEditorTestLayersStore.getState().layers) ||
+    isFeatureGeometryLocked(existing) ||
     isBoundaryFillZoneFeature(existing)
   ) return;
 
@@ -89,6 +106,7 @@ export function syncEditToStoreWithSessionHistory(
     if (
     isFeatureLocked(existing) ||
     isFeatureEffectivelyLocked(existing, useEditorTestLayersStore.getState().layers) ||
+    isFeatureGeometryLocked(existing) ||
     isBoundaryFillZoneFeature(existing)
   ) return;
   }
@@ -108,6 +126,7 @@ export function syncDragEndToStoreWithHistory(event: GeomanLayerEvent): void {
   if (
     isFeatureLocked(existing) ||
     isFeatureEffectivelyLocked(existing, useEditorTestLayersStore.getState().layers) ||
+    isFeatureGeometryLocked(existing) ||
     isBoundaryFillZoneFeature(existing)
   ) return;
 
@@ -130,6 +149,7 @@ export function syncRemoveFromStore(event: GeomanLayerEvent): void {
   if (
     isFeatureLocked(existing) ||
     isFeatureEffectivelyLocked(existing, useEditorTestLayersStore.getState().layers) ||
+    isFeatureGeometryLocked(existing) ||
     isBoundaryFillZoneFeature(existing)
   ) return;
 
@@ -148,8 +168,14 @@ export function bindLayerGeomanEvents(layer: L.Layer): void {
   const onEdit = (event: GeomanLayerEvent) =>
     syncEditToStoreWithSessionHistory(event);
 
-  const onDragEnd = (event: GeomanLayerEvent) =>
+  const onDragStart = () => {
+    dispatchFeatureDragLifecycleEvent("dromap:feature-drag-start", layer);
+  };
+
+  const onDragEnd = (event: GeomanLayerEvent) => {
     syncDragEndToStoreWithHistory(event);
+    dispatchFeatureDragLifecycleEvent("dromap:feature-drag-end", layer);
+  };
 
   const onEditEnabled = () => {
     resetEditHistoryCommit(layer);
@@ -162,5 +188,6 @@ export function bindLayerGeomanEvents(layer: L.Layer): void {
   layer.on("pm:enable", onEditEnabled);
   layer.on("pm:disable", onEditDisabled);
   layer.on("pm:edit", onEdit);
+  layer.on("pm:dragstart", onDragStart);
   layer.on("pm:dragend", onDragEnd);
 }

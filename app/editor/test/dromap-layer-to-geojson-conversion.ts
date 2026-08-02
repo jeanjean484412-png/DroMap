@@ -173,6 +173,8 @@ function createGeoJsonFeatureProperties(feature: DroMapFeature, layer: DroMapLay
     dromap_variant: variant,
     dromap_locked: feature.properties.locked ?? false,
     dromap_lock_override: feature.properties.lockOverride ?? null,
+    dromap_map_label_visibility:
+      feature.properties.mapLabelVisibility ?? "inherit",
     dromap_order: feature.properties.order ?? null,
     dromap_layer_id: layer.id,
     dromap_layer_name: layer.name,
@@ -187,6 +189,7 @@ function createGeoJsonFeatureProperties(feature: DroMapFeature, layer: DroMapLay
       featureType: feature.properties.type,
       label: feature.properties.label,
       legendLabel: feature.properties.legendLabel ?? layer.name,
+      mapLabelVisibility: feature.properties.mapLabelVisibility ?? "inherit",
       lineVariant: feature.properties.lineVariant ?? null,
       zoneVariant: feature.properties.zoneVariant ?? null,
       zoneShapeKind: feature.properties.zoneShapeKind ?? null,

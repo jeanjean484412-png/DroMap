@@ -1,3 +1,5 @@
+import type { ExportLegendSymbolStyle } from "@/stores/editor-test-export";
+
 import {
   isFreehandLineFeature,
   isTracedLineFeature,
@@ -40,6 +42,9 @@ export type LegendEntry = {
   featureIds: string[];
   count: number;
   isAutomaticOverlap?: boolean;
+  isCustom?: boolean;
+  legendSymbolStyle?: ExportLegendSymbolStyle;
+  legendSymbolSize?: number;
 };
 
 type Coordinate2D = [number, number];
@@ -179,6 +184,9 @@ function getStyleKey(feature: DroMapFeature) {
       opacity,
       markerSize: getFeatureMarkerSize(feature),
       symbol,
+      ...(symbol.type === "drawn" || symbol.type === "custom-image"
+        ? { markerRotation: normalizeNumber(style.markerRotation, 0) }
+        : {}),
       ...(symbol.type === "builtin" &&
       markerSymbolSupportsStrokeWeight(symbol.id)
         ? { weight: normalizeNumber(style.weight, 7) }

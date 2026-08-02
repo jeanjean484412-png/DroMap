@@ -1298,10 +1298,205 @@ function getCountedBoundaryLineStringsFromFeatures(
   return selectedSegments.map((segment) => [segment.start, segment.end]);
 }
 
+function getBoundarySegmentMidpoint(
+  segment: BoundarySegment,
+): DromapBoundaryPosition {
+  return [
+    (segment.start[0] + segment.end[0]) / 2,
+    (segment.start[1] + segment.end[1]) / 2,
+  ];
+}
+
+function getApproximateBoundaryDistance(
+  first: DromapBoundaryPosition,
+  second: DromapBoundaryPosition,
+) {
+  const averageLatitude = ((first[1] + second[1]) / 2) * (Math.PI / 180);
+  const longitudeDistance =
+    (first[0] - second[0]) * Math.max(0.2, Math.cos(averageLatitude));
+  const latitudeDistance = first[1] - second[1];
+
+  return Math.hypot(longitudeDistance, latitudeDistance);
+}
+
+function getCountryNeighborContextDepth(
+  targetSegments: BoundarySegment[],
+  layer: DromapBasemapBoundaryLayer,
+) {
+  const targetPositions = targetSegments.flatMap((segment) => [
+    segment.start,
+    segment.end,
+  ]);
+  const targetSpan = getLineStringSpan(targetPositions)?.maxSpan ?? 4;
+  const ratio = layer.neighborContextDepthRatio ?? 0.24;
+  const minimumDepth = layer.neighborContextMinDepth ?? 1;
+  const maximumDepth = layer.neighborContextMaxDepth ?? 6.5;
+
+  return Math.min(maximumDepth, Math.max(minimumDepth, targetSpan * ratio));
+}
+
+function positionIsCloseToNeighborBorderAnchors(
+  position: DromapBoundaryPosition,
+  anchors: DromapBoundaryPosition[],
+  maximumDistance: number,
+) {
+  return anchors.some(
+    (anchor) =>
+      getApproximateBoundaryDistance(position, anchor) <= maximumDistance,
+  );
+}
+
+function segmentIsCloseToNeighborBorderAnchors(
+  segment: BoundarySegment,
+  anchors: DromapBoundaryPosition[],
+  maximumDistance: number,
+) {
+  return (
+    positionIsCloseToNeighborBorderAnchors(
+      segment.start,
+      anchors,
+      maximumDistance,
+    ) ||
+    positionIsCloseToNeighborBorderAnchors(
+      segment.end,
+      anchors,
+      maximumDistance,
+    ) ||
+    positionIsCloseToNeighborBorderAnchors(
+      getBoundarySegmentMidpoint(segment),
+      anchors,
+      maximumDistance,
+    )
+  );
+}
+
+function getCountryNeighborContextLineStrings(
+  featureCollection: DromapBoundaryFeatureCollection,
+  layer: DromapBasemapBoundaryLayer,
+): DromapBoundaryLineString[] {
+  const targetFeatures = featureCollection.features.flatMap((feature) => {
+    const targetFeature = getDromapBoundaryFeatureForLayer(feature, layer);
+
+    return targetFeature ? [targetFeature] : [];
+  });
+
+  const targetSegments = targetFeatures.flatMap((feature) =>
+    feature.geometry
+      ? getBoundarySegmentsFromGeometry(feature.geometry, layer)
+      : [],
+  );
+
+  if (targetSegments.length === 0) {
+    return [];
+  }
+
+  const targetSegmentKeys = new Set(
+    targetSegments.map((segment) =>
+      getUndirectedSegmentKey(segment.start, segment.end),
+    ),
+  );
+  const targetPositionKeys = new Set(
+    targetSegments.flatMap((segment) => [
+      getCoordinateKey(segment.start),
+      getCoordinateKey(segment.end),
+    ]),
+  );
+  const maximumDistance = getCountryNeighborContextDepth(targetSegments, layer);
+  const neighborLineStrings: DromapBoundaryLineString[] = [];
+
+  for (const rawFeature of featureCollection.features) {
+    if (
+      !rawFeature.geometry ||
+      featureMatchesAdmin0Country(rawFeature, layer)
+    ) {
+      continue;
+    }
+
+    if (layer.hideDisputed) {
+      const values = getFeatureStringValues(rawFeature.properties);
+
+      if (
+        values.some((value) => PEDAGOGICAL_HIDDEN_BOUNDARY_PATTERN.test(value))
+      ) {
+        continue;
+      }
+    }
+
+    const geometry = unwrapGeometryAcrossAntimeridianEast(
+      rawFeature.geometry,
+      layer,
+    );
+    const neighborSegments = getBoundarySegmentsFromGeometry(geometry, layer);
+    const exactSharedSegments = neighborSegments.filter((segment) =>
+      targetSegmentKeys.has(
+        getUndirectedSegmentKey(segment.start, segment.end),
+      ),
+    );
+    const sharedPositions = neighborSegments.flatMap((segment) => {
+      const positions: DromapBoundaryPosition[] = [];
+
+      if (targetPositionKeys.has(getCoordinateKey(segment.start))) {
+        positions.push(segment.start);
+      }
+
+      if (targetPositionKeys.has(getCoordinateKey(segment.end))) {
+        positions.push(segment.end);
+      }
+
+      return positions;
+    });
+    const uniqueSharedPositions = [
+      ...new Map(
+        [
+          ...exactSharedSegments.flatMap((segment) => [
+            segment.start,
+            segment.end,
+          ]),
+          ...sharedPositions,
+        ].map((position) => [getCoordinateKey(position), position] as const),
+      ).values(),
+    ];
+
+    // Deux pays seulement proches par la mer ne partagent aucun segment ni
+    // suffisamment de sommets communs. Ils sont donc volontairement exclus.
+    if (exactSharedSegments.length === 0 && uniqueSharedPositions.length < 2) {
+      continue;
+    }
+
+    const visibleNeighborSegments = neighborSegments.filter((segment) => {
+      const segmentKey = getUndirectedSegmentKey(segment.start, segment.end);
+      const segmentIsShared =
+        targetSegmentKeys.has(segmentKey) ||
+        (targetPositionKeys.has(getCoordinateKey(segment.start)) &&
+          targetPositionKeys.has(getCoordinateKey(segment.end)));
+
+      if (segmentIsShared) {
+        return false;
+      }
+
+      return segmentIsCloseToNeighborBorderAnchors(
+        segment,
+        uniqueSharedPositions,
+        maximumDistance,
+      );
+    });
+
+    neighborLineStrings.push(
+      ...connectBoundarySegments(visibleNeighborSegments),
+    );
+  }
+
+  return filterBoundaryLineStringsForLayer(neighborLineStrings, layer);
+}
+
 export function getDromapBoundaryRenderableLineStrings(
   featureCollection: DromapBoundaryFeatureCollection,
   layer: DromapBasemapBoundaryLayer,
 ): DromapBoundaryLineString[] {
+  if (layer.displayRole === "country-neighbor-context") {
+    return getCountryNeighborContextLineStrings(featureCollection, layer);
+  }
+
   const visibleFeatures = featureCollection.features.flatMap((feature) => {
     const visibleFeature = getDromapBoundaryFeatureForLayer(feature, layer);
 

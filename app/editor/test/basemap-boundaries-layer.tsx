@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import L from "leaflet";
 import { useMap } from "react-leaflet";
 
-import type {
-  DromapBasemapBoundaryLayer,
-  DromapBasemapBoundaryOverlay,
+import {
+  getDromapDisplayedBoundaryOverlay,
+  type DromapBasemapBoundaryLayer,
+  type DromapBasemapBoundaryOverlay,
 } from "@/lib/dromap/basemap";
+import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
 import type { DromapBoundaryLineString } from "@/lib/dromap/basemap-boundaries";
 import {
   getDromapBoundaryRenderableLineStrings,
@@ -16,7 +18,7 @@ import {
 
 type BasemapBoundariesLayerProps = {
   boundaryOverlay?: DromapBasemapBoundaryOverlay;
-  renderBounds?: L.LatLngBounds;
+  renderBounds?: L.LatLngBoundsExpression;
 };
 
 function getLineStringBounds(lineString: DromapBoundaryLineString) {
@@ -64,6 +66,20 @@ function getPaddedRenderBounds(bounds?: L.LatLngBounds) {
     [bounds.getSouth() - latPadding, bounds.getWest() - lngPadding],
     [bounds.getNorth() + latPadding, bounds.getEast() + lngPadding],
   );
+}
+
+function normalizeLeafletBounds(
+  bounds?: L.LatLngBoundsExpression,
+): L.LatLngBounds | undefined {
+  if (!bounds) {
+    return undefined;
+  }
+
+  if (bounds instanceof L.LatLngBounds) {
+    return bounds;
+  }
+
+  return L.latLngBounds(bounds as L.LatLngExpression[]);
 }
 
 function createLeafletBoundaryLayer(
@@ -115,13 +131,28 @@ export function BasemapBoundariesLayer({
   renderBounds,
 }: BasemapBoundariesLayerProps) {
   const map = useMap();
+  const showCountryNeighborContext = useEditorTestBasemapStore(
+    (state) => state.showCountryNeighborContext,
+  );
+  const leafletRenderBounds = useMemo(
+    () => normalizeLeafletBounds(renderBounds),
+    [renderBounds],
+  );
+  const displayedBoundaryOverlay = useMemo(
+    () =>
+      getDromapDisplayedBoundaryOverlay(
+        boundaryOverlay,
+        showCountryNeighborContext,
+      ),
+    [boundaryOverlay, showCountryNeighborContext],
+  );
 
   useEffect(() => {
-    if (!boundaryOverlay) {
+    if (!displayedBoundaryOverlay) {
       return;
     }
 
-    const overlay = boundaryOverlay;
+    const overlay = displayedBoundaryOverlay;
 
     let isDisposed = false;
     const group = L.featureGroup().addTo(map);
@@ -140,7 +171,7 @@ export function BasemapBoundariesLayer({
           const layer = createLeafletBoundaryLayer(
             layerConfig,
             featureCollection,
-            renderBounds,
+            leafletRenderBounds,
           );
 
           layer.addTo(group);
@@ -158,7 +189,7 @@ export function BasemapBoundariesLayer({
       isDisposed = true;
       group.removeFrom(map);
     };
-  }, [boundaryOverlay, map, renderBounds]);
+  }, [displayedBoundaryOverlay, leafletRenderBounds, map]);
 
   return null;
 }

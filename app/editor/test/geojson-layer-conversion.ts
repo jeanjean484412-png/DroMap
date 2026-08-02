@@ -2,6 +2,7 @@ import type {
   DroMapFeature,
   DroMapFeatureDashStyle,
   DroMapFeatureProperties,
+  DroMapFeatureMapLabelVisibility,
   DroMapFeatureStyle,
   DroMapMarkerSymbol,
   DroMapLineVariant,
@@ -85,6 +86,13 @@ function getFeatureLabel(
       "nom",
       "Name",
       "NAME",
+      "shapeName",
+      "shape_name",
+      "SHAPENAME",
+      "name_fr",
+      "NAME_FR",
+      "nom_fr",
+      "NOM",
       "title",
       "titre",
       "ref",
@@ -145,6 +153,18 @@ function getNumberValue(record: Record<string, unknown>, key: string) {
 function getBooleanValue(record: Record<string, unknown>, key: string) {
   const value = record[key];
   return typeof value === "boolean" ? value : null;
+}
+
+function getDromapMapLabelVisibility(
+  dromap: Record<string, unknown>,
+): DroMapFeatureMapLabelVisibility | undefined {
+  const visibility = getStringValue(dromap, "mapLabelVisibility");
+
+  if (visibility === "inherit" || visibility === "show" || visibility === "hide") {
+    return visibility;
+  }
+
+  return undefined;
 }
 
 function getDromapFeatureType(
@@ -333,6 +353,7 @@ function createExactDromapFeatureFromMetadata(input: {
     type: featureType,
     label,
     legendLabel: getDromapLegendLabel(dromap, input.layer),
+    mapLabelVisibility: getDromapMapLabelVisibility(dromap),
     style,
     locked,
     ...(lockOverride === "locked" || lockOverride === "unlocked" ? { lockOverride } : {}),

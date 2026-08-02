@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@geoarrow/geoarrow-wasm':
+        specifier: 0.2.0-beta.5
+        version: 0.2.0-beta.5
       '@geoman-io/leaflet-geoman-free':
         specifier: ^2.19.3
         version: 2.19.3(leaflet@1.9.4)
@@ -183,6 +186,9 @@ packages:
   '@eslint/plugin-kit@0.4.1':
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@geoarrow/geoarrow-wasm@0.2.0-beta.5':
+    resolution: {integrity: sha512-tVO1Sskkt/Rtl+ipiJuues/UE8DGOTjx4X9DRDX5+VfP72yzY1TU//I6OMQ16LxwM8Tb8s8mHw4wTZJOZrB6LQ==}
 
   '@geoman-io/leaflet-geoman-free@2.19.3':
     resolution: {integrity: sha512-HjbEpfAEUs0NyI1Dhvz3SMVG6m0pAN/1Eo0tRKsz9cpaROTrFtmJGY22swEir1Uj/8IeGF1NJId38C5Fu+nZGQ==}
@@ -2265,6 +2271,8 @@ snapshots:
     dependencies:
       '@eslint/core': 0.17.0
       levn: 0.4.1
+
+  '@geoarrow/geoarrow-wasm@0.2.0-beta.5': {}
 
   '@geoman-io/leaflet-geoman-free@2.19.3(leaflet@1.9.4)':
     dependencies:

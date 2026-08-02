@@ -53,39 +53,44 @@ function isEditableShortcutTarget(target: EventTarget | null) {
   return false;
 }
 
-function deleteSelectedFeature() {
-  const selectedFeatureId =
-    useEditorTestSelectionStore.getState().selectedFeatureId;
+function deleteSelectedFeatures() {
+  const selectionState = useEditorTestSelectionStore.getState();
+  const selectedFeatureIds = selectionState.selectedFeatureIds.length
+    ? selectionState.selectedFeatureIds
+    : selectionState.selectedFeatureId
+      ? [selectionState.selectedFeatureId]
+      : [];
 
-  if (!selectedFeatureId) {
+  if (selectedFeatureIds.length === 0) {
     return false;
   }
 
-  const selectedFeature = useEditorTestFeaturesStore
+  const layers = useEditorTestLayersStore.getState().layers;
+  const selectedIdSet = new Set(selectedFeatureIds);
+  const deletableFeatures = useEditorTestFeaturesStore
     .getState()
-    .features.find((feature) => feature.id === selectedFeatureId);
+    .features.filter(
+      (feature) =>
+        selectedIdSet.has(feature.id) &&
+        !isFeatureLocked(feature) &&
+        !isFeatureEffectivelyLocked(feature, layers),
+    );
 
-  if (!selectedFeature) {
-    useEditorTestSelectionStore.getState().clearSelectedFeatureId();
+  if (deletableFeatures.length === 0) {
     return false;
   }
 
-  if (
-    isFeatureLocked(selectedFeature) ||
-    isFeatureEffectivelyLocked(selectedFeature, useEditorTestLayersStore.getState().layers)
-  ) {
-    return false;
+  for (const feature of deletableFeatures) {
+    useEditorTestLayerCommandsStore
+      .getState()
+      .requestDeleteFeatureLayer(feature.id);
   }
-
-  useEditorTestLayerCommandsStore
-    .getState()
-    .requestDeleteFeatureLayer(selectedFeatureId);
 
   useEditorTestFeaturesStore
     .getState()
-    .removeFeatureWithHistory(selectedFeatureId);
+    .removeFeaturesWithHistory(deletableFeatures.map((feature) => feature.id));
 
-  useEditorTestSelectionStore.getState().clearSelectedFeatureId();
+  selectionState.clearSelectedFeatureId();
 
   return true;
 }
@@ -136,13 +141,24 @@ export function EditorKeyboardShortcuts() {
         return;
       }
 
+      if (event.key === "Escape") {
+        const hasSelection =
+          useEditorTestSelectionStore.getState().selectedFeatureIds.length > 0;
+
+        if (hasSelection) {
+          event.preventDefault();
+          useEditorTestSelectionStore.getState().clearSelectedFeatureId();
+          return;
+        }
+      }
+
       if (
         event.key === "Delete" &&
         !event.ctrlKey &&
         !event.metaKey &&
         !event.altKey
       ) {
-        const didDelete = deleteSelectedFeature();
+        const didDelete = deleteSelectedFeatures();
 
         if (didDelete) {
           event.preventDefault();

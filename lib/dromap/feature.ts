@@ -77,7 +77,19 @@ export type DroMapFeatureStyle = {
   zoneShapeRotation?: number;
   markerSize?: number;
   markerFilled?: boolean;
+  /** Rotation en degrés des marqueurs dessinés ou importés. */
+  markerRotation?: number;
   fontSize?: number;
+  /** Graisse du texte DroMap. false/absent = normal. */
+  textBold?: boolean;
+  /** Italique du texte DroMap. */
+  textItalic?: boolean;
+  /** Niveau de zoom Leaflet auquel la taille visuelle de cet objet correspond exactement. */
+  visualReferenceZoom?: number;
+  /** Facteur temporaire de rendu, jamais enregistré dans les données du projet. */
+  renderScale?: number;
+  /** Niveau de zoom Leaflet auquel fontSize correspond exactement. */
+  textReferenceZoom?: number;
   textRotation?: number;
   textBackgroundEnabled?: boolean;
   textBackgroundColor?: string;
@@ -85,6 +97,10 @@ export type DroMapFeatureStyle = {
   textBorderEnabled?: boolean;
   textBorderColor?: string;
   textBorderWidth?: number;
+  /** Contour directement autour des glyphes du texte. */
+  textOutlineEnabled?: boolean;
+  textOutlineColor?: string;
+  textOutlineWidth?: number;
   arrowStart?: boolean;
   arrowEnd?: boolean;
   /**
@@ -96,17 +112,38 @@ export type DroMapFeatureStyle = {
 
 export type DroMapFeatureLockOverride = "locked" | "unlocked";
 
+export type DroMapFeatureMapLabelVisibility = "inherit" | "show" | "hide";
+
+export type DroMapFeatureMapLabelOffset = {
+  /** Décalage horizontal en pixels au zoom de référence. */
+  x: number;
+  /** Décalage vertical en pixels au zoom de référence. */
+  y: number;
+  /** Zoom Leaflet auquel x et y ont été définis. */
+  referenceZoom: number;
+};
+
 export type DroMapFeatureProperties = {
   type: DroMapFeatureType;
   style: DroMapFeatureStyle;
   label: string;
   legendLabel?: string;
+  /** Affichage de l’étiquette du nom sur la carte. */
+  mapLabelVisibility?: DroMapFeatureMapLabelVisibility;
+  /** Placement manuel de l’étiquette, enregistré indépendamment du zoom courant. */
+  mapLabelOffset?: DroMapFeatureMapLabelOffset;
   symbol?: DroMapMarkerSymbol;
   lineVariant?: DroMapLineVariant;
   zoneVariant?: DroMapZoneVariant;
   zoneShapeKind?: DroMapZoneShapeKind;
   order?: number;
   locked?: boolean;
+  /**
+   * La géométrie reste liée à sa donnée géographique d'origine.
+   * L'objet peut toujours être stylisé, renommé, étiqueté ou supprimé,
+   * mais il ne peut ni être déplacé ni déformé.
+   */
+  geometryLocked?: boolean;
   /**
    * Verrouillage explicite de l’objet.
    * - absent : l’objet suit uniquement son verrouillage simple et celui du calque ;
@@ -171,6 +208,7 @@ const DEFAULT_STYLE: Record<DroMapFeatureType, DroMapFeatureStyle> = {
     opacity: 1,
     markerSize: 18,
     markerFilled: true,
+    markerRotation: 0,
   },
   line: {
     color: "#3388ff",
@@ -207,6 +245,9 @@ const DEFAULT_STYLE: Record<DroMapFeatureType, DroMapFeatureStyle> = {
     color: "#111827",
     opacity: 1,
     fontSize: 22,
+    textBold: false,
+    textItalic: false,
+    textReferenceZoom: undefined,
     textRotation: 0,
     textBackgroundEnabled: false,
     textBackgroundColor: "#ffffff",
@@ -214,6 +255,9 @@ const DEFAULT_STYLE: Record<DroMapFeatureType, DroMapFeatureStyle> = {
     textBorderEnabled: false,
     textBorderColor: "#111827",
     textBorderWidth: 2,
+    textOutlineEnabled: true,
+    textOutlineColor: "#ffffff",
+    textOutlineWidth: 1.5,
   },
 };
 
@@ -338,6 +382,71 @@ export function isFeatureExplicitlyUnlocked(
   feature: DroMapFeature | null | undefined,
 ): boolean {
   return getFeatureLockOverride(feature) === "unlocked";
+}
+
+function normalizeSourceMetadataValue(value: unknown) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+/**
+ * Reconnaît les empreintes de bâtiments importées depuis une source dédiée :
+ * IGN BD TOPO® en France ou Overture Maps Buildings ailleurs. La détection
+ * s'appuie d'abord sur le nom de la source, puis sur les métadonnées conservées
+ * dans chaque feature. Elle fonctionne donc aussi après conversion en objets
+ * DroMap et pour les anciens imports IGN.
+ */
+export function isIgnBdTopoBuildingFeature(
+  feature: DroMapFeature | null | undefined,
+): boolean {
+  const source = feature?.properties?.source;
+
+  if (source?.type !== "geojson") {
+    return false;
+  }
+
+  const sourceName = normalizeSourceMetadataValue(source.sourceName);
+
+  if (
+    sourceName.includes("ign-bdtopo-buildings") ||
+    sourceName.includes("bdtopo_v3:batiment") ||
+    sourceName.includes("overture-buildings")
+  ) {
+    return true;
+  }
+
+  const originalProperties = source.originalProperties;
+
+  if (!originalProperties || typeof originalProperties !== "object") {
+    return false;
+  }
+
+  const sourceLayer = normalizeSourceMetadataValue(
+    originalProperties.source_layer,
+  );
+
+  const sourceProvider = normalizeSourceMetadataValue(
+    originalProperties.source,
+  );
+
+  return (
+    sourceLayer === "bdtopo_v3:batiment" ||
+    sourceLayer.endsWith(":batiment") ||
+    sourceLayer === "building" ||
+    sourceProvider.includes("overture maps buildings")
+  );
+}
+
+/**
+ * Verrouillage géométrique distinct du verrouillage complet : les styles,
+ * noms et étiquettes restent éditables.
+ */
+export function isFeatureGeometryLocked(
+  feature: DroMapFeature | null | undefined,
+): boolean {
+  return (
+    feature?.properties?.geometryLocked === true ||
+    isIgnBdTopoBuildingFeature(feature)
+  );
 }
 
 export function geomanShapeToFeatureType(
@@ -499,18 +608,25 @@ export function layerToDroMapFeature(
     id: existing?.id ?? crypto.randomUUID(),
     geometry: raw.geometry,
     properties: {
+      // Lors d'une edition geometrique, conserver toutes les metadonnees de
+      // l'objet (source GeoJSON, visibilite de l'etiquette, etc.). L'ancienne
+      // reconstruction champ par champ supprimait ces informations au premier
+      // deplacement et faisait notamment disparaitre les etiquettes.
+      ...(existing?.properties ?? {}),
       type: featureType,
       style,
       label: existing?.properties.label ?? DEFAULT_LABEL[featureType],
       legendLabel: existing?.properties.legendLabel,
       order: existing?.properties.order,
       locked: existing?.properties.locked === true,
-      ...(existing?.properties.lockOverride ? { lockOverride: existing.properties.lockOverride } : {}),
+      ...(existing?.properties.lockOverride
+        ? { lockOverride: existing.properties.lockOverride }
+        : {}),
       layerId: existing?.properties.layerId,
       ...getFeatureLineVariantProperties(featureType, existing),
       ...getFeatureZoneVariantProperties(featureType, existing),
       ...getFeatureSymbolProperties(featureType, existing),
-      meta: { version: 1 },
+      meta: existing?.properties.meta ?? { version: 1 },
     },
   };
 }

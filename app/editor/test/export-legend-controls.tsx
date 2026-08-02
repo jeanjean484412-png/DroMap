@@ -102,9 +102,6 @@ export function ExportLegendControls() {
   const legendFeatureOrder = useEditorTestExportStore(
     (state) => state.legendFeatureOrder,
   );
-  const setLegendFeatureOrder = useEditorTestExportStore(
-    (state) => state.setLegendFeatureOrder,
-  );
   const legendGroupOrder = useEditorTestExportStore(
     (state) => state.legendGroupOrder,
   );
@@ -168,8 +165,9 @@ export function ExportLegendControls() {
   );
 
   function syncOrder(nextEntries: LegendEntry[]) {
+    // L’ordre des groupes dans la légende ne doit jamais réordonner les
+    // features qui servent à calculer les nuances de zones superposées.
     setLegendGroupOrder(nextEntries.map((entry) => entry.dedupeKey));
-    setLegendFeatureOrder(nextEntries.flatMap((entry) => entry.featureIds));
   }
 
   function toggleEntryVisibility(entry: LegendEntry) {

@@ -25,7 +25,7 @@ export const DROMAP_THIRD_PARTY_CREDITS: DromapThirdPartyCredit[] = [
     title: "OpenFreeMap",
     category: "fond",
     license: "Service/cartes open source basés sur OpenStreetMap/OpenMapTiles",
-    usage: "Fonds vectoriels OpenFreeMap Liberty, Clair et Bright.",
+    usage: "Fonds vectoriels Classique et Clair.",
     href: "https://openfreemap.org/",
     visibleOnMap: true,
   },
@@ -43,9 +43,17 @@ export const DROMAP_THIRD_PARTY_CREDITS: DromapThirdPartyCredit[] = [
     title: "OpenStreetMap contributors",
     category: "donnees",
     license: "ODbL",
-    usage: "Données cartographiques des fonds OSM, CARTO et OpenFreeMap.",
+    usage: "Données cartographiques des fonds Classique et Clair.",
     href: "https://www.openstreetmap.org/copyright",
     visibleOnMap: true,
+  },
+  {
+    id: "nominatim",
+    title: "Nominatim",
+    category: "bibliotheques",
+    license: "Service de géocodage OpenStreetMap / logiciel GPL-3.0",
+    usage: "Recherche ponctuelle d’un lieu et recentrage de la carte.",
+    href: "https://nominatim.org/",
   },
   {
     id: "carto",
@@ -55,6 +63,23 @@ export const DROMAP_THIRD_PARTY_CREDITS: DromapThirdPartyCredit[] = [
     usage: "Fonds classiques Clair, Sans textes, Voyager et Voyager sans textes.",
     href: "https://carto.com/attribution/",
     visibleOnMap: true,
+  },
+  {
+    id: "ign-geoplateforme",
+    title: "IGN / Géoplateforme",
+    category: "fond",
+    license: "Licence Ouverte / Etalab 2.0 selon les ressources diffusées",
+    usage: "Fonds Vue satellite, Plan IGN et import de bâtiments BD TOPO® via la Géoplateforme.",
+    href: "https://cartes.gouv.fr/",
+    visibleOnMap: true,
+  },
+  {
+    id: "overture-buildings",
+    title: "Overture Maps Foundation — Buildings",
+    category: "donnees",
+    license: "ODbL 1.0",
+    usage: "Empreintes mondiales de bâtiments importées hors de France, avec attribution des sources Overture et OpenStreetMap.",
+    href: "https://docs.overturemaps.org/guides/buildings/",
   },
   {
     id: "natural-earth",
@@ -95,7 +120,7 @@ export const DROMAP_THIRD_PARTY_CREDITS: DromapThirdPartyCredit[] = [
     title: "MapLibre GL JS",
     category: "bibliotheques",
     license: "BSD 3-Clause",
-    usage: "Rendu vectoriel des fonds OpenFreeMap.",
+    usage: "Rendu vectoriel des fonds Classique, Clair et Plan IGN.",
     href: "https://maplibre.org/",
   },
   {
@@ -216,6 +241,14 @@ export function getDromapBoundaryAttributionHtml(
 
 
 function getBaseExportAttributionHtml(basemap: DromapBasemapConfig) {
+  if (
+    basemap.id === "ign-satellite" ||
+    basemap.id === "ign-plan" ||
+    basemap.id === "ign-plan-raster"
+  ) {
+    return '<a href="https://www.ign.fr/">© IGN</a> · <a href="https://cartes.gouv.fr/">Géoplateforme</a>';
+  }
+
   if (basemap.kind === "maplibre" || basemap.id.startsWith("openfreemap-")) {
     return '<a href="https://openfreemap.org">© OpenFreeMap</a> · <a href="https://www.openmaptiles.org">© OpenMapTiles</a> · <a href="https://www.openstreetmap.org/copyright">© OSM</a>';
   }

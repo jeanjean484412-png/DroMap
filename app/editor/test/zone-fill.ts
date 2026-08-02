@@ -271,8 +271,10 @@ export function createZoneFeatureFromBoundaryPolygon({
   };
 }
 
-
-function getGeoJsonFeatureLabel(feature: DromapGeoJsonFeature, layer: DromapGeoJsonLayer) {
+function getGeoJsonFeatureLabel(
+  feature: DromapGeoJsonFeature,
+  layer: DromapGeoJsonLayer,
+) {
   const dromap = feature.properties?.dromap;
 
   if (typeof dromap === "object" && dromap !== null && !Array.isArray(dromap)) {
@@ -337,7 +339,10 @@ export function createZoneFillFeatureFromGeoJsonLayersAtLngLat({
   for (const layer of [...renderableLayers].reverse()) {
     const seenPolygonKeys = new Set<string>();
 
-    for (const feature of getGeoJsonLayerLoadedDisplayData(layer, workspaceBounds).features) {
+    for (const feature of getGeoJsonLayerLoadedDisplayData(
+      layer,
+      workspaceBounds,
+    ).features) {
       const polygon = getContainingPolygonFromGeoJsonFeature(feature, lngLat);
 
       if (!polygon) {
@@ -373,8 +378,10 @@ export function createZoneFillFeatureFromGeoJsonLayersAtLngLat({
 async function getFillableFeatureCollections(basemapId: DromapBasemapId) {
   const basemap = getDromapBasemapConfig(basemapId);
   const layers = basemap.boundaryOverlay?.layers ?? [];
-  const fillableLayers = layers.filter((layer) =>
-    FILLABLE_BOUNDARY_KINDS.has(layer.kind),
+  const fillableLayers = layers.filter(
+    (layer) =>
+      layer.displayRole !== "country-neighbor-context" &&
+      FILLABLE_BOUNDARY_KINDS.has(layer.kind),
   );
 
   const result: {

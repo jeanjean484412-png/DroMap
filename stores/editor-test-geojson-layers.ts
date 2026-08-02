@@ -31,6 +31,12 @@ export type DromapGeoJsonLayer = {
   updatedAt: string;
   sourceName?: string | null;
   sourceSavedLayerId?: string;
+  catalogDatasetId?: string;
+  sourceLabel?: string;
+  sourceUrl?: string;
+  sourceLicense?: string;
+  sourceAttribution?: string;
+  sourceVersion?: string;
   featureCount: number;
   coordinateCount: number;
   skippedGeometries: number;
@@ -782,10 +788,44 @@ function simplifyGeoJsonGeometry(
 
 const displayDataCache = new WeakMap<DromapGeoJsonLayer, DromapGeoJsonFeatureCollection>();
 
+/**
+ * Les empreintes de bâtiments IGN ou Overture doivent conserver chaque angle
+ * de façade. La simplification par échantillonnage, adaptée aux longues
+ * frontières, crée ici des diagonales et des triangles parasites.
+ */
+export function isIgnBdTopoBuildingsLayer(
+  layer: Pick<
+    DromapGeoJsonLayer,
+    "catalogDatasetId" | "sourceName" | "sourceLabel"
+  >,
+) {
+  const catalogDatasetId = layer.catalogDatasetId?.trim().toLowerCase() ?? "";
+  const sourceName = layer.sourceName?.trim().toLowerCase() ?? "";
+  const sourceLabel = layer.sourceLabel?.trim().toLowerCase() ?? "";
+
+  const isIgnBuildings =
+    catalogDatasetId.startsWith("ign-bdtopo-buildings:") ||
+    sourceName.includes("ign-bdtopo-buildings") ||
+    (sourceLabel.includes("bd topo") && sourceLabel.includes("bâtiment")) ||
+    (sourceLabel.includes("bd topo") && sourceLabel.includes("batiment"));
+  const isOvertureBuildings =
+    catalogDatasetId.startsWith("overture-buildings:") ||
+    sourceName.includes("overture-buildings") ||
+    (sourceLabel.includes("overture") &&
+      (sourceLabel.includes("building") ||
+        sourceLabel.includes("bâtiment") ||
+        sourceLabel.includes("batiment")));
+
+  return isIgnBuildings || isOvertureBuildings;
+}
+
 export function getGeoJsonLayerDisplayData(
   layer: DromapGeoJsonLayer,
 ): DromapGeoJsonFeatureCollection {
-  if (layer.precisionMode === "original") {
+  if (
+    layer.precisionMode === "original" ||
+    isIgnBdTopoBuildingsLayer(layer)
+  ) {
     return layer.data;
   }
 
@@ -876,10 +916,23 @@ export function getGeoJsonLayerBoundsFromFeatures(
     return null;
   }
 
-  let west = Math.min(...lngs);
-  let east = Math.max(...lngs);
-  let south = Math.min(...lats);
-  let north = Math.max(...lats);
+  let west = Number.POSITIVE_INFINITY;
+  let east = Number.NEGATIVE_INFINITY;
+  let south = Number.POSITIVE_INFINITY;
+  let north = Number.NEGATIVE_INFINITY;
+
+  // Ne jamais utiliser Math.min(...tableau) / Math.max(...tableau) ici :
+  // les GeoJSON ADM4/ADM5 peuvent contenir des centaines de milliers de
+  // coordonnées et dépasser la limite d'arguments du moteur JavaScript.
+  for (let index = 0; index < lngs.length; index += 1) {
+    const lng = lngs[index];
+    const lat = lats[index];
+
+    if (lng < west) west = lng;
+    if (lng > east) east = lng;
+    if (lat < south) south = lat;
+    if (lat > north) north = lat;
+  }
   const lngSpan = east - west;
   const latSpan = north - south;
   const paddingLng = lngSpan > 0 ? Math.max(lngSpan * 0.08, 0.02) : 0.08;
@@ -912,9 +965,22 @@ export function getGeoJsonLayerCoordinateCount(layer: Pick<DromapGeoJsonLayer, "
   return count;
 }
 
+export type ParseGeoJsonLayerOptions = {
+  sourceName?: string | null;
+  layerName?: string;
+  existingLayerCount?: number;
+  precisionMode?: DromapGeoJsonPrecisionMode;
+  catalogDatasetId?: string;
+  sourceLabel?: string;
+  sourceUrl?: string;
+  sourceLicense?: string;
+  sourceAttribution?: string;
+  sourceVersion?: string;
+};
+
 export function parseGeoJsonTextToDromapGeoJsonLayer(
   jsonText: string,
-  options: { sourceName?: string | null; existingLayerCount?: number; precisionMode?: DromapGeoJsonPrecisionMode } = {},
+  options: ParseGeoJsonLayerOptions = {},
 ): DromapGeoJsonLayer {
   const parsed = JSON.parse(jsonText) as unknown;
 
@@ -944,7 +1010,10 @@ export function parseGeoJsonTextToDromapGeoJsonLayer(
 
   return {
     id: createGeoJsonLayerId(),
-    name: createLayerNameFromSource(options.sourceName),
+    name: normalizeName(
+      options.layerName,
+      createLayerNameFromSource(options.sourceName),
+    ),
     visible: true,
     opacity: 1,
     locked: true,
@@ -952,6 +1021,22 @@ export function parseGeoJsonTextToDromapGeoJsonLayer(
     createdAt: timestamp,
     updatedAt: timestamp,
     sourceName: options.sourceName ?? null,
+    ...(options.catalogDatasetId?.trim()
+      ? { catalogDatasetId: options.catalogDatasetId.trim() }
+      : {}),
+    ...(options.sourceLabel?.trim()
+      ? { sourceLabel: options.sourceLabel.trim() }
+      : {}),
+    ...(options.sourceUrl?.trim() ? { sourceUrl: options.sourceUrl.trim() } : {}),
+    ...(options.sourceLicense?.trim()
+      ? { sourceLicense: options.sourceLicense.trim() }
+      : {}),
+    ...(options.sourceAttribution?.trim()
+      ? { sourceAttribution: options.sourceAttribution.trim() }
+      : {}),
+    ...(options.sourceVersion?.trim()
+      ? { sourceVersion: options.sourceVersion.trim() }
+      : {}),
     featureCount: features.length,
     coordinateCount: getGeoJsonLayerCoordinateCount(temporaryLayer),
     skippedGeometries: flattened.skipped,
@@ -1013,6 +1098,100 @@ function normalizeLayerStyle(value: unknown): DromapGeoJsonLayerStyle {
     : normalizedStyle;
 }
 
+function applyGlobalLayerStylePatchToFeature(
+  feature: DromapGeoJsonFeature,
+  patch: Partial<DromapGeoJsonLayerStyle>,
+  nextLayerStyle: DromapGeoJsonLayerStyle,
+): DromapGeoJsonFeature {
+  const properties = feature.properties ?? {};
+  const dromap = properties.dromap;
+
+  // Les GeoJSON revenus d'une conversion DroMap conservent un style par
+  // entité dans properties.dromap.style. Ce style individuel doit rester
+  // visible tant que l'utilisateur ne touche pas au style global. Dès qu'un
+  // réglage global change, on reporte uniquement ce réglage sur toutes les
+  // entités : les contrôles globaux redeviennent donc réellement globaux sans
+  // effacer les autres personnalisations faites dans DroMap.
+  if (!isRecord(dromap)) {
+    return feature;
+  }
+
+  const currentDromapStyle = isRecord(dromap.style) ? dromap.style : {};
+  const nextDromapStyle: Record<string, unknown> = { ...currentDromapStyle };
+  let changed = false;
+
+  const dromapFeatureType = dromap.featureType ?? dromap.type ?? properties.dromap_type;
+  const isZone =
+    dromapFeatureType === "zone" ||
+    feature.geometry.type === "Polygon" ||
+    feature.geometry.type === "MultiPolygon";
+
+  if (patch.strokeColor !== undefined) {
+    nextDromapStyle.color = nextLayerStyle.strokeColor;
+    changed = true;
+  }
+
+  if (patch.strokeWeight !== undefined) {
+    nextDromapStyle.weight = nextLayerStyle.strokeWeight;
+    changed = true;
+  }
+
+  if (patch.strokeOpacity !== undefined) {
+    nextDromapStyle.opacity = nextLayerStyle.strokeOpacity;
+    if (isZone) {
+      nextDromapStyle.zoneStrokeEnabled = nextLayerStyle.strokeOpacity > 0;
+    }
+    changed = true;
+  }
+
+  if (patch.fillColor !== undefined) {
+    nextDromapStyle.fillColor = nextLayerStyle.fillColor;
+    changed = true;
+  }
+
+  if (patch.fillOpacity !== undefined) {
+    nextDromapStyle.fillOpacity = nextLayerStyle.fillOpacity;
+    if (isZone) {
+      nextDromapStyle.zoneFillEnabled = nextLayerStyle.fillOpacity > 0;
+    }
+    changed = true;
+  }
+
+  if (patch.markerSize !== undefined) {
+    nextDromapStyle.markerSize = nextLayerStyle.markerSize;
+    changed = true;
+  }
+
+  if (patch.dashStyle !== undefined) {
+    nextDromapStyle.dashStyle = nextLayerStyle.dashStyle;
+    changed = true;
+  }
+
+  if (!changed) {
+    return feature;
+  }
+
+  const currentLegacyStyle = isRecord(properties.style) ? properties.style : {};
+
+  return {
+    ...feature,
+    properties: {
+      ...properties,
+      // Conservé pour la compatibilité des exports/anciens projets. Le moteur
+      // DroMap lit en priorité dromap.style, mais les deux représentations ne
+      // doivent pas se contredire après une modification globale.
+      style: {
+        ...currentLegacyStyle,
+        ...nextDromapStyle,
+      },
+      dromap: {
+        ...dromap,
+        style: nextDromapStyle,
+      },
+    },
+  };
+}
+
 function normalizeGeoJsonFeatureCollection(value: unknown): DromapGeoJsonFeatureCollection | null {
   if (!isRecord(value)) {
     return null;
@@ -1063,6 +1242,34 @@ export function normalizeDromapGeoJsonLayer(
       typeof getRecordValue(value, "sourceName") === "string"
         ? (getRecordValue(value, "sourceName") as string)
         : null,
+    ...(typeof getRecordValue(value, "catalogDatasetId") === "string" &&
+    String(getRecordValue(value, "catalogDatasetId")).trim()
+      ? { catalogDatasetId: String(getRecordValue(value, "catalogDatasetId")).trim() }
+      : {}),
+    ...(typeof getRecordValue(value, "sourceLabel") === "string" &&
+    String(getRecordValue(value, "sourceLabel")).trim()
+      ? { sourceLabel: String(getRecordValue(value, "sourceLabel")).trim() }
+      : {}),
+    ...(typeof getRecordValue(value, "sourceUrl") === "string" &&
+    String(getRecordValue(value, "sourceUrl")).trim()
+      ? { sourceUrl: String(getRecordValue(value, "sourceUrl")).trim() }
+      : {}),
+    ...(typeof getRecordValue(value, "sourceLicense") === "string" &&
+    String(getRecordValue(value, "sourceLicense")).trim()
+      ? { sourceLicense: String(getRecordValue(value, "sourceLicense")).trim() }
+      : {}),
+    ...(typeof getRecordValue(value, "sourceAttribution") === "string" &&
+    String(getRecordValue(value, "sourceAttribution")).trim()
+      ? {
+          sourceAttribution: String(
+            getRecordValue(value, "sourceAttribution"),
+          ).trim(),
+        }
+      : {}),
+    ...(typeof getRecordValue(value, "sourceVersion") === "string" &&
+    String(getRecordValue(value, "sourceVersion")).trim()
+      ? { sourceVersion: String(getRecordValue(value, "sourceVersion")).trim() }
+      : {}),
     ...(typeof getRecordValue(value, "sourceSavedLayerId") === "string" &&
     String(getRecordValue(value, "sourceSavedLayerId")).trim()
       ? { sourceSavedLayerId: String(getRecordValue(value, "sourceSavedLayerId")).trim() }
@@ -1307,15 +1514,26 @@ export const useEditorTestGeoJsonLayersStore = create<EditorTestGeoJsonLayersSta
 
   updateGeoJsonLayerStyle: (layerId, patch) =>
     set((state) => ({
-      geoJsonLayers: state.geoJsonLayers.map((layer) =>
-        layer.id === layerId
-          ? {
-              ...layer,
-              updatedAt: nowIso(),
-              style: normalizeLayerStyle({ ...layer.style, ...patch }),
-            }
-          : layer,
-      ),
+      geoJsonLayers: state.geoJsonLayers.map((layer) => {
+        if (layer.id !== layerId) {
+          return layer;
+        }
+
+        const nextStyle = normalizeLayerStyle({ ...layer.style, ...patch });
+        const nextFeatures = layer.data.features.map((feature) =>
+          applyGlobalLayerStylePatchToFeature(feature, patch, nextStyle),
+        );
+
+        return {
+          ...layer,
+          updatedAt: nowIso(),
+          style: nextStyle,
+          data:
+            nextFeatures.some((feature, index) => feature !== layer.data.features[index])
+              ? { ...layer.data, features: nextFeatures }
+              : layer.data,
+        };
+      }),
     })),
 
   clearGeoJsonLayers: () => set({ geoJsonLayers: [] }),

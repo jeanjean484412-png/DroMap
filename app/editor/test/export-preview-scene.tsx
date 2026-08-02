@@ -16,6 +16,11 @@ import {
 } from "@/lib/dromap/feature";
 import {
   useEditorTestExportStore,
+  type ExportLegendMapPosition,
+  type ExportLegendSymbolStyle,
+  type ExportMapElementCustomPosition,
+  type ExportMapElementPosition,
+  type ExportNorthArrowStyle,
   type ExportScaleBarStyle,
 } from "@/stores/editor-test-export";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
@@ -34,25 +39,34 @@ import {
   EXPORT_LAYOUT_GAP,
   MAX_LEGEND_BOTTOM_HEIGHT,
   MAX_LEGEND_SIDE_WIDTH,
+  MAP_LEGEND_MARGIN,
   MIN_LEGEND_BOTTOM_HEIGHT,
   MIN_LEGEND_SIDE_WIDTH,
   clampExportNumber,
   createExportLayout,
-  getExportFormatLabel,
+  createMapLegendTitleRect,
+  getExportMapVisualZoom,
   getSafeLegendTitle,
   getVisibleLegendFeatures,
   normalizeLegendAppearance,
 } from "./export-layout";
-import type { ExportCanvasRect } from "./export-layout";
+import type { ExportCanvasRect, ExportLegendAppearance } from "./export-layout";
 import {
   DEFAULT_EXPORT_LEGEND_SECTION,
+  MAX_EXPORT_LEGEND_SYMBOL_SIZE,
+  getExportLegendGlobalSymbolScale,
   createExportLegendDisplayItems,
   createExportLegendLayout,
+  getExportLegendEntrySymbolMetrics,
+  getExportLegendEntrySymbolVisualHeight,
   isDefaultLegendSection,
   type ExportLegendDisplayItem,
 } from "./export-legend-layout";
 import { getLegendEntries, type LegendEntry } from "./legend-entry";
+import { mergeLegendEntriesWithCustomEntries } from "./export-custom-legend";
+import { AdvancedLegendEditor } from "./advanced-legend-editor";
 import { createExportScaleBarModel } from "./export-scale";
+import { createExportNorthArrowPlacement } from "./export-north-arrow";
 import { mergeLegendEntriesWithGeoJsonLayers } from "./geojson-layer-legend";
 import {
   getZoneDotsColor,
@@ -71,6 +85,7 @@ import {
 import { getFeatureDashStyle, getFeatureMarkerSize } from "./feature-style";
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
+import { EXPORT_LEGEND_FONT_FAMILY } from "./export-text-metrics";
 
 import { getMarkerSymbolHtml } from "./marker-symbol";
 import {
@@ -134,8 +149,166 @@ const EXPORT_SCALE_BAR_STYLE_OPTIONS: Array<{
   { value: "alternating", label: "Alternée" },
   { value: "bar", label: "Barre pleine" },
   { value: "line", label: "Ligne graduée" },
-  { value: "boxed", label: "Cartouche" },
+  { value: "boxed", label: "Contour" },
 ];
+
+const EXPORT_NORTH_ARROW_STYLE_OPTIONS: Array<{
+  value: ExportNorthArrowStyle;
+  label: string;
+}> = [
+  { value: "classic", label: "Classique" },
+  { value: "simple", label: "Simple" },
+  { value: "compass", label: "Rose des vents" },
+  { value: "needle", label: "Aiguille" },
+];
+
+const EXPORT_MAP_ELEMENT_POSITION_OPTIONS: Array<{
+  value: ExportMapElementPosition;
+  label: string;
+}> = [
+  { value: "top-left", label: "Haut gauche" },
+  { value: "top-right", label: "Haut droite" },
+  { value: "bottom-left", label: "Bas gauche" },
+  { value: "bottom-right", label: "Bas droite" },
+];
+
+const MAP_ELEMENT_MARGIN = 16;
+
+function getMapElementPositionStyle(
+  position: ExportMapElementPosition,
+  collisionOffset = 0,
+): CSSProperties {
+  const isRight = position.endsWith("right");
+  const isBottom = position.startsWith("bottom");
+  const verticalOffset = MAP_ELEMENT_MARGIN + collisionOffset;
+
+  return {
+    left: isRight ? undefined : MAP_ELEMENT_MARGIN,
+    right: isRight ? MAP_ELEMENT_MARGIN : undefined,
+    top: isBottom ? undefined : verticalOffset,
+    bottom: isBottom ? verticalOffset : undefined,
+  };
+}
+
+function getFreeMapElementPositionStyle(
+  position: ExportMapElementCustomPosition | null,
+): CSSProperties | null {
+  if (!position) return null;
+
+  return {
+    left: `${position.x * 100}%`,
+    top: `${position.y * 100}%`,
+    right: undefined,
+    bottom: undefined,
+    transform: "translate(-50%, -50%)",
+  };
+}
+
+type MapElementPointerDragState = {
+  pointerId: number;
+  parentRect: DOMRect;
+  halfWidth: number;
+  halfHeight: number;
+  offsetX: number;
+  offsetY: number;
+  startClientX: number;
+  startClientY: number;
+  moved: boolean;
+};
+
+function useMapElementPointerDrag(
+  onPositionChange?: (position: ExportMapElementCustomPosition) => void,
+) {
+  const dragRef = useRef<MapElementPointerDragState | null>(null);
+  const suppressClickRef = useRef(false);
+
+  function onPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    const element = event.currentTarget;
+    const parent = element.parentElement;
+    if (!parent) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = element.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      parentRect,
+      halfWidth: rect.width / 2,
+      halfHeight: rect.height / 2,
+      offsetX: event.clientX - centerX,
+      offsetY: event.clientY - centerY,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+    element.setPointerCapture(event.pointerId);
+  }
+
+  function onPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const distance = Math.hypot(
+      event.clientX - drag.startClientX,
+      event.clientY - drag.startClientY,
+    );
+    if (distance > 3) drag.moved = true;
+
+    const parentWidth = Math.max(1, drag.parentRect.width);
+    const parentHeight = Math.max(1, drag.parentRect.height);
+    const minX = drag.halfWidth / parentWidth;
+    const maxX = 1 - minX;
+    const minY = drag.halfHeight / parentHeight;
+    const maxY = 1 - minY;
+    const x = clampExportNumber(
+      (event.clientX - drag.offsetX - drag.parentRect.left) / parentWidth,
+      Math.min(minX, 0.5),
+      Math.max(maxX, 0.5),
+    );
+    const y = clampExportNumber(
+      (event.clientY - drag.offsetY - drag.parentRect.top) / parentHeight,
+      Math.min(minY, 0.5),
+      Math.max(maxY, 0.5),
+    );
+    if (typeof onPositionChange === "function") {
+      onPositionChange({ x, y });
+    }
+  }
+
+  function finishPointerDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    suppressClickRef.current = drag.moved;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function consumeClickAfterDrag(event: ReactMouseEvent<HTMLButtonElement>) {
+    if (!suppressClickRef.current) return false;
+    suppressClickRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
+  return {
+    onPointerDown,
+    onPointerMove,
+    onPointerUp: finishPointerDrag,
+    onPointerCancel: finishPointerDrag,
+    consumeClickAfterDrag,
+  };
+}
 
 type ResizeStartState = {
   pointerId: number;
@@ -144,6 +317,21 @@ type ResizeStartState = {
   startSideWidth: number;
   startBottomHeight: number;
   scale: number;
+};
+
+type LegendOverlayMoveStartState = {
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startLegendX: number;
+  startLegendY: number;
+  scale: number;
+  active: boolean;
+  target: HTMLElement;
+};
+
+type LegendOverlayMoveRef = {
+  current: LegendOverlayMoveStartState | null;
 };
 
 type LegendPointerDragState = {
@@ -290,6 +478,7 @@ function renderLegendPreviewLineStroke({
   centerY,
   symbolWeight,
   freehandPath,
+  symbolStyle,
 }: {
   feature: DroMapFeature;
   color: string;
@@ -298,8 +487,9 @@ function renderLegendPreviewLineStroke({
   centerY: number;
   symbolWeight: number;
   freehandPath: string;
+  symbolStyle?: ExportLegendSymbolStyle;
 }) {
-  const dashStyle = getLegendDashStyle(feature);
+  const dashStyle = symbolStyle?.dashStyle ?? getLegendDashStyle(feature);
 
   if (dashStyle === "solid") {
     return isFreehandLineFeature(feature) ? (
@@ -327,9 +517,13 @@ function renderLegendPreviewLineStroke({
 
   if (dashStyle === "dotted") {
     const dotRadius = Math.max(2.1, Math.min(symbolWeight * 0.58, 3.9));
+    const requestedDotSpacing = Math.max(
+      dotRadius * 2 + 0.5,
+      symbolStyle?.dotSpacing ?? 7,
+    );
     const dotCount = Math.max(
-      5,
-      Math.min(8, Math.floor((lineEndX - lineStartX) / 7)),
+      2,
+      Math.floor((lineEndX - lineStartX) / requestedDotSpacing) + 1,
     );
     const xValues = createEvenSteps(
       dotCount,
@@ -357,15 +551,18 @@ function renderLegendPreviewLineStroke({
     );
   }
 
-  const segmentCount = Math.max(
-    3,
-    Math.min(4, Math.floor((lineEndX - lineStartX) / 13)),
-  );
   const totalWidth = lineEndX - lineStartX;
-  const gap = Math.max(5, symbolWeight * 1.15);
   const segmentLength = Math.max(
-    8,
-    (totalWidth - gap * (segmentCount - 1)) / segmentCount,
+    1,
+    Math.min(symbolStyle?.dashLength ?? 14, totalWidth),
+  );
+  const gap = Math.max(
+    0,
+    symbolStyle?.dashGap ?? Math.max(5, symbolWeight * 1.15),
+  );
+  const segmentCount = Math.max(
+    1,
+    Math.floor((totalWidth + gap) / Math.max(1, segmentLength + gap)),
   );
   const usedWidth = segmentLength * segmentCount + gap * (segmentCount - 1);
   const firstX = lineStartX + Math.max(0, (totalWidth - usedWidth) / 2);
@@ -411,6 +608,7 @@ function renderLegendPreviewZoneOutline({
   width,
   height,
   strokeWidth,
+  symbolStyle,
 }: {
   feature: DroMapFeature;
   color: string;
@@ -420,8 +618,9 @@ function renderLegendPreviewZoneOutline({
   width: number;
   height: number;
   strokeWidth: number;
+  symbolStyle?: ExportLegendSymbolStyle;
 }) {
-  const dashStyle = getLegendDashStyle(feature);
+  const dashStyle = symbolStyle?.dashStyle ?? getLegendDashStyle(feature);
 
   if (dashStyle === "solid") {
     return (
@@ -443,8 +642,9 @@ function renderLegendPreviewZoneOutline({
 
   if (dashStyle === "dotted") {
     const radius = Math.max(1.6, Math.min(strokeWidth * 0.58, 2.8));
-    const topBottomCount = Math.max(5, Math.round(width / 7));
-    const sideCount = Math.max(4, Math.round(height / 6));
+    const spacing = Math.max(radius * 2 + 0.5, symbolStyle?.dotSpacing ?? 7);
+    const topBottomCount = Math.max(2, Math.round(width / spacing) + 1);
+    const sideCount = Math.max(2, Math.round(height / spacing) + 1);
     const topBottom = createEvenSteps(topBottomCount, x, x + width);
     const sides = createEvenSteps(sideCount, y, y + height).slice(1, -1);
 
@@ -472,14 +672,35 @@ function renderLegendPreviewZoneOutline({
   }
 
   const segments = [];
-  const horizontalSegments = 3;
-  const verticalSegments = 2;
-  const horizontalGap = Math.max(5, width * 0.08);
-  const verticalGap = Math.max(4, height * 0.12);
-  const horizontalLength =
-    (width - horizontalGap * (horizontalSegments - 1)) / horizontalSegments;
-  const verticalLength =
-    (height - verticalGap * (verticalSegments - 1)) / verticalSegments;
+  const horizontalGap = Math.max(
+    0,
+    symbolStyle?.dashGap ?? Math.max(5, width * 0.08),
+  );
+  const verticalGap = Math.max(
+    0,
+    symbolStyle?.dashGap ?? Math.max(4, height * 0.12),
+  );
+  const requestedLength = Math.max(1, symbolStyle?.dashLength ?? 14);
+  const horizontalSegments = Math.max(
+    1,
+    Math.floor(
+      (width + horizontalGap) / Math.max(1, requestedLength + horizontalGap),
+    ),
+  );
+  const verticalSegments = Math.max(
+    1,
+    Math.floor(
+      (height + verticalGap) / Math.max(1, requestedLength + verticalGap),
+    ),
+  );
+  const horizontalLength = Math.min(
+    requestedLength,
+    (width - horizontalGap * (horizontalSegments - 1)) / horizontalSegments,
+  );
+  const verticalLength = Math.min(
+    requestedLength,
+    (height - verticalGap * (verticalSegments - 1)) / verticalSegments,
+  );
 
   for (let index = 0; index < horizontalSegments; index += 1) {
     const x1 = x + index * (horizontalLength + horizontalGap);
@@ -536,7 +757,85 @@ function rectToStyle(rect: ExportCanvasRect): CSSProperties {
   };
 }
 
-function LegendSymbol({ feature }: { feature: DroMapFeature }) {
+function createAdvancedLegendFocusRect(
+  canvasWidth: number,
+  canvasHeight: number,
+  legendRect: ExportCanvasRect,
+  titleRect: ExportCanvasRect | null,
+): ExportCanvasRect {
+  const horizontalGap = titleRect
+    ? Math.max(
+        0,
+        Math.max(legendRect.x, titleRect.x) -
+          Math.min(
+            legendRect.x + legendRect.width,
+            titleRect.x + titleRect.width,
+          ),
+      )
+    : 0;
+  const verticalGap = titleRect
+    ? Math.max(
+        0,
+        Math.max(legendRect.y, titleRect.y) -
+          Math.min(
+            legendRect.y + legendRect.height,
+            titleRect.y + titleRect.height,
+          ),
+      )
+    : 0;
+  const includeTitle = Boolean(
+    titleRect && horizontalGap <= 140 && verticalGap <= 140,
+  );
+  const effectiveTitleRect = includeTitle ? titleRect : null;
+  const minX = Math.min(legendRect.x, effectiveTitleRect?.x ?? legendRect.x);
+  const minY = Math.min(legendRect.y, effectiveTitleRect?.y ?? legendRect.y);
+  const maxX = Math.max(
+    legendRect.x + legendRect.width,
+    effectiveTitleRect
+      ? effectiveTitleRect.x + effectiveTitleRect.width
+      : legendRect.x + legendRect.width,
+  );
+  const maxY = Math.max(
+    legendRect.y + legendRect.height,
+    effectiveTitleRect
+      ? effectiveTitleRect.y + effectiveTitleRect.height
+      : legendRect.y + legendRect.height,
+  );
+
+  // On conserve juste assez de carte autour de la légende pour comprendre le
+  // contraste et le placement, sans réduire inutilement la légende complète.
+  const horizontalContext = clampExportNumber(
+    Math.round((maxX - minX) * 0.18),
+    54,
+    120,
+  );
+  const verticalContext = clampExportNumber(
+    Math.round((maxY - minY) * 0.18),
+    54,
+    110,
+  );
+  const x = Math.max(0, minX - horizontalContext);
+  const y = Math.max(0, minY - verticalContext);
+  const right = Math.min(canvasWidth, maxX + horizontalContext);
+  const bottom = Math.min(canvasHeight, maxY + verticalContext);
+
+  return {
+    x,
+    y,
+    width: Math.max(1, right - x),
+    height: Math.max(1, bottom - y),
+  };
+}
+
+function LegendSymbol({
+  feature,
+  symbolStyle,
+  renderSize,
+}: {
+  feature: DroMapFeature;
+  symbolStyle?: ExportLegendSymbolStyle;
+  renderSize?: number;
+}) {
   const type = feature.properties?.type;
   const color = getFeatureColor(feature);
   const opacity = getFeatureOpacity(feature);
@@ -572,14 +871,16 @@ function LegendSymbol({ feature }: { feature: DroMapFeature }) {
   }
 
   if (type === "marker") {
-    const displaySize = Math.max(
-      14,
-      Math.min(getFeatureMarkerSize(feature), 34),
+    const displaySize = clampExportNumber(
+      Number(renderSize ?? getFeatureMarkerSize(feature)),
+      1,
+      MAX_EXPORT_LEGEND_SYMBOL_SIZE,
     );
 
     return (
       <span
-        className="inline-block leading-none"
+        className="inline-flex items-center justify-center leading-none"
+        style={{ width: displaySize, height: displaySize }}
         dangerouslySetInnerHTML={{
           __html: getMarkerSymbolHtml(feature, { size: displaySize }),
         }}
@@ -626,6 +927,7 @@ function LegendSymbol({ feature }: { feature: DroMapFeature }) {
           centerY,
           symbolWeight,
           freehandPath,
+          symbolStyle,
         })}
 
         {hasArrowStart ? (
@@ -808,6 +1110,7 @@ function LegendSymbol({ feature }: { feature: DroMapFeature }) {
             width: zoneWidth,
             height: zoneHeight,
             strokeWidth: zoneStrokeWidth,
+            symbolStyle,
           })
         : null}
     </svg>
@@ -821,6 +1124,7 @@ function EditableLegendText({
   className,
   style,
   multiline = false,
+  liveCommit = false,
 }: {
   value: string;
   onCommit: (value: string) => void;
@@ -828,9 +1132,12 @@ function EditableLegendText({
   className?: string;
   style?: CSSProperties;
   multiline?: boolean;
+  liveCommit?: boolean;
 }) {
   const [draftValue, setDraftValue] = useState(value);
   const [isEditing, setIsEditing] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editingStartValueRef = useRef(value);
 
   useEffect(() => {
     if (!isEditing) {
@@ -838,13 +1145,28 @@ function EditableLegendText({
     }
   }, [isEditing, value]);
 
+  useEffect(() => {
+    const textarea = textareaRef.current;
+
+    if (!multiline || !textarea) {
+      return;
+    }
+
+    textarea.style.height = "0px";
+    textarea.style.height = `${Math.max(textarea.scrollHeight, 1)}px`;
+  }, [draftValue, multiline, style]);
+
   function commit() {
     setIsEditing(false);
     onCommit(draftValue);
   }
 
   function cancel(target: HTMLInputElement | HTMLTextAreaElement) {
-    setDraftValue(value);
+    const initialValue = editingStartValueRef.current;
+    setDraftValue(initialValue);
+    if (liveCommit) {
+      onCommit(initialValue);
+    }
     setIsEditing(false);
     target.blur();
   }
@@ -852,10 +1174,19 @@ function EditableLegendText({
   const sharedProps = {
     value: draftValue,
     placeholder,
-    onFocus: () => setIsEditing(true),
+    onFocus: () => {
+      editingStartValueRef.current = value;
+      setIsEditing(true);
+    },
     onChange: (
       event: ReactChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-    ) => setDraftValue(event.target.value),
+    ) => {
+      const nextValue = event.target.value;
+      setDraftValue(nextValue);
+      if (liveCommit) {
+        onCommit(nextValue);
+      }
+    },
     onBlur: commit,
     onPointerDown: (
       event: ReactPointerEvent<HTMLInputElement | HTMLTextAreaElement>,
@@ -881,11 +1212,15 @@ function EditableLegendText({
       }
     },
     className,
-    style,
+    style: {
+      ...style,
+      fontFamily: EXPORT_LEGEND_FONT_FAMILY,
+      boxSizing: style?.boxSizing ?? ("content-box" as const),
+    },
   };
 
   if (multiline) {
-    return <textarea {...sharedProps} rows={1} />;
+    return <textarea ref={textareaRef} {...sharedProps} rows={1} wrap="soft" />;
   }
 
   return <input {...sharedProps} type="text" />;
@@ -897,12 +1232,15 @@ function ExportLegendPreview({
   displayItems,
   rect,
   legendPosition,
-  backgroundColor,
-  titleFontSize,
-  sectionTitleFontSize,
-  itemFontSize,
+  appearance,
   hiddenLegendFeatureIds,
+  suspendEntryDrag = false,
+  showAlwaysVisibleHideControls = false,
+  onContainerPointerDownCapture,
+  onContainerPointerMove,
+  onContainerPointerUp,
   onTitleChange,
+  onTitleRemove,
   onRenameSection,
   onEntryLabelChange,
   onEntryHide,
@@ -913,13 +1251,18 @@ function ExportLegendPreview({
   entries: LegendEntry[];
   displayItems: ExportLegendDisplayItem[];
   rect: ExportCanvasRect;
-  legendPosition: "left" | "right" | "bottom";
-  backgroundColor: string;
-  titleFontSize: number;
-  sectionTitleFontSize: number;
-  itemFontSize: number;
+  legendPosition: "left" | "right" | "bottom" | "map";
+  appearance: ExportLegendAppearance;
   hiddenLegendFeatureIds: string[];
+  suspendEntryDrag?: boolean;
+  showAlwaysVisibleHideControls?: boolean;
+  onContainerPointerDownCapture?: (
+    event: ReactPointerEvent<HTMLElement>,
+  ) => void;
+  onContainerPointerMove?: (event: ReactPointerEvent<HTMLElement>) => void;
+  onContainerPointerUp?: (event: ReactPointerEvent<HTMLElement>) => void;
   onTitleChange: (title: string) => void;
+  onTitleRemove?: () => void;
   onRenameSection: (currentSection: string, nextSection: string) => void;
   onEntryLabelChange: (groupKey: string, label: string) => void;
   onEntryHide: (entry: LegendEntry) => void;
@@ -930,25 +1273,30 @@ function ExportLegendPreview({
   }) => void;
   onRemoveSection: (section: string) => void;
 }) {
+  const backgroundColor = appearance.backgroundColor;
+  const titleFontSize = appearance.titleFontSize;
+  const itemFontSize = appearance.itemFontSize;
   const asideRef = useRef<HTMLElement | null>(null);
   const dragStateRef = useRef<LegendPointerDragState | null>(null);
   const lastPointerMoveSignatureRef = useRef<string | null>(null);
   const [pointerDrag, setPointerDrag] = useState<LegendPointerDragState | null>(
     null,
   );
-  const colors = getReadableLegendTextColors(backgroundColor);
-  const separatorColor = getLegendSeparatorColor(backgroundColor);
+  const [isContainerHovered, setIsContainerHovered] = useState(false);
+  const [hoveredEntryKey, setHoveredEntryKey] = useState<string | null>(null);
+  const effectiveColorReference =
+    legendPosition === "map" ? "#ffffff" : backgroundColor;
+  const colors = getReadableLegendTextColors(effectiveColorReference);
+  const separatorColor = getLegendSeparatorColor(effectiveColorReference);
   const legendLayout = createExportLegendLayout({
     legendRect: rect,
     displayItems,
+    entries,
     legendPosition,
     appearance: {
-      backgroundColor,
+      ...appearance,
       sideWidth: rect.width,
       bottomHeight: rect.height,
-      titleFontSize,
-      sectionTitleFontSize,
-      itemFontSize,
     },
     title,
   });
@@ -1236,7 +1584,7 @@ function ExportLegendPreview({
     event: ReactPointerEvent<HTMLElement>,
     entry: LegendEntry,
   ) {
-    if (event.button !== 0) {
+    if (suspendEntryDrag || event.button !== 0) {
       return;
     }
 
@@ -1309,18 +1657,81 @@ function ExportLegendPreview({
     };
   }, [pointerDrag]);
 
+  useEffect(() => {
+    if (suspendEntryDrag) {
+      stopPointerDrag();
+    }
+  }, [suspendEntryDrag]);
+
   return (
     <aside
       ref={asideRef}
-      className="absolute z-[1000] overflow-visible border"
+      className="absolute z-[1000] overflow-visible"
       onDragStart={(event) => event.preventDefault()}
+      onPointerDownCapture={onContainerPointerDownCapture}
+      onPointerMove={onContainerPointerMove}
+      onPointerUp={onContainerPointerUp}
+      onPointerCancel={onContainerPointerUp}
+      onPointerEnter={() => setIsContainerHovered(true)}
+      onPointerLeave={() => {
+        setIsContainerHovered(false);
+        setHoveredEntryKey(null);
+      }}
       style={{
         ...rectToStyle(rect),
-        backgroundColor,
-        borderColor: colors.borderColor,
+        cursor: legendPosition === "map" ? "grab" : undefined,
+        touchAction: legendPosition === "map" ? "none" : undefined,
+        backgroundColor:
+          legendPosition === "map"
+            ? appearance.mapBorderEnabled
+              ? hexToRgba(appearance.mapBorderColor, 0.72)
+              : "transparent"
+            : backgroundColor,
+        borderStyle: "solid",
+        borderWidth:
+          legendPosition === "map"
+            ? appearance.mapBorderEnabled
+              ? appearance.mapBorderWidth
+              : 0
+            : 1,
+        borderColor:
+          legendPosition === "map"
+            ? appearance.mapBorderEnabled
+              ? appearance.mapBorderColor
+              : "transparent"
+            : colors.borderColor,
+        borderRadius:
+          legendPosition === "map" && appearance.mapBorderEnabled
+            ? appearance.mapBorderRadius
+            : 0,
+        boxShadow:
+          legendPosition === "map" && appearance.mapBorderEnabled
+            ? "0 2px 12px rgba(15, 23, 42, 0.12)"
+            : undefined,
+        textShadow:
+          legendPosition === "map"
+            ? "0 0 3px rgba(255, 255, 255, 0.98), 0 1px 2px rgba(255, 255, 255, 0.98)"
+            : undefined,
+        fontFamily: EXPORT_LEGEND_FONT_FAMILY,
       }}
     >
-      <div className="absolute inset-0 overflow-hidden">
+      {legendPosition === "map" ? (
+        <div
+          data-legend-overlay-drag-surface="true"
+          className="absolute -inset-7 z-0 rounded-2xl"
+          aria-hidden="true"
+        />
+      ) : null}
+      {legendPosition === "map" &&
+      isContainerHovered &&
+      !hoveredEntryKey &&
+      !pointerDrag ? (
+        <div
+          className="pointer-events-none absolute -inset-7 z-20 rounded-2xl border-2 border-dashed border-indigo-500 bg-indigo-50/10 shadow-[0_0_0_3px_rgba(255,255,255,0.7)]"
+          aria-hidden="true"
+        />
+      ) : null}
+      <div className="absolute inset-0 z-10 overflow-visible">
         {legendLayout.isBottomSectionColumnMode &&
         legendLayout.columnCount > 1 ? (
           <>
@@ -1356,26 +1767,64 @@ function ExportLegendPreview({
         ) : null}
 
         {legendLayout.hasTitle ? (
-          <EditableLegendText
-            value={safeTitle}
-            onCommit={onTitleChange}
-            multiline
-            placeholder="Titre de légende"
-            className="absolute resize-none overflow-hidden rounded border border-transparent bg-transparent p-0 font-bold outline-none hover:border-slate-300 hover:bg-white/70 focus:border-indigo-400 focus:bg-white/90 focus:ring-2 focus:ring-indigo-200"
+          <div
+            className="group/legend-title absolute z-[70] overflow-visible"
             style={{
               left: legendLayout.titleX - rect.x,
               top: legendLayout.titleY - rect.y - titleFontSize,
               width: legendLayout.titleMaxWidth,
               minHeight: legendLayout.titleHeight,
-              color: colors.titleColor,
-              fontSize: titleFontSize,
-              lineHeight: `${legendLayout.titleLineHeight}px`,
-              whiteSpace: "normal",
             }}
-          />
+          >
+            <EditableLegendText
+              value={safeTitle}
+              onCommit={onTitleChange}
+              multiline
+              liveCommit={legendPosition === "map"}
+              placeholder="Titre de légende"
+              className="relative block w-full resize-none overflow-hidden rounded border border-transparent bg-transparent p-0 font-bold outline-none hover:border-slate-300 hover:bg-white/70 focus:border-indigo-400 focus:bg-white/90 focus:ring-2 focus:ring-indigo-200"
+              style={{
+                width: "100%",
+                minHeight: legendLayout.titleHeight,
+                color: colors.titleColor,
+                fontSize: titleFontSize,
+                lineHeight: `${legendLayout.titleLineHeight}px`,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                wordBreak: "break-word",
+                height: "auto",
+                WebkitTextStroke:
+                  legendPosition === "map"
+                    ? "1.5px rgba(255,255,255,0.98)"
+                    : undefined,
+                paintOrder: legendPosition === "map" ? "stroke fill" : undefined,
+              }}
+            />
+            {onTitleRemove ? (
+              <button
+                type="button"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onTitleRemove();
+                }}
+                className="absolute left-full top-1/2 z-[80] ml-2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border-2 border-rose-300 bg-white text-xl font-bold leading-none text-rose-600 shadow-md transition hover:border-rose-400 hover:bg-rose-50"
+                title="Supprimer le titre de la légende"
+                aria-label="Supprimer le titre de la légende"
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
         ) : null}
 
-        {entries.length === 0 && displayItems.length === 0 ? (
+        {entries.length === 0 &&
+        displayItems.length === 0 &&
+        safeTitle.length === 0 ? (
           <div
             className="absolute rounded-lg border border-dashed p-3"
             style={{
@@ -1410,9 +1859,16 @@ function ExportLegendPreview({
                 return (
                   <li
                     key={displayItem.id}
+                    data-legend-entry-hitbox="true"
                     draggable={false}
                     onDragStart={(event) => event.preventDefault()}
-                    className="group/section absolute min-w-0 overflow-hidden rounded-lg border border-transparent px-1 hover:border-indigo-200 hover:bg-indigo-50/60"
+                    onPointerEnter={() => setHoveredEntryKey(displayItem.id)}
+                    onPointerLeave={() =>
+                      setHoveredEntryKey((current) =>
+                        current === displayItem.id ? null : current,
+                      )
+                    }
+                    className={`group/section absolute min-w-0 rounded-lg border border-transparent px-1 hover:border-indigo-200 hover:bg-indigo-50/60 ${legendPosition === "map" ? "overflow-visible" : "overflow-hidden"}`}
                     style={{
                       left: item.x - rect.x,
                       top: item.y - rect.y,
@@ -1432,10 +1888,27 @@ function ExportLegendPreview({
                         onRenameSection(displayItem.section, trimmedValue);
                       }}
                       placeholder="Sous-légende"
-                      className="absolute left-0 top-0 min-w-0 max-w-[calc(100%-42px)] rounded border border-transparent bg-transparent px-2 py-1 font-bold uppercase tracking-[0.12em] outline-none hover:border-slate-300 hover:bg-white/70 focus:border-indigo-400 focus:bg-white/95 focus:ring-2 focus:ring-indigo-200"
+                      multiline
+                      liveCommit
+                      className="absolute left-0 top-0 min-w-0 resize-none overflow-hidden whitespace-pre-wrap rounded border border-transparent bg-transparent p-0 pr-8 font-bold uppercase tracking-[0.12em] outline-none hover:border-slate-300 hover:bg-white/70 focus:border-indigo-400 focus:bg-white/95 focus:ring-2 focus:ring-indigo-200"
                       style={{
                         color: colors.titleColor,
                         fontSize: legendLayout.sectionFontSize,
+                        // La croix de suppression est superposée au survol :
+                        // elle ne doit jamais voler de largeur au sous-titre.
+                        width: Math.max(1, item.width),
+                        minHeight: item.height,
+                        lineHeight: 1.2,
+                        height: item.height,
+                        boxSizing: "border-box",
+                        overflowWrap: "break-word",
+                        wordBreak: "normal",
+                        WebkitTextStroke:
+                          legendPosition === "map"
+                            ? "1.5px rgba(255,255,255,0.98)"
+                            : undefined,
+                        paintOrder:
+                          legendPosition === "map" ? "stroke fill" : undefined,
                       }}
                     />
 
@@ -1443,13 +1916,11 @@ function ExportLegendPreview({
                       <span
                         className="absolute left-0 right-0 rounded-full shadow-sm"
                         style={{
-                          top: Math.min(
-                            item.height - 5,
-                            Math.max(
-                              legendLayout.sectionFontSize + 12,
-                              Math.round(item.height * 0.72),
-                            ),
-                          ),
+                          // Le séparateur reste toujours sous le texte. Le
+                          // calcul de layout est déjà le même que celui de
+                          // l'export ; il ne faut pas le replacer à partir de la
+                          // seule première ligne de texte.
+                          top: Math.max(0, item.height - 4),
                           height: 4,
                           backgroundColor: separatorColor,
                         }}
@@ -1481,33 +1952,54 @@ function ExportLegendPreview({
 
               const feature = entry.representativeFeature;
               const isDragged = pointerDrag?.groupKey === entry.dedupeKey;
+              const itemSymbolSize = item.symbolSize ?? legendLayout.symbolSize;
+              const itemSymbolBoxWidth =
+                item.symbolBoxWidth ?? legendLayout.symbolBoxWidth;
+              const itemSymbolAnchorOffset =
+                item.symbolAnchorOffset ?? legendLayout.symbolAnchorOffset;
+              const itemLabelOffset =
+                item.labelOffset ?? legendLayout.labelOffset;
               const symbolY =
-                item.y -
-                rect.y +
-                Math.max(
-                  0,
-                  (legendLayout.itemHeight - legendLayout.symbolSize) / 2,
-                );
+                item.y - rect.y + (item.height - itemSymbolSize) / 2;
+              // Dans l’éditeur avancé, la croix de masquage est un contrôle
+              // superposé. Elle ne doit jamais réduire la largeur réelle du
+              // label, sinon l’aperçu avancé ne serait plus WYSIWYG et un label
+              // pourrait passer sur deux lignes uniquement dans cet écran.
+              const hideControlReserve = showAlwaysVisibleHideControls
+                ? 0
+                : legendPosition === "map"
+                  ? 0
+                  : 50;
               const textMaxWidth = Math.max(
                 20,
-                item.width -
-                  legendLayout.symbolBoxWidth -
-                  legendLayout.textGap -
-                  50,
+                item.width - itemLabelOffset - hideControlReserve,
               );
-              const isHidden = entry.featureIds.every((featureId) =>
-                hiddenLegendFeatureIds.includes(featureId),
-              );
+              const isHidden =
+                entry.featureIds.length > 0 &&
+                entry.featureIds.every((featureId) =>
+                  hiddenLegendFeatureIds.includes(featureId),
+                );
 
               return (
                 <li
                   key={displayItem.id}
+                  data-legend-entry-hitbox="true"
                   draggable={false}
                   onDragStart={(event) => event.preventDefault()}
+                  onPointerEnter={() => setHoveredEntryKey(entry.dedupeKey)}
+                  onPointerLeave={() =>
+                    setHoveredEntryKey((current) =>
+                      current === entry.dedupeKey ? null : current,
+                    )
+                  }
                   onPointerDown={(event) =>
                     handleEntryPointerDown(event, entry)
                   }
-                  className="group absolute flex min-w-0 cursor-grab items-center overflow-hidden rounded-lg border border-transparent active:cursor-grabbing hover:border-indigo-200 hover:bg-indigo-50/50"
+                  className={`group absolute flex min-w-0 cursor-grab items-center rounded-lg border border-transparent active:cursor-grabbing hover:border-indigo-200 hover:bg-indigo-50/50 ${
+                    legendPosition === "map" || showAlwaysVisibleHideControls
+                      ? "overflow-visible"
+                      : "overflow-hidden"
+                  }`}
                   style={{
                     left: item.x - rect.x,
                     top: item.y - rect.y,
@@ -1523,28 +2015,59 @@ function ExportLegendPreview({
                   title="Glisser pour changer l’ordre ou déplacer dans une sous-légende"
                 >
                   <span
-                    className="absolute flex shrink-0 items-center justify-center"
+                    className="absolute flex shrink-0 items-center justify-center overflow-visible"
                     style={{
-                      left: 0,
+                      left: itemSymbolAnchorOffset - itemSymbolBoxWidth / 2,
                       top: symbolY - (item.y - rect.y),
-                      width: legendLayout.symbolBoxWidth,
-                      height: legendLayout.symbolSize,
+                      width: itemSymbolBoxWidth,
+                      height: itemSymbolSize,
                     }}
                   >
-                    <LegendSymbol feature={feature} />
+                    {feature.properties.type === "marker" ? (
+                      <LegendSymbol
+                        feature={feature}
+                        symbolStyle={entry.legendSymbolStyle}
+                        renderSize={itemSymbolSize}
+                      />
+                    ) : (
+                      <span
+                        className="inline-flex items-center justify-center"
+                        style={{
+                          transform: `scale(${itemSymbolSize / 48})`,
+                          transformOrigin: "center",
+                        }}
+                      >
+                        <LegendSymbol
+                          feature={feature}
+                          symbolStyle={entry.legendSymbolStyle}
+                        />
+                      </span>
+                    )}
                   </span>
 
                   <span
                     className="absolute min-w-0"
                     style={{
-                      left: legendLayout.symbolBoxWidth + legendLayout.textGap,
+                      left: itemLabelOffset,
                       top: Math.max(
                         0,
                         Math.round(
-                          (legendLayout.itemHeight - itemFontSize) / 2,
+                          (item.height -
+                            Math.max(
+                              itemFontSize,
+                              (item.textLines?.length ?? 1) *
+                                itemFontSize *
+                                appearance.labelLineHeight,
+                            )) /
+                            2,
                         ),
                       ),
                       width: textMaxWidth,
+                      minHeight:
+                        legendPosition === "map" ? item.height : undefined,
+                      height: legendPosition === "map" ? "auto" : undefined,
+                      overflow:
+                        legendPosition === "map" ? "visible" : undefined,
                     }}
                   >
                     <EditableLegendText
@@ -1553,11 +2076,23 @@ function ExportLegendPreview({
                         onEntryLabelChange(entry.dedupeKey, nextValue)
                       }
                       placeholder="Nom"
-                      className="block w-full truncate rounded border border-transparent bg-transparent p-0 font-medium outline-none hover:border-slate-300 hover:bg-white/70 focus:border-indigo-400 focus:bg-white/90 focus:ring-2 focus:ring-indigo-200"
+                      multiline={legendPosition === "map"}
+                      liveCommit={legendPosition === "map"}
+                      className={`block w-full resize-none overflow-hidden rounded border border-transparent bg-transparent p-0 font-medium outline-none hover:border-slate-300 hover:bg-white/70 focus:border-indigo-400 focus:bg-white/90 focus:ring-2 focus:ring-indigo-200 ${legendPosition === "map" ? "whitespace-pre-wrap" : "truncate"}`}
                       style={{
                         color: colors.textColor,
                         fontSize: itemFontSize,
-                        lineHeight: 1.12,
+                        lineHeight:
+                          legendPosition === "map"
+                            ? appearance.labelLineHeight
+                            : 1.12,
+                        minHeight:
+                          legendPosition === "map" ? item.height : undefined,
+                        height: legendPosition === "map" ? "auto" : undefined,
+                        overflowWrap:
+                          legendPosition === "map" ? "anywhere" : undefined,
+                        wordBreak:
+                          legendPosition === "map" ? "break-word" : undefined,
                       }}
                     />
                   </span>
@@ -1569,24 +2104,33 @@ function ExportLegendPreview({
                       onEntryHide(entry);
                     }}
                     onPointerDown={(event) => event.stopPropagation()}
-                    className="absolute right-1 top-1/2 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-500 opacity-0 shadow-md transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100 focus:opacity-100"
-                    title="Masquer ce groupe dans la légende"
-                    aria-label="Masquer ce groupe dans la légende"
+                    className={[
+                      "absolute top-1/2 flex -translate-y-1/2 items-center justify-center rounded-full border bg-white/95 shadow-md transition focus:opacity-100",
+                      showAlwaysVisibleHideControls
+                        ? "left-full ml-2 h-10 w-10 border-rose-300 text-2xl font-black leading-none text-rose-600 opacity-100 hover:bg-rose-100 hover:text-rose-700"
+                        : "right-1 h-12 w-12 border-slate-200 text-slate-500 opacity-0 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100",
+                    ].join(" ")}
+                    title="Masquer cet élément dans la légende"
+                    aria-label="Masquer cet élément dans la légende"
                   >
-                    <svg
-                      width="28"
-                      height="28"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
+                    {showAlwaysVisibleHideControls ? (
+                      <span aria-hidden="true">×</span>
+                    ) : (
+                      <svg
+                        width="28"
+                        height="28"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
                   </button>
                 </li>
               );
@@ -1607,7 +2151,10 @@ function ExportLegendPreview({
               color: "#92400e",
               fontSize: Math.max(12, Math.round(itemFontSize * 0.72)),
               lineHeight: 1.25,
-              whiteSpace: "normal",
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
+              height: "auto",
             }}
           >
             ⚠ {legendLayout.warningText}
@@ -1630,12 +2177,134 @@ function ExportLegendPreview({
             transform: "translateY(-50%)",
           }}
         >
-          <LegendSymbol feature={draggedEntry.representativeFeature} />
+          <LegendSymbol
+            feature={draggedEntry.representativeFeature}
+            symbolStyle={draggedEntry.legendSymbolStyle}
+          />
           <span className="min-w-0 truncate">
             {draggedEntry.label || "Sans nom"}
           </span>
         </div>
       ) : null}
+    </aside>
+  );
+}
+
+function ExportMapLegendTitlePreview(input: {
+  title: string;
+  rect: ExportCanvasRect;
+  appearance: ExportLegendAppearance;
+  onTitleChange: (title: string) => void;
+  onTitleRemove?: () => void;
+  onPointerDownCapture: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
+  isMoving: boolean;
+}) {
+  const safeTitle = getSafeLegendTitle(input.title);
+  const titleFontSize = input.appearance.titleFontSize;
+  const [isHovered, setIsHovered] = useState(false);
+
+  if (!safeTitle) {
+    return null;
+  }
+
+  const colors = getReadableLegendTextColors("#ffffff");
+  const titleLayout = createExportLegendLayout({
+    legendRect: input.rect,
+    displayItems: [],
+    legendPosition: "map",
+    appearance: {
+      ...input.appearance,
+      mapBorderEnabled: false,
+      sideWidth: input.rect.width,
+      bottomHeight: input.rect.height,
+    },
+    title: safeTitle,
+  });
+
+  return (
+    <aside
+      className="absolute z-[1050] overflow-visible"
+      onPointerDownCapture={input.onPointerDownCapture}
+      onPointerMove={input.onPointerMove}
+      onPointerUp={input.onPointerUp}
+      onPointerCancel={input.onPointerUp}
+      onPointerEnter={() => setIsHovered(true)}
+      onPointerLeave={() => setIsHovered(false)}
+      style={{
+        ...rectToStyle(input.rect),
+        backgroundColor: "transparent",
+        borderColor: "transparent",
+        cursor: input.isMoving ? "grabbing" : "grab",
+        touchAction: "none",
+        userSelect: "none",
+        textShadow:
+          "0 0 3px rgba(255, 255, 255, 0.98), 0 1px 2px rgba(255, 255, 255, 0.98)",
+        fontFamily: EXPORT_LEGEND_FONT_FAMILY,
+      }}
+    >
+      <div
+        data-legend-overlay-drag-surface="true"
+        className="absolute -inset-6 z-0 rounded-2xl"
+        aria-hidden="true"
+      />
+      {isHovered ? (
+        <div
+          className="pointer-events-none absolute -inset-6 z-20 rounded-2xl border-2 border-dashed border-indigo-500 bg-indigo-50/10 shadow-[0_0_0_3px_rgba(255,255,255,0.7)]"
+          aria-hidden="true"
+        />
+      ) : null}
+      <div
+        className="group/map-legend-title absolute z-10 overflow-visible"
+        style={{
+          left: titleLayout.titleX - input.rect.x,
+          top: titleLayout.titleY - input.rect.y - titleFontSize,
+          width: titleLayout.titleMaxWidth,
+          minHeight: titleLayout.titleHeight,
+        }}
+      >
+        <EditableLegendText
+          value={safeTitle}
+          onCommit={input.onTitleChange}
+          multiline
+          liveCommit
+          placeholder="Titre de légende"
+          className="relative block w-full resize-none overflow-hidden rounded border border-transparent bg-transparent p-0 text-center font-bold outline-none hover:border-slate-300 hover:bg-white/70 focus:border-indigo-400 focus:bg-white/90 focus:ring-2 focus:ring-indigo-200"
+          style={{
+            width: "100%",
+            minHeight: titleLayout.titleHeight,
+            color: colors.titleColor,
+            fontSize: titleFontSize,
+            lineHeight: `${titleLayout.titleLineHeight}px`,
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
+            height: "auto",
+            WebkitTextStroke: "1.5px rgba(255,255,255,0.98)",
+            paintOrder: "stroke fill",
+          }}
+        />
+        {input.onTitleRemove ? (
+          <button
+            type="button"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              input.onTitleRemove?.();
+            }}
+            className="absolute left-full top-1/2 z-30 ml-2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border-2 border-rose-300 bg-white text-xl font-bold leading-none text-rose-600 shadow-md transition hover:border-rose-400 hover:bg-rose-50"
+            title="Supprimer le titre de la légende"
+            aria-label="Supprimer le titre de la légende"
+          >
+            ×
+          </button>
+        ) : null}
+      </div>
     </aside>
   );
 }
@@ -1648,12 +2317,262 @@ function ExportMapPreviewFallback() {
   );
 }
 
+function ScaleStyleGraphic({
+  style,
+  width = 76,
+}: {
+  style: ExportScaleBarStyle;
+  width?: number;
+}) {
+  const isLine = style === "line";
+  const isAlternating = style === "alternating" || style === "boxed";
+
+  return (
+    <div
+      className={[
+        "flex h-8 items-center justify-center",
+        style === "boxed" ? "rounded border border-slate-700 px-1.5 py-1" : "",
+      ].join(" ")}
+      style={{ width }}
+      aria-hidden="true"
+    >
+      {isLine ? (
+        <div className="relative h-3 w-full">
+          <span className="absolute left-0 right-0 top-1/2 h-0.5 -translate-y-1/2 bg-slate-950" />
+          <span className="absolute left-0 top-0 h-3 w-0.5 bg-slate-950" />
+          <span className="absolute left-1/2 top-0 h-3 w-0.5 -translate-x-1/2 bg-slate-950" />
+          <span className="absolute right-0 top-0 h-3 w-0.5 bg-slate-950" />
+        </div>
+      ) : isAlternating ? (
+        <div className="flex h-2 w-full overflow-hidden border border-slate-950">
+          {Array.from({ length: 4 }, (_, index) => (
+            <span
+              key={index}
+              className={
+                index % 2 === 0 ? "flex-1 bg-slate-950" : "flex-1 bg-white"
+              }
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="h-2 w-full border border-white bg-slate-950 ring-1 ring-slate-950" />
+      )}
+    </div>
+  );
+}
+
+function NorthArrowGraphic({
+  style,
+  width = 44,
+  height = 58,
+}: {
+  style: ExportNorthArrowStyle;
+  width?: number;
+  height?: number;
+}) {
+  if (style === "simple") {
+    return (
+      <svg
+        width={width}
+        height={height}
+        viewBox="0 0 44 58"
+        fill="none"
+        aria-hidden="true"
+      >
+        <text
+          x="22"
+          y="13"
+          textAnchor="middle"
+          fontSize="13"
+          fontWeight="800"
+          fill="#0f172a"
+        >
+          N
+        </text>
+        <path
+          d="M22 16 L34 46 L25 42 L25 56 L19 56 L19 42 L10 46 Z"
+          fill="#0f172a"
+          stroke="white"
+          strokeWidth="2.5"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M22 16 L34 46 L25 42 L25 56 L19 56 L19 42 L10 46 Z"
+          stroke="#0f172a"
+          strokeWidth="1"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  if (style === "compass") {
+    return (
+      <svg
+        width={width}
+        height={height}
+        viewBox="0 0 44 58"
+        fill="none"
+        aria-hidden="true"
+      >
+        <text
+          x="22"
+          y="12"
+          textAnchor="middle"
+          fontSize="12"
+          fontWeight="800"
+          fill="#0f172a"
+        >
+          N
+        </text>
+        <circle
+          cx="22"
+          cy="36"
+          r="13"
+          fill="white"
+          stroke="#0f172a"
+          strokeWidth="1.2"
+        />
+        <path
+          d="M22 17 L27 31 L41 36 L27 41 L22 55 L17 41 L3 36 L17 31 Z"
+          fill="white"
+          stroke="white"
+          strokeWidth="3"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M22 17 L27 31 L41 36 L27 41 L22 55 L17 41 L3 36 L17 31 Z"
+          fill="white"
+          stroke="#0f172a"
+          strokeWidth="1.2"
+          strokeLinejoin="round"
+        />
+        <path d="M22 17 L27 31 L22 36 L17 31 Z" fill="#0f172a" />
+      </svg>
+    );
+  }
+
+  if (style === "needle") {
+    return (
+      <svg
+        width={width}
+        height={height}
+        viewBox="0 0 44 58"
+        fill="none"
+        aria-hidden="true"
+      >
+        <text
+          x="22"
+          y="13"
+          textAnchor="middle"
+          fontSize="13"
+          fontWeight="800"
+          fill="#0f172a"
+        >
+          N
+        </text>
+        <path
+          d="M22 16 L28 43 L22 39 L16 43 Z"
+          fill="#0f172a"
+          stroke="white"
+          strokeWidth="2.5"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M22 16 L28 43 L22 39 L16 43 Z"
+          stroke="#0f172a"
+          strokeWidth="1"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M22 39 V56"
+          stroke="white"
+          strokeWidth="4"
+          strokeLinecap="round"
+        />
+        <path
+          d="M22 39 V56"
+          stroke="#0f172a"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox="0 0 44 58"
+      fill="none"
+      aria-hidden="true"
+    >
+      <text
+        x="22"
+        y="13"
+        textAnchor="middle"
+        fontSize="13"
+        fontWeight="800"
+        fill="#0f172a"
+      >
+        N
+      </text>
+      <path
+        d="M22 16 L31 42 L22 36 Z"
+        fill="#0f172a"
+        stroke="white"
+        strokeWidth="2.5"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M22 16 L31 42 L22 36 Z"
+        fill="#0f172a"
+        stroke="#0f172a"
+        strokeWidth="1"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M22 16 L22 36 L13 42 Z"
+        fill="white"
+        stroke="#0f172a"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M22 36 V53"
+        stroke="white"
+        strokeWidth="4"
+        strokeLinecap="round"
+      />
+      <path
+        d="M22 36 V53"
+        stroke="#0f172a"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <circle cx="22" cy="53" r="2" fill="#0f172a" />
+    </svg>
+  );
+}
+
 function ExportScaleBarPreview(input: {
   enabled: boolean;
   style: ExportScaleBarStyle;
+  position: ExportMapElementPosition;
+  mapPosition: ExportMapElementCustomPosition | null;
   workspaceBounds: WorkspaceBounds | null;
   mapRect: ExportCanvasRect;
+  onMapPositionChange: (position: ExportMapElementCustomPosition) => void;
+  onRequestDisable: () => void;
 }) {
+  const drag = useMapElementPointerDrag((position) => {
+    if (typeof input.onMapPositionChange === "function") {
+      input.onMapPositionChange(position);
+      return;
+    }
+    useEditorTestExportStore.setState({ scaleBarMapPosition: position });
+  });
   const model = createExportScaleBarModel({
     workspaceBounds: input.workspaceBounds,
     mapRect: input.mapRect,
@@ -1666,16 +2585,34 @@ function ExportScaleBarPreview(input: {
   const isBoxed = input.style === "boxed";
   const isLine = input.style === "line";
   const segments = 4;
+  const freePositionStyle = getFreeMapElementPositionStyle(input.mapPosition);
 
   return (
-    <div
+    <button
+      type="button"
+      onPointerDown={drag.onPointerDown}
+      onPointerMove={drag.onPointerMove}
+      onPointerUp={drag.onPointerUp}
+      onPointerCancel={drag.onPointerCancel}
+      onClick={(event) => {
+        if (drag.consumeClickAfterDrag(event)) return;
+        event.stopPropagation();
+        input.onRequestDisable();
+      }}
       className={[
-        "pointer-events-none absolute bottom-4 left-4 z-[900] select-none rounded-md px-2 py-1.5 text-[12px] font-semibold leading-none text-slate-950",
+        "absolute z-[900] cursor-grab touch-none select-none px-0 py-0 text-left text-[12px] font-semibold leading-none text-slate-950 transition active:cursor-grabbing hover:ring-2 hover:ring-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500",
         isBoxed
-          ? "border border-slate-900/25 bg-white/95 shadow-sm"
-          : "bg-white/85 shadow-sm",
+          ? "rounded border border-slate-900/70 px-1.5 py-1"
+          : "border-0 bg-transparent",
       ].join(" ")}
-      style={{ minWidth: model.widthPx + 16 }}
+      style={{
+        ...(freePositionStyle ?? getMapElementPositionStyle(input.position)),
+        minWidth: model.widthPx,
+        filter:
+          "drop-shadow(0 1px 0 rgba(255,255,255,0.98)) drop-shadow(0 0 2px rgba(255,255,255,0.95))",
+      }}
+      title="Glisser pour déplacer l’échelle. Cliquer sans déplacer pour la désactiver."
+      aria-label="Déplacer ou désactiver l’échelle"
     >
       <div className="mb-1.5">{model.label}</div>
       {isLine ? (
@@ -1700,10 +2637,295 @@ function ExportScaleBarPreview(input: {
         </div>
       ) : (
         <div
-          className="h-2 border border-white bg-slate-950"
+          className="h-2 border border-white bg-slate-950 ring-1 ring-slate-950"
           style={{ width: model.widthPx }}
         />
       )}
+    </button>
+  );
+}
+
+function ExportNorthArrowPreview(input: {
+  enabled: boolean;
+  style: ExportNorthArrowStyle;
+  position: ExportMapElementPosition;
+  mapPosition: ExportMapElementCustomPosition | null;
+  collisionOffset: number;
+  mapRect: ExportCanvasRect;
+  onMapPositionChange: (position: ExportMapElementCustomPosition) => void;
+  onRequestDisable: () => void;
+}) {
+  const drag = useMapElementPointerDrag((position) => {
+    if (typeof input.onMapPositionChange === "function") {
+      input.onMapPositionChange(position);
+      return;
+    }
+    useEditorTestExportStore.setState({ northArrowMapPosition: position });
+  });
+  const placement = createExportNorthArrowPlacement(
+    input.mapRect,
+    input.position,
+    input.collisionOffset,
+    input.mapPosition,
+  );
+
+  if (!input.enabled || !placement) {
+    return null;
+  }
+
+  const freePositionStyle = getFreeMapElementPositionStyle(input.mapPosition);
+
+  return (
+    <button
+      type="button"
+      onPointerDown={drag.onPointerDown}
+      onPointerMove={drag.onPointerMove}
+      onPointerUp={drag.onPointerUp}
+      onPointerCancel={drag.onPointerCancel}
+      onClick={(event) => {
+        if (drag.consumeClickAfterDrag(event)) return;
+        event.stopPropagation();
+        input.onRequestDisable();
+      }}
+      className="absolute z-[900] flex cursor-grab touch-none select-none items-center justify-center border-0 bg-transparent p-0 transition active:cursor-grabbing hover:ring-2 hover:ring-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+      style={{
+        ...(freePositionStyle ??
+          getMapElementPositionStyle(input.position, input.collisionOffset)),
+        width: placement.width,
+        height: placement.height,
+        filter: "drop-shadow(0 0 2px rgba(255,255,255,0.96))",
+      }}
+      title="Glisser pour déplacer la flèche du nord. Cliquer sans déplacer pour la désactiver."
+      aria-label="Déplacer ou désactiver la flèche du nord"
+    >
+      <NorthArrowGraphic style={input.style} width={52} height={70} />
+    </button>
+  );
+}
+
+function MapElementControls(input: {
+  scaleBarEnabled: boolean;
+  scaleBarStyle: ExportScaleBarStyle;
+  scaleBarPosition: ExportMapElementPosition;
+  northArrowEnabled: boolean;
+  northArrowStyle: ExportNorthArrowStyle;
+  northArrowPosition: ExportMapElementPosition;
+  onScaleEnabledChange: (enabled: boolean) => void;
+  onScaleStyleChange: (style: ExportScaleBarStyle) => void;
+  onScalePositionChange: (position: ExportMapElementPosition) => void;
+  onNorthEnabledChange: (enabled: boolean) => void;
+  onNorthStyleChange: (style: ExportNorthArrowStyle) => void;
+  onNorthPositionChange: (position: ExportMapElementPosition) => void;
+}) {
+  const [openMenu, setOpenMenu] = useState<"scale" | "north" | null>(null);
+  const controlsRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!openMenu) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+
+      if (!(target instanceof Node)) {
+        setOpenMenu(null);
+        return;
+      }
+
+      if (!controlsRef.current?.contains(target)) {
+        setOpenMenu(null);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenMenu(null);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openMenu]);
+
+  return (
+    <div ref={controlsRef} className="flex items-center gap-1.5">
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() =>
+            setOpenMenu((value) => (value === "scale" ? null : "scale"))
+          }
+          className={[
+            "flex min-w-[112px] items-center gap-2 rounded-xl border px-2.5 py-1.5 text-left text-xs font-semibold transition",
+            input.scaleBarEnabled
+              ? "border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100"
+              : "border-slate-300 bg-white text-slate-500 hover:bg-slate-50",
+          ].join(" ")}
+          aria-expanded={openMenu === "scale"}
+        >
+          <span className="flex h-7 w-9 items-center justify-center rounded bg-white/70">
+            <ScaleStyleGraphic style={input.scaleBarStyle} width={28} />
+          </span>
+          <span>Échelle</span>
+        </button>
+
+        {openMenu === "scale" ? (
+          <div className="absolute left-0 top-full z-[1900] mt-2 w-64 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-bold text-slate-900">Échelle</div>
+              <button
+                type="button"
+                onClick={() =>
+                  input.onScaleEnabledChange(!input.scaleBarEnabled)
+                }
+                className={[
+                  "rounded-lg px-2.5 py-1.5 text-[11px] font-semibold",
+                  input.scaleBarEnabled
+                    ? "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                    : "bg-indigo-600 text-white hover:bg-indigo-700",
+                ].join(" ")}
+              >
+                {input.scaleBarEnabled ? "Désactiver" : "Activer"}
+              </button>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {EXPORT_SCALE_BAR_STYLE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => input.onScaleStyleChange(option.value)}
+                  title={option.label}
+                  aria-label={option.label}
+                  className={[
+                    "flex h-14 items-center justify-center rounded-xl border transition",
+                    input.scaleBarStyle === option.value
+                      ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100"
+                      : "border-slate-200 bg-white hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  <ScaleStyleGraphic style={option.value} />
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {EXPORT_MAP_ELEMENT_POSITION_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => input.onScalePositionChange(option.value)}
+                  className={[
+                    "rounded-lg border px-2 py-1.5 text-xs font-semibold",
+                    input.scaleBarPosition === option.value
+                      ? "border-indigo-500 bg-indigo-50 text-indigo-800"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() =>
+            setOpenMenu((value) => (value === "north" ? null : "north"))
+          }
+          className={[
+            "flex min-w-[104px] items-center gap-2 rounded-xl border px-2.5 py-1.5 text-left text-xs font-semibold transition",
+            input.northArrowEnabled
+              ? "border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100"
+              : "border-slate-300 bg-white text-slate-500 hover:bg-slate-50",
+          ].join(" ")}
+          aria-expanded={openMenu === "north"}
+        >
+          <span className="flex h-8 w-9 items-center justify-center rounded bg-white/70">
+            <NorthArrowGraphic
+              style={input.northArrowStyle}
+              width={28}
+              height={36}
+            />
+          </span>
+          <span>Nord</span>
+        </button>
+
+        {openMenu === "north" ? (
+          <div className="absolute right-0 top-full z-[1900] mt-2 w-64 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-bold text-slate-900">
+                Flèche du nord
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  input.onNorthEnabledChange(!input.northArrowEnabled)
+                }
+                className={[
+                  "rounded-lg px-2.5 py-1.5 text-[11px] font-semibold",
+                  input.northArrowEnabled
+                    ? "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                    : "bg-indigo-600 text-white hover:bg-indigo-700",
+                ].join(" ")}
+              >
+                {input.northArrowEnabled ? "Désactiver" : "Activer"}
+              </button>
+            </div>
+
+            <div className="mt-3 grid grid-cols-4 gap-2">
+              {EXPORT_NORTH_ARROW_STYLE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => input.onNorthStyleChange(option.value)}
+                  title={option.label}
+                  aria-label={option.label}
+                  className={[
+                    "flex h-16 items-center justify-center rounded-xl border transition",
+                    input.northArrowStyle === option.value
+                      ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100"
+                      : "border-slate-200 bg-white hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  <NorthArrowGraphic
+                    style={option.value}
+                    width={38}
+                    height={50}
+                  />
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {EXPORT_MAP_ELEMENT_POSITION_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => input.onNorthPositionChange(option.value)}
+                  className={[
+                    "rounded-lg border px-2 py-1.5 text-xs font-semibold",
+                    input.northArrowPosition === option.value
+                      ? "border-indigo-500 bg-indigo-50 text-indigo-800"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1746,7 +2968,20 @@ export function ExportPreviewScene() {
   const { ref: viewportRef, size: viewportSize } =
     useElementSize<HTMLDivElement>();
   const resizeStartRef = useRef<ResizeStartState | null>(null);
+  const legendOverlayMoveStartRef = useRef<LegendOverlayMoveStartState | null>(
+    null,
+  );
+  const legendTitleMoveStartRef = useRef<LegendOverlayMoveStartState | null>(
+    null,
+  );
   const [isHiddenListOpen, setIsHiddenListOpen] = useState(false);
+  const [pendingMapElementDisable, setPendingMapElementDisable] = useState<
+    "scale-bar" | "north-arrow" | null
+  >(null);
+  const [isAdvancedLegendEditorOpen, setIsAdvancedLegendEditorOpen] =
+    useState(false);
+  const [isLegendOverlayMoving, setIsLegendOverlayMoving] = useState(false);
+  const [isLegendTitleMoving, setIsLegendTitleMoving] = useState(false);
 
   const legendTitle = useEditorTestExportStore((state) => state.legendTitle);
   const setLegendTitle = useEditorTestExportStore(
@@ -1755,7 +2990,25 @@ export function ExportPreviewScene() {
   const legendPosition = useEditorTestExportStore(
     (state) => state.legendPosition,
   );
+  const legendMapPosition = useEditorTestExportStore(
+    (state) => state.legendMapPosition,
+  );
+  const setLegendMapPosition = useEditorTestExportStore(
+    (state) => state.setLegendMapPosition,
+  );
+  const legendMapTitlePosition = useEditorTestExportStore(
+    (state) => state.legendMapTitlePosition,
+  );
+  const setLegendMapTitlePosition = useEditorTestExportStore(
+    (state) => state.setLegendMapTitlePosition,
+  );
   const exportFormat = useEditorTestExportStore((state) => state.exportFormat);
+  const showBasemapLabels = useEditorTestExportStore(
+    (state) => state.showBasemapLabels,
+  );
+  const setShowBasemapLabels = useEditorTestExportStore(
+    (state) => state.setShowBasemapLabels,
+  );
 
   const legendBackgroundColor = useEditorTestExportStore(
     (state) => state.legendBackgroundColor,
@@ -1781,9 +3034,50 @@ export function ExportPreviewScene() {
   const legendSectionTitleFontSize = useEditorTestExportStore(
     (state) => state.legendSectionTitleFontSize,
   );
-
+  const legendSymbolSize = useEditorTestExportStore(
+    (state) => state.legendSymbolSize,
+  );
+  const setLegendSymbolSize = useEditorTestExportStore(
+    (state) => state.setLegendSymbolSize,
+  );
+  const legendItemGap = useEditorTestExportStore(
+    (state) => state.legendItemGap,
+  );
+  const legendLabelGap = useEditorTestExportStore(
+    (state) => state.legendLabelGap,
+  );
+  const legendLabelLineHeight = useEditorTestExportStore(
+    (state) => state.legendLabelLineHeight,
+  );
+  const legendSectionGap = useEditorTestExportStore(
+    (state) => state.legendSectionGap,
+  );
+  const legendMapBorderEnabled = useEditorTestExportStore(
+    (state) => state.legendMapBorderEnabled,
+  );
+  const legendMapBorderColor = useEditorTestExportStore(
+    (state) => state.legendMapBorderColor,
+  );
+  const legendMapBorderWidth = useEditorTestExportStore(
+    (state) => state.legendMapBorderWidth,
+  );
+  const legendMapBorderRadius = useEditorTestExportStore(
+    (state) => state.legendMapBorderRadius,
+  );
+  const legendMapPadding = useEditorTestExportStore(
+    (state) => state.legendMapPadding,
+  );
+  const customLegendEntries = useEditorTestExportStore(
+    (state) => state.customLegendEntries,
+  );
+  const legendSymbolOverrides = useEditorTestExportStore(
+    (state) => state.legendSymbolOverrides,
+  );
   const hiddenLegendFeatureIds = useEditorTestExportStore(
     (state) => state.hiddenLegendFeatureIds,
+  );
+  const hiddenLegendGroupKeys = useEditorTestExportStore(
+    (state) => state.hiddenLegendGroupKeys,
   );
   const legendFeatureOrder = useEditorTestExportStore(
     (state) => state.legendFeatureOrder,
@@ -1806,11 +3100,47 @@ export function ExportPreviewScene() {
   const scaleBarStyle = useEditorTestExportStore(
     (state) => state.scaleBarStyle,
   );
+  const scaleBarPosition = useEditorTestExportStore(
+    (state) => state.scaleBarPosition,
+  );
+  const scaleBarMapPosition = useEditorTestExportStore(
+    (state) => state.scaleBarMapPosition,
+  );
   const setScaleBarEnabled = useEditorTestExportStore(
     (state) => state.setScaleBarEnabled,
   );
   const setScaleBarStyle = useEditorTestExportStore(
     (state) => state.setScaleBarStyle,
+  );
+  const setScaleBarPosition = useEditorTestExportStore(
+    (state) => state.setScaleBarPosition,
+  );
+  const setScaleBarMapPosition = useEditorTestExportStore(
+    (state) => state.setScaleBarMapPosition,
+  );
+  const northArrowEnabled = useEditorTestExportStore(
+    (state) => state.northArrowEnabled,
+  );
+  const northArrowStyle = useEditorTestExportStore(
+    (state) => state.northArrowStyle,
+  );
+  const northArrowPosition = useEditorTestExportStore(
+    (state) => state.northArrowPosition,
+  );
+  const northArrowMapPosition = useEditorTestExportStore(
+    (state) => state.northArrowMapPosition,
+  );
+  const setNorthArrowEnabled = useEditorTestExportStore(
+    (state) => state.setNorthArrowEnabled,
+  );
+  const setNorthArrowStyle = useEditorTestExportStore(
+    (state) => state.setNorthArrowStyle,
+  );
+  const setNorthArrowPosition = useEditorTestExportStore(
+    (state) => state.setNorthArrowPosition,
+  );
+  const setNorthArrowMapPosition = useEditorTestExportStore(
+    (state) => state.setNorthArrowMapPosition,
   );
   const setLegendGroupLabel = useEditorTestExportStore(
     (state) => state.setLegendGroupLabel,
@@ -1818,14 +3148,17 @@ export function ExportPreviewScene() {
   const setLegendGroupSection = useEditorTestExportStore(
     (state) => state.setLegendGroupSection,
   );
+  const updateCustomLegendEntry = useEditorTestExportStore(
+    (state) => state.updateCustomLegendEntry,
+  );
   const setLegendGroupOrder = useEditorTestExportStore(
     (state) => state.setLegendGroupOrder,
   );
-  const setLegendFeatureOrder = useEditorTestExportStore(
-    (state) => state.setLegendFeatureOrder,
-  );
   const toggleLegendFeatureVisibility = useEditorTestExportStore(
     (state) => state.toggleLegendFeatureVisibility,
+  );
+  const toggleLegendGroupVisibility = useEditorTestExportStore(
+    (state) => state.toggleLegendGroupVisibility,
   );
   const addLegendSection = useEditorTestExportStore(
     (state) => state.addLegendSection,
@@ -1901,6 +3234,16 @@ export function ExportPreviewScene() {
         titleFontSize: legendTitleFontSize,
         itemFontSize: legendItemFontSize,
         sectionTitleFontSize: legendSectionTitleFontSize,
+        symbolSize: legendSymbolSize,
+        itemGap: legendItemGap,
+        labelGap: legendLabelGap,
+        labelLineHeight: legendLabelLineHeight,
+        sectionGap: legendSectionGap,
+        mapBorderEnabled: legendMapBorderEnabled,
+        mapBorderColor: legendMapBorderColor,
+        mapBorderWidth: legendMapBorderWidth,
+        mapBorderRadius: legendMapBorderRadius,
+        mapPadding: legendMapPadding,
       }),
     [
       legendBackgroundColor,
@@ -1909,6 +3252,16 @@ export function ExportPreviewScene() {
       legendTitleFontSize,
       legendItemFontSize,
       legendSectionTitleFontSize,
+      legendSymbolSize,
+      legendItemGap,
+      legendLabelGap,
+      legendLabelLineHeight,
+      legendSectionGap,
+      legendMapBorderEnabled,
+      legendMapBorderColor,
+      legendMapBorderWidth,
+      legendMapBorderRadius,
+      legendMapPadding,
     ],
   );
 
@@ -1924,18 +3277,27 @@ export function ExportPreviewScene() {
 
   const allLegendEntries = useMemo(
     () =>
-      mergeLegendEntriesWithGeoJsonLayers(
-        getLegendEntries(allLegendFeatures, {
-          legendGroupLabels,
-          legendGroupSections,
-          legendGroupOrder,
-        }),
-        geoJsonLayers,
+      mergeLegendEntriesWithCustomEntries(
+        mergeLegendEntriesWithGeoJsonLayers(
+          getLegendEntries(allLegendFeatures, {
+            legendGroupLabels,
+            legendGroupSections,
+            legendGroupOrder,
+          }),
+          geoJsonLayers,
+          {
+            legendGroupLabels,
+            legendGroupSections,
+            legendGroupOrder,
+            workspaceBounds,
+          },
+        ),
+        customLegendEntries,
         {
           legendGroupLabels,
           legendGroupSections,
           legendGroupOrder,
-          workspaceBounds,
+          legendSymbolOverrides,
         },
       ),
     [
@@ -1945,55 +3307,51 @@ export function ExportPreviewScene() {
       legendGroupSections,
       legendGroupOrder,
       workspaceBounds,
+      customLegendEntries,
+      legendSymbolOverrides,
     ],
   );
 
   const hiddenLegendEntries = useMemo(
     () =>
-      allLegendEntries.filter((entry) =>
-        entry.featureIds.every((featureId) =>
-          hiddenLegendFeatureIds.includes(featureId),
-        ),
-      ),
-    [allLegendEntries, hiddenLegendFeatureIds],
-  );
+      allLegendEntries.filter((entry) => {
+        if (hiddenLegendGroupKeys.includes(entry.dedupeKey)) {
+          return true;
+        }
 
-  const visibleLegendFeatures = useMemo(
-    () =>
-      getVisibleLegendFeatures({
-        features,
-        hiddenLegendFeatureIds,
-        legendFeatureOrder,
+        // Compatibilité avec les anciennes sauvegardes qui masquaient les
+        // groupes via leurs identifiants de features. Une superposition est
+        // volontairement indépendante des zones qui la composent.
+        return (
+          !entry.isAutomaticOverlap &&
+          entry.featureIds.length > 0 &&
+          entry.featureIds.every((featureId) =>
+            hiddenLegendFeatureIds.includes(featureId),
+          )
+        );
       }),
-    [features, hiddenLegendFeatureIds, legendFeatureOrder],
+    [allLegendEntries, hiddenLegendFeatureIds, hiddenLegendGroupKeys],
   );
 
   const visibleLegendEntries = useMemo(
     () =>
-      mergeLegendEntriesWithGeoJsonLayers(
-        getLegendEntries(visibleLegendFeatures, {
-          legendGroupLabels,
-          legendGroupSections,
-          legendGroupOrder,
-        }),
-        geoJsonLayers,
-        {
-          legendGroupLabels,
-          legendGroupSections,
-          legendGroupOrder,
-          hiddenLegendFeatureIds,
-          workspaceBounds,
-        },
-      ),
-    [
-      visibleLegendFeatures,
-      geoJsonLayers,
-      hiddenLegendFeatureIds,
-      legendGroupLabels,
-      legendGroupSections,
-      legendGroupOrder,
-      workspaceBounds,
-    ],
+      allLegendEntries.filter((entry) => {
+        if (hiddenLegendGroupKeys.includes(entry.dedupeKey)) {
+          return false;
+        }
+
+        if (entry.isAutomaticOverlap) {
+          return true;
+        }
+
+        return !(
+          entry.featureIds.length > 0 &&
+          entry.featureIds.every((featureId) =>
+            hiddenLegendFeatureIds.includes(featureId),
+          )
+        );
+      }),
+    [allLegendEntries, hiddenLegendFeatureIds, hiddenLegendGroupKeys],
   );
 
   const visibleLegendDisplayItems = useMemo(
@@ -2005,6 +3363,70 @@ export function ExportPreviewScene() {
     [visibleLegendEntries, legendSectionOrder],
   );
 
+  const safeLegendTitle = getSafeLegendTitle(legendTitle);
+  const hasVisibleLegendEntries = visibleLegendEntries.length > 0;
+  const hasVisibleLegendSections = visibleLegendDisplayItems.some(
+    (item) => item.type === "section",
+  );
+  const hasVisibleLegendTitle = safeLegendTitle.length > 0;
+  const hasVisibleLegendBody =
+    hasVisibleLegendEntries || hasVisibleLegendSections;
+  const hasVisibleLegend = hasVisibleLegendBody || hasVisibleLegendTitle;
+  const effectiveLegendPosition = hasVisibleLegend ? legendPosition : "map";
+  const shouldRenderLegendPanel =
+    legendPosition === "map" ? hasVisibleLegendBody : hasVisibleLegend;
+
+  const mapLegendContent = useMemo(() => {
+    const symbolMetrics = visibleLegendEntries.map((entry) =>
+      getExportLegendEntrySymbolMetrics(entry, appearance.symbolSize),
+    );
+    const symbolVisualHeights = visibleLegendEntries.map((entry, index) =>
+      getExportLegendEntrySymbolVisualHeight(
+        entry,
+        symbolMetrics[index]?.symbolSize ?? appearance.symbolSize,
+      ),
+    );
+
+    return {
+      entryLabels: visibleLegendEntries.map((entry) => entry.label),
+      entrySymbolSizes: symbolMetrics.map((metrics) => metrics.symbolSize),
+      entrySymbolBoxWidths: symbolMetrics.map(
+        (metrics) => metrics.symbolBoxWidth,
+      ),
+      sectionLabels: visibleLegendDisplayItems
+        .filter(
+          (
+            item,
+          ): item is Extract<ExportLegendDisplayItem, { type: "section" }> =>
+            item.type === "section",
+        )
+        .map((item) => item.label),
+      items: visibleLegendDisplayItems.map((item) => {
+        if (item.type === "section") {
+          return { type: "section" as const, label: item.label };
+        }
+
+        const metrics = symbolMetrics[item.entryIndex];
+
+        return {
+          type: "entry" as const,
+          label: visibleLegendEntries[item.entryIndex]?.label ?? "Sans nom",
+          symbolSize: metrics?.symbolSize ?? appearance.symbolSize,
+          symbolBoxWidth:
+            metrics?.symbolBoxWidth ??
+            getExportLegendEntrySymbolMetrics(undefined, appearance.symbolSize)
+              .symbolBoxWidth,
+          symbolVisualHeight:
+            symbolVisualHeights[item.entryIndex] ??
+            getExportLegendEntrySymbolVisualHeight(
+              undefined,
+              appearance.symbolSize,
+            ),
+        };
+      }),
+    };
+  }, [appearance.symbolSize, visibleLegendDisplayItems, visibleLegendEntries]);
+
   const layout = useMemo(() => {
     if (!workspaceBounds) {
       return null;
@@ -2012,18 +3434,33 @@ export function ExportPreviewScene() {
 
     return createExportLayout({
       workspaceBounds,
-      legendPosition,
+      legendPosition: effectiveLegendPosition,
+      legendMapPosition,
       exportFormat,
-      legendFeaturesCount: visibleLegendDisplayItems.length,
+      legendFeaturesCount: hasVisibleLegendBody
+        ? visibleLegendDisplayItems.length
+        : 0,
       appearance,
+      mapLegendContent: hasVisibleLegendBody ? mapLegendContent : undefined,
     });
   }, [
     workspaceBounds,
-    legendPosition,
+    effectiveLegendPosition,
+    legendMapPosition,
     exportFormat,
+    hasVisibleLegendBody,
     visibleLegendDisplayItems.length,
     appearance,
+    mapLegendContent,
   ]);
+
+  const mapVisualZoom = useMemo(() => {
+    if (!layout || !workspaceBounds) {
+      return null;
+    }
+
+    return getExportMapVisualZoom(workspaceBounds, layout.mapRect);
+  }, [layout, workspaceBounds]);
 
   const scale = useMemo(() => {
     if (!layout) {
@@ -2098,7 +3535,7 @@ export function ExportPreviewScene() {
 
     const deltaX =
       (event.clientX - resizeStart.startClientX) / resizeStart.scale;
-    const signedDelta = legendPosition === "right" ? deltaX : -deltaX;
+    const signedDelta = legendPosition === "left" ? -deltaX : deltaX;
     const nextWidth = clampExportNumber(
       resizeStart.startSideWidth + signedDelta,
       MIN_LEGEND_SIDE_WIDTH,
@@ -2112,6 +3549,238 @@ export function ExportPreviewScene() {
     if (resizeStartRef.current?.pointerId === event.pointerId) {
       resizeStartRef.current = null;
     }
+  }
+
+  function clearOverlayMove(
+    moveRef: LegendOverlayMoveRef,
+    setMoving: (moving: boolean) => void,
+    pointerId?: number,
+  ) {
+    const moveStart = moveRef.current;
+
+    if (
+      typeof pointerId === "number" &&
+      moveStart &&
+      moveStart.pointerId !== pointerId
+    ) {
+      return;
+    }
+
+    if (moveStart) {
+      try {
+        moveStart.target.releasePointerCapture(moveStart.pointerId);
+      } catch {
+        // La capture peut déjà avoir été libérée par le navigateur.
+      }
+    }
+
+    moveRef.current = null;
+    setMoving(false);
+  }
+
+  function shouldIgnoreLegendOverlayMoveTarget(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) {
+      return false;
+    }
+
+    return Boolean(
+      target.closest(
+        '[data-legend-entry-hitbox="true"], button, input, textarea, select, a, [contenteditable="true"]',
+      ),
+    );
+  }
+
+  function beginOverlayMove(
+    event: ReactPointerEvent<HTMLElement>,
+    moveRef: LegendOverlayMoveRef,
+    rect: ExportCanvasRect,
+    ignoreLegendElements: boolean,
+  ) {
+    if (!layout || legendPosition !== "map" || event.button !== 0) {
+      return;
+    }
+
+    if (
+      ignoreLegendElements &&
+      shouldIgnoreLegendOverlayMoveTarget(event.target)
+    ) {
+      return;
+    }
+
+    const target = event.currentTarget;
+    moveRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startLegendX: rect.x,
+      startLegendY: rect.y,
+      scale,
+      active: false,
+      target,
+    };
+
+    try {
+      target.setPointerCapture(event.pointerId);
+    } catch {
+      // La fin du geste reste gérée par pointerup/pointercancel.
+    }
+  }
+
+  function moveOverlay(
+    event: ReactPointerEvent<HTMLElement>,
+    moveRef: LegendOverlayMoveRef,
+    currentRect: ExportCanvasRect,
+    onPositionChange: (position: ExportLegendMapPosition) => void,
+    setMoving: (moving: boolean) => void,
+    edgeBleed = 0,
+  ) {
+    const moveStart = moveRef.current;
+
+    if (
+      !layout ||
+      legendPosition !== "map" ||
+      !moveStart ||
+      moveStart.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    const rawDistance = Math.hypot(
+      event.clientX - moveStart.startClientX,
+      event.clientY - moveStart.startClientY,
+    );
+
+    if (!moveStart.active && rawDistance < 3) {
+      return;
+    }
+
+    if (!moveStart.active) {
+      moveStart.active = true;
+      setMoving(true);
+
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const deltaX = (event.clientX - moveStart.startClientX) / moveStart.scale;
+    const deltaY = (event.clientY - moveStart.startClientY) / moveStart.scale;
+    const safeEdgeBleed = Math.max(0, edgeBleed);
+    const minX = layout.mapRect.x + MAP_LEGEND_MARGIN - safeEdgeBleed;
+    const minY = layout.mapRect.y + MAP_LEGEND_MARGIN - safeEdgeBleed;
+    const maxX = Math.max(
+      minX,
+      layout.mapRect.x +
+        layout.mapRect.width -
+        currentRect.width -
+        MAP_LEGEND_MARGIN +
+        safeEdgeBleed,
+    );
+    const maxY = Math.max(
+      minY,
+      layout.mapRect.y +
+        layout.mapRect.height -
+        currentRect.height -
+        MAP_LEGEND_MARGIN +
+        safeEdgeBleed,
+    );
+    const nextX = clampExportNumber(
+      moveStart.startLegendX + deltaX,
+      minX,
+      maxX,
+    );
+    const nextY = clampExportNumber(
+      moveStart.startLegendY + deltaY,
+      minY,
+      maxY,
+    );
+    const availableX = Math.max(0, maxX - minX);
+    const availableY = Math.max(0, maxY - minY);
+
+    onPositionChange({
+      x: availableX > 0 ? (nextX - minX) / availableX : 0,
+      y: availableY > 0 ? (nextY - minY) / availableY : 0,
+    });
+  }
+
+  function handleLegendOverlayMovePointerDown(
+    event: ReactPointerEvent<HTMLElement>,
+  ) {
+    if (!layout) return;
+    beginOverlayMove(event, legendOverlayMoveStartRef, layout.legendRect, true);
+  }
+
+  function handleLegendOverlayMovePointerMove(
+    event: ReactPointerEvent<HTMLElement>,
+  ) {
+    if (!layout) return;
+    moveOverlay(
+      event,
+      legendOverlayMoveStartRef,
+      layout.legendRect,
+      setLegendMapPosition,
+      setIsLegendOverlayMoving,
+      appearance.mapBorderEnabled ? 0 : appearance.mapPadding,
+    );
+  }
+
+  function handleLegendOverlayMovePointerUp(
+    event: ReactPointerEvent<HTMLElement>,
+  ) {
+    clearOverlayMove(
+      legendOverlayMoveStartRef,
+      setIsLegendOverlayMoving,
+      event.pointerId,
+    );
+  }
+
+  function getCurrentLegendTitleRect() {
+    if (!layout) return null;
+
+    return createMapLegendTitleRect(
+      layout.mapRect,
+      appearance,
+      legendMapTitlePosition,
+      legendTitle,
+    );
+  }
+
+  function handleLegendTitleMovePointerDown(
+    event: ReactPointerEvent<HTMLElement>,
+  ) {
+    const titleRect = getCurrentLegendTitleRect();
+    if (!titleRect) return;
+
+    beginOverlayMove(event, legendTitleMoveStartRef, titleRect, true);
+  }
+
+  function handleLegendTitleMovePointerMove(
+    event: ReactPointerEvent<HTMLElement>,
+  ) {
+    const titleRect = getCurrentLegendTitleRect();
+    if (!titleRect) return;
+
+    moveOverlay(
+      event,
+      legendTitleMoveStartRef,
+      titleRect,
+      setLegendMapTitlePosition,
+      setIsLegendTitleMoving,
+      Math.max(2, appearance.mapPadding),
+    );
+  }
+
+  function handleLegendTitleMovePointerUp(
+    event: ReactPointerEvent<HTMLElement>,
+  ) {
+    clearOverlayMove(
+      legendTitleMoveStartRef,
+      setIsLegendTitleMoving,
+      event.pointerId,
+    );
   }
 
   function handleLegendEntryMove(input: {
@@ -2140,7 +3809,10 @@ export function ExportPreviewScene() {
       return;
     }
 
-    const nextEntries = visibleLegendEntries.filter(
+    // On réordonne la liste complète, y compris les groupes actuellement
+    // masqués. Sinon leur clé disparaît de legendGroupOrder et ils perdent
+    // leur place lorsqu’ils sont réaffichés.
+    const nextEntries = allLegendEntries.filter(
       (entry) => entry.dedupeKey !== input.groupKey,
     );
     const targetIndex = input.beforeGroupKey
@@ -2161,12 +3833,24 @@ export function ExportPreviewScene() {
     }
 
     setLegendGroupSection(input.groupKey, input.targetSection);
+    if (input.groupKey.startsWith("custom:")) {
+      updateCustomLegendEntry(input.groupKey.slice("custom:".length), {
+        section: input.targetSection,
+      });
+    }
+    // L’ordre visuel de la légende doit rester totalement indépendant de
+    // l’ordre des features sources. Une entrée automatique de superposition
+    // réutilise les IDs des zones qui la composent : réordonner ces IDs ici
+    // changeait sa couleur calculée, sa clé, son libellé et sa visibilité.
     setLegendGroupOrder(nextEntries.map((entry) => entry.dedupeKey));
-    setLegendFeatureOrder(nextEntries.flatMap((entry) => entry.featureIds));
   }
 
   function handleLegendGroupLabelChange(groupKey: string, label: string) {
     setLegendGroupLabel(groupKey, label);
+
+    if (groupKey.startsWith("custom:")) {
+      updateCustomLegendEntry(groupKey.slice("custom:".length), { label });
+    }
 
     const entry = allLegendEntries.find(
       (candidate) => candidate.dedupeKey === groupKey,
@@ -2188,16 +3872,22 @@ export function ExportPreviewScene() {
   }
 
   function handleLegendEntryHide(entry: LegendEntry) {
-    const hiddenFeatureIds = new Set(hiddenLegendFeatureIds);
-
-    for (const featureId of entry.featureIds) {
-      if (!hiddenFeatureIds.has(featureId)) {
-        toggleLegendFeatureVisibility(featureId);
-      }
+    // Chaque entrée est masquée par sa clé de groupe. Ainsi, une zone et la
+    // nuance de superposition calculée à partir de cette zone restent deux
+    // éléments totalement indépendants dans la légende.
+    if (!hiddenLegendGroupKeys.includes(entry.dedupeKey)) {
+      toggleLegendGroupVisibility(entry.dedupeKey);
     }
   }
 
   function handleLegendEntryShow(entry: LegendEntry) {
+    if (hiddenLegendGroupKeys.includes(entry.dedupeKey)) {
+      toggleLegendGroupVisibility(entry.dedupeKey);
+      return;
+    }
+
+    // Restauration des anciens projets qui utilisaient encore les IDs de
+    // features au lieu d'une clé de groupe dédiée.
     const hiddenFeatureIds = new Set(hiddenLegendFeatureIds);
 
     for (const featureId of entry.featureIds) {
@@ -2206,6 +3896,46 @@ export function ExportPreviewScene() {
       }
     }
   }
+
+  function requestMapElementDisable(element: "scale-bar" | "north-arrow") {
+    setPendingMapElementDisable(element);
+  }
+
+  function handleScaleBarEnabledChange(enabled: boolean) {
+    if (enabled) {
+      setScaleBarEnabled(true);
+      return;
+    }
+
+    requestMapElementDisable("scale-bar");
+  }
+
+  function handleNorthArrowEnabledChange(enabled: boolean) {
+    if (enabled) {
+      setNorthArrowEnabled(true);
+      return;
+    }
+
+    requestMapElementDisable("north-arrow");
+  }
+
+  function confirmMapElementDisable() {
+    if (pendingMapElementDisable === "scale-bar") {
+      setScaleBarEnabled(false);
+    } else if (pendingMapElementDisable === "north-arrow") {
+      setNorthArrowEnabled(false);
+    }
+
+    setPendingMapElementDisable(null);
+  }
+
+  const mapElementsSharePosition =
+    scaleBarEnabled &&
+    northArrowEnabled &&
+    !scaleBarMapPosition &&
+    !northArrowMapPosition &&
+    scaleBarPosition === northArrowPosition;
+  const northArrowCollisionOffset = mapElementsSharePosition ? 56 : 0;
 
   const resizeHandleStyle = useMemo<CSSProperties>(() => {
     if (!layout) {
@@ -2239,7 +3969,6 @@ export function ExportPreviewScene() {
     };
   }, [layout, legendPosition]);
 
-  const safeLegendTitle = getSafeLegendTitle(legendTitle);
   const hiddenEntriesCount = hiddenLegendEntries.length;
 
   if (!layout || !workspaceBounds) {
@@ -2250,102 +3979,276 @@ export function ExportPreviewScene() {
     );
   }
 
+  const mapLegendTitleRect =
+    hasVisibleLegendTitle && legendPosition === "map"
+      ? createMapLegendTitleRect(
+          layout.mapRect,
+          appearance,
+          legendMapTitlePosition,
+          legendTitle,
+        )
+      : null;
+
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white">
-      <div className="relative z-[1600] flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-slate-900">
-              Prévisualisation WYSIWYG
-            </div>
-
-            <div className="text-xs text-slate-500">
-              {layout.canvasWidth} × {layout.canvasHeight}px · aperçu{" "}
-              {Math.round(scale * 100)}% · objets taille éditeur
-            </div>
-          </div>
-
-          <div className="relative flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                addLegendSection();
-              }}
-              className="rounded-xl border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-100"
-              title="Ajouter une sous-légende directement dans la légende"
-            >
-              + Sous-légende
-            </button>
-
-            {hiddenEntriesCount > 0 ? (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setIsHiddenListOpen((isOpen) => !isOpen);
-                  }}
-                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-                  title="Réafficher des groupes masqués"
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      {isAdvancedLegendEditorOpen ? (
+        <AdvancedLegendEditor
+          entries={allLegendEntries}
+          mapVisualZoom={mapVisualZoom}
+          fallbackReferenceZoom={workspaceBasemapZoom}
+          onClose={() => setIsAdvancedLegendEditorOpen(false)}
+          previewScene={{
+            width: layout.canvasWidth,
+            height: layout.canvasHeight,
+            focusRect: createAdvancedLegendFocusRect(
+              layout.canvasWidth,
+              layout.canvasHeight,
+              layout.legendRect,
+              mapLegendTitleRect,
+            ),
+            content: (
+              <div
+                className="relative overflow-hidden bg-white"
+                style={{
+                  width: layout.canvasWidth,
+                  height: layout.canvasHeight,
+                }}
+              >
+                <div
+                  className="absolute overflow-hidden border border-slate-400 bg-slate-100"
+                  style={rectToStyle(layout.mapRect)}
                 >
-                  Masqués ({hiddenEntriesCount})
-                </button>
-
-                {isHiddenListOpen ? (
                   <div
-                    className="absolute left-0 top-full z-[1700] mt-2 w-72 rounded-xl border border-slate-200 bg-white p-2 text-sm shadow-xl"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                      Éléments masqués
-                    </div>
-                    <div className="max-h-64 overflow-y-auto">
-                      {hiddenLegendEntries.map((entry) => (
-                        <div
-                          key={entry.dedupeKey}
-                          className="flex items-center justify-between gap-2 rounded-lg px-2 py-2 hover:bg-slate-50"
-                        >
-                          <span className="min-w-0 truncate font-medium text-slate-700">
-                            {entry.label || "Sans nom"}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              handleLegendEntryShow(entry);
-                              setIsHiddenListOpen(false);
-                            }}
-                            className="shrink-0 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
-                          >
-                            Réafficher
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                    className="absolute inset-0"
+                    style={{
+                      background:
+                        "linear-gradient(135deg, #dbeafe 0%, #f8fafc 42%, #dcfce7 100%)",
+                    }}
+                  />
+                  <div
+                    className="absolute inset-0 opacity-25"
+                    style={{
+                      backgroundImage:
+                        "linear-gradient(rgba(15,23,42,0.14) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.14) 1px, transparent 1px)",
+                      backgroundSize: "64px 64px",
+                    }}
+                  />
+                  <ExportScaleBarPreview
+                    enabled={scaleBarEnabled}
+                    style={scaleBarStyle}
+                    position={scaleBarPosition}
+                    mapPosition={scaleBarMapPosition}
+                    workspaceBounds={workspaceBounds}
+                    mapRect={layout.mapRect}
+                    onMapPositionChange={setScaleBarMapPosition}
+                    onRequestDisable={() => undefined}
+                  />
+                  <ExportNorthArrowPreview
+                    enabled={northArrowEnabled}
+                    style={northArrowStyle}
+                    position={northArrowPosition}
+                    mapPosition={northArrowMapPosition}
+                    collisionOffset={northArrowCollisionOffset}
+                    mapRect={layout.mapRect}
+                    onMapPositionChange={setNorthArrowMapPosition}
+                    onRequestDisable={() => undefined}
+                  />
+                </div>
+
+                {mapLegendTitleRect ? (
+                  <ExportMapLegendTitlePreview
+                    title={legendTitle}
+                    rect={mapLegendTitleRect}
+                    appearance={appearance}
+                    onTitleChange={setLegendTitle}
+                    onTitleRemove={() => setLegendTitle("")}
+                    onPointerDownCapture={() => undefined}
+                    onPointerMove={() => undefined}
+                    onPointerUp={() => undefined}
+                    isMoving={false}
+                  />
+                ) : null}
+
+                {shouldRenderLegendPanel ? (
+                  <ExportLegendPreview
+                    title={legendPosition === "map" ? "" : legendTitle}
+                    entries={visibleLegendEntries}
+                    displayItems={visibleLegendDisplayItems}
+                    rect={layout.legendRect}
+                    legendPosition={legendPosition}
+                    appearance={appearance}
+                    hiddenLegendFeatureIds={hiddenLegendFeatureIds}
+                    showAlwaysVisibleHideControls
+                    onTitleChange={setLegendTitle}
+                    onTitleRemove={() => setLegendTitle("")}
+                    onRenameSection={renameLegendSection}
+                    onEntryLabelChange={handleLegendGroupLabelChange}
+                    onEntryHide={handleLegendEntryHide}
+                    onEntryMove={handleLegendEntryMove}
+                    onRemoveSection={removeLegendSection}
+                  />
                 ) : null}
               </div>
-            ) : null}
+            ),
+          }}
+        />
+      ) : null}
 
-            {safeLegendTitle.length === 0 ? (
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setLegendTitle("Légende");
-                }}
-                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-                title="Ajouter un titre de légende"
+      <div
+        className="relative z-[1750] flex shrink-0 flex-nowrap items-center gap-1.5 border-b border-slate-200 bg-white px-2 py-1.5"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={() => addLegendSection()}
+          className="rounded-xl border border-indigo-300 bg-indigo-50 px-2.5 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100"
+          title="Ajouter une sous-légende directement dans la légende"
+        >
+          + Sous-légende
+        </button>
+
+        {hiddenEntriesCount > 0 ? (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsHiddenListOpen((isOpen) => !isOpen)}
+              className="rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+              title="Réafficher des groupes masqués"
+            >
+              Masqués ({hiddenEntriesCount})
+            </button>
+
+            {isHiddenListOpen ? (
+              <div
+                className="absolute left-0 top-full z-[1900] mt-2 w-72 rounded-xl border border-slate-200 bg-white p-2 text-sm shadow-2xl"
+                onClick={(event) => event.stopPropagation()}
               >
-                + Titre
-              </button>
+                <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Éléments masqués
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  {hiddenLegendEntries.map((entry) => (
+                    <div
+                      key={entry.dedupeKey}
+                      className="flex items-center justify-between gap-2 rounded-lg px-2 py-2 hover:bg-slate-50"
+                    >
+                      <span className="min-w-0 truncate font-medium text-slate-700">
+                        {entry.label || "Sans nom"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleLegendEntryShow(entry);
+                          setIsHiddenListOpen(false);
+                        }}
+                        className="shrink-0 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                      >
+                        Réafficher
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
             ) : null}
           </div>
+        ) : null}
+
+        {safeLegendTitle.length === 0 ? (
+          <button
+            type="button"
+            onClick={() => setLegendTitle("Légende")}
+            className="rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+            title="Ajouter un titre de légende"
+          >
+            + Titre
+          </button>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => setIsAdvancedLegendEditorOpen((isOpen) => !isOpen)}
+          className={`rounded-xl border px-2.5 py-2 text-xs font-semibold transition ${
+            isAdvancedLegendEditorOpen
+              ? "border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+          title="Ouvrir les réglages avancés de la légende"
+        >
+          Édition avancée
+        </button>
+
+        <div
+          className="flex w-44 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5"
+          title="Augmenter ou réduire tous les figurés de légende en même temps"
+        >
+          <span className="text-[11px] font-semibold text-slate-700">
+            Figurés
+          </span>
+          <input
+            type="range"
+            min={24}
+            max={144}
+            step={2}
+            value={legendSymbolSize}
+            onChange={(event) =>
+              setLegendSymbolSize(Number(event.currentTarget.value))
+            }
+            className="min-w-0 flex-1 accent-indigo-600"
+            aria-label="Taille globale des figurés de légende"
+          />
+          <span className="w-9 text-right text-[10px] font-bold tabular-nums text-slate-500">
+            {Math.round(
+              getExportLegendGlobalSymbolScale(legendSymbolSize) * 100,
+            )}
+            %
+          </span>
         </div>
+
+        <div className="mx-0.5 h-8 w-px bg-slate-200" />
+
+        <MapElementControls
+          scaleBarEnabled={scaleBarEnabled}
+          scaleBarStyle={scaleBarStyle}
+          scaleBarPosition={scaleBarPosition}
+          northArrowEnabled={northArrowEnabled}
+          northArrowStyle={northArrowStyle}
+          northArrowPosition={northArrowPosition}
+          onScaleEnabledChange={handleScaleBarEnabledChange}
+          onScaleStyleChange={setScaleBarStyle}
+          onScalePositionChange={setScaleBarPosition}
+          onNorthEnabledChange={handleNorthArrowEnabledChange}
+          onNorthStyleChange={setNorthArrowStyle}
+          onNorthPositionChange={setNorthArrowPosition}
+        />
+
+        {basemap.kind === "maplibre" ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setShowBasemapLabels(!showBasemapLabels);
+            }}
+            className={[
+              "shrink-0 rounded-xl border px-3 py-2 text-xs font-bold transition",
+              showBasemapLabels
+                ? "border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+                : "border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100",
+            ].join(" ")}
+            title={
+              showBasemapLabels
+                ? "Masquer les noms, rues et autres écritures du fond vectoriel"
+                : "Réafficher les écritures du fond vectoriel"
+            }
+          >
+            {showBasemapLabels
+              ? "Masquer les écritures du fond"
+              : "Réafficher les écritures du fond"}
+          </button>
+        ) : null}
 
         {canAdjustBasemapDetail ? (
           <div
-            className="flex min-w-[260px] max-w-sm flex-1 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 shadow-sm"
+            className="ml-auto flex w-[260px] max-w-[30vw] shrink-0 items-center rounded-xl border border-slate-200 bg-slate-50 px-3 py-1"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="min-w-0 flex-1">
@@ -2359,7 +4262,6 @@ export function ExportPreviewScene() {
                   )}
                 </span>
               </div>
-
               <input
                 type="range"
                 min={minPreviewBasemapDetailZoom}
@@ -2367,137 +4269,183 @@ export function ExportPreviewScene() {
                 step={PREVIEW_BASEMAP_DETAIL_STEP}
                 value={basemapDetailZoomValue}
                 onChange={handleBasemapDetailChange}
-                className="mt-1 w-full accent-indigo-600"
-                title="Change la quantité de détails du fond OpenFreeMap sans modifier la zone de travail"
+                className="mt-0.5 w-full accent-indigo-600"
+                title="Change la quantité de détails du fond vectoriel sans modifier la zone de travail"
               />
-
-              <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] leading-tight text-slate-500">
-                <span>-{PREVIEW_BASEMAP_DETAIL_DELTA}</span>
-                <span>
-                  base z{formatBasemapDetailZoom(baseBasemapDetailZoom)}
-                </span>
-                <span>+{PREVIEW_BASEMAP_DETAIL_DELTA}</span>
-              </div>
             </div>
           </div>
-        ) : null}
-
-        <div
-          className="flex shrink-0 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 shadow-sm"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700">
-            <input
-              type="checkbox"
-              checked={scaleBarEnabled}
-              onChange={(event) =>
-                setScaleBarEnabled(event.currentTarget.checked)
-              }
-              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            Échelle
-          </label>
-
-          <select
-            value={scaleBarStyle}
-            onChange={(event) =>
-              setScaleBarStyle(event.currentTarget.value as ExportScaleBarStyle)
-            }
-            disabled={!scaleBarEnabled}
-            className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-            title="Choisir le style d’échelle affiché dans la preview et dans l’export"
-          >
-            {EXPORT_SCALE_BAR_STYLE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="shrink-0 text-right text-xs text-slate-500">
-          <div>Format : {getExportFormatLabel(exportFormat)}</div>
-          <div>
-            Légende :{" "}
-            {legendPosition === "right"
-              ? "à droite"
-              : legendPosition === "left"
-                ? "à gauche"
-                : "en bas"}
-          </div>
-        </div>
+        ) : (
+          <div className="ml-auto" />
+        )}
       </div>
 
-      <div
-        ref={viewportRef}
-        className="relative min-h-0 flex-1 overflow-auto bg-slate-200 p-4"
-      >
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
-          className="relative mx-auto"
-          style={{
-            width: layout.canvasWidth * scale,
-            height: layout.canvasHeight * scale,
-            minWidth: layout.canvasWidth * scale,
-            minHeight: layout.canvasHeight * scale,
-          }}
+          ref={viewportRef}
+          className="h-full min-h-0 overflow-auto bg-slate-200 p-2"
         >
           <div
-            id={EXPORT_CAPTURE_ELEMENT_ID}
-            className="absolute left-0 top-0 overflow-hidden bg-white shadow-xl ring-1 ring-slate-300"
+            className="relative mx-auto"
             style={{
-              width: layout.canvasWidth,
-              height: layout.canvasHeight,
-              transform: `scale(${scale})`,
-              transformOrigin: "top left",
+              width: layout.canvasWidth * scale,
+              height: layout.canvasHeight * scale,
+              minWidth: layout.canvasWidth * scale,
+              minHeight: layout.canvasHeight * scale,
             }}
           >
             <div
-              className="absolute overflow-hidden border border-slate-400 bg-slate-100"
-              style={rectToStyle(layout.mapRect)}
+              id={EXPORT_CAPTURE_ELEMENT_ID}
+              className="absolute left-0 top-0 overflow-hidden bg-white shadow-xl ring-1 ring-slate-300"
+              style={{
+                width: layout.canvasWidth,
+                height: layout.canvasHeight,
+                transform: `scale(${scale})`,
+                transformOrigin: "top left",
+              }}
             >
-              <ExportLeafletPreview symbolScale={layout.mapRenderScale} />
-              <ExportScaleBarPreview
-                enabled={scaleBarEnabled}
-                style={scaleBarStyle}
-                workspaceBounds={workspaceBounds}
-                mapRect={layout.mapRect}
-              />
+              <div
+                className="absolute overflow-hidden border border-slate-400 bg-slate-100"
+                style={rectToStyle(layout.mapRect)}
+              >
+                <ExportLeafletPreview symbolScale={layout.mapRenderScale} />
+                <ExportScaleBarPreview
+                  enabled={scaleBarEnabled}
+                  style={scaleBarStyle}
+                  position={scaleBarPosition}
+                  mapPosition={scaleBarMapPosition}
+                  workspaceBounds={workspaceBounds}
+                  mapRect={layout.mapRect}
+                  onMapPositionChange={setScaleBarMapPosition}
+                  onRequestDisable={() => requestMapElementDisable("scale-bar")}
+                />
+                <ExportNorthArrowPreview
+                  enabled={northArrowEnabled}
+                  style={northArrowStyle}
+                  position={northArrowPosition}
+                  mapPosition={northArrowMapPosition}
+                  collisionOffset={northArrowCollisionOffset}
+                  mapRect={layout.mapRect}
+                  onMapPositionChange={setNorthArrowMapPosition}
+                  onRequestDisable={() =>
+                    requestMapElementDisable("north-arrow")
+                  }
+                />
+              </div>
+
+              {mapLegendTitleRect ? (
+                <ExportMapLegendTitlePreview
+                  title={legendTitle}
+                  rect={mapLegendTitleRect}
+                  appearance={appearance}
+                  onTitleChange={setLegendTitle}
+                  onTitleRemove={() => setLegendTitle("")}
+                  onPointerDownCapture={handleLegendTitleMovePointerDown}
+                  onPointerMove={handleLegendTitleMovePointerMove}
+                  onPointerUp={handleLegendTitleMovePointerUp}
+                  isMoving={isLegendTitleMoving}
+                />
+              ) : null}
+
+              {shouldRenderLegendPanel ? (
+                <ExportLegendPreview
+                  title={legendPosition === "map" ? "" : legendTitle}
+                  entries={visibleLegendEntries}
+                  displayItems={visibleLegendDisplayItems}
+                  rect={layout.legendRect}
+                  legendPosition={legendPosition}
+                  appearance={appearance}
+                  hiddenLegendFeatureIds={hiddenLegendFeatureIds}
+                  suspendEntryDrag={isLegendOverlayMoving}
+                  onContainerPointerDownCapture={
+                    legendPosition === "map"
+                      ? handleLegendOverlayMovePointerDown
+                      : undefined
+                  }
+                  onContainerPointerMove={
+                    legendPosition === "map"
+                      ? handleLegendOverlayMovePointerMove
+                      : undefined
+                  }
+                  onContainerPointerUp={
+                    legendPosition === "map"
+                      ? handleLegendOverlayMovePointerUp
+                      : undefined
+                  }
+                  onTitleChange={setLegendTitle}
+                  onTitleRemove={() => setLegendTitle("")}
+                  onRenameSection={renameLegendSection}
+                  onEntryLabelChange={handleLegendGroupLabelChange}
+                  onEntryHide={handleLegendEntryHide}
+                  onEntryMove={handleLegendEntryMove}
+                  onRemoveSection={removeLegendSection}
+                />
+              ) : null}
+
+              {hasVisibleLegend && legendPosition !== "map" ? (
+                <button
+                  type="button"
+                  onPointerDown={handleResizePointerDown}
+                  onPointerMove={handleResizePointerMove}
+                  onPointerUp={handleResizePointerUp}
+                  onPointerCancel={handleResizePointerUp}
+                  className="absolute z-[1200] rounded-full bg-indigo-600/80 outline-none ring-4 ring-white/80 transition hover:bg-indigo-500"
+                  style={resizeHandleStyle}
+                  title="Tirer pour redimensionner la légende"
+                >
+                  <span className="sr-only">Redimensionner la légende</span>
+                </button>
+              ) : null}
             </div>
-
-            <ExportLegendPreview
-              title={legendTitle}
-              entries={visibleLegendEntries}
-              displayItems={visibleLegendDisplayItems}
-              rect={layout.legendRect}
-              legendPosition={legendPosition}
-              backgroundColor={appearance.backgroundColor}
-              titleFontSize={appearance.titleFontSize}
-              sectionTitleFontSize={appearance.sectionTitleFontSize}
-              itemFontSize={appearance.itemFontSize}
-              hiddenLegendFeatureIds={hiddenLegendFeatureIds}
-              onTitleChange={setLegendTitle}
-              onRenameSection={renameLegendSection}
-              onEntryLabelChange={handleLegendGroupLabelChange}
-              onEntryHide={handleLegendEntryHide}
-              onEntryMove={handleLegendEntryMove}
-              onRemoveSection={removeLegendSection}
-            />
-
-            <button
-              type="button"
-              onPointerDown={handleResizePointerDown}
-              onPointerMove={handleResizePointerMove}
-              onPointerUp={handleResizePointerUp}
-              onPointerCancel={handleResizePointerUp}
-              className="absolute z-[1200] rounded-full bg-indigo-600/80 outline-none ring-4 ring-white/80 transition hover:bg-indigo-500"
-              style={resizeHandleStyle}
-              title="Tirer pour redimensionner la légende"
-            >
-              <span className="sr-only">Redimensionner la légende</span>
-            </button>
           </div>
         </div>
       </div>
+
+      {pendingMapElementDisable ? (
+        <div
+          className="fixed inset-0 z-[5000] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-[1px]"
+          onClick={() => setPendingMapElementDisable(null)}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="map-element-disable-title"
+            className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3
+              id="map-element-disable-title"
+              className="text-base font-semibold text-slate-950"
+            >
+              Désactiver{" "}
+              {pendingMapElementDisable === "scale-bar"
+                ? "l’échelle"
+                : "la flèche du nord"}{" "}
+              ?
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+              Cet élément ne sera plus visible dans la prévisualisation ni dans
+              les exports. Tu pourras le réactiver à tout moment.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingMapElementDisable(null)}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Conserver
+              </button>
+              <button
+                type="button"
+                onClick={confirmMapElementDisable}
+                className="rounded-xl border border-rose-600 bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-700"
+              >
+                Désactiver
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

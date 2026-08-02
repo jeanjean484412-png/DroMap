@@ -186,6 +186,12 @@ export function SelectedFeatureHighlight() {
   const selectedFeatureId = useEditorTestSelectionStore(
     (state) => state.selectedFeatureId,
   );
+  const selectedFeatureIds = useEditorTestSelectionStore(
+    (state) => state.selectedFeatureIds,
+  );
+  const setSelectedFeatureIds = useEditorTestSelectionStore(
+    (state) => state.setSelectedFeatureIds,
+  );
 
   const focusedSelectionRequest = useEditorTestSelectionStore(
     (state) => state.focusedSelectionRequest,
@@ -200,6 +206,18 @@ export function SelectedFeatureHighlight() {
   );
 
   const features = useEditorTestFeaturesStore((state) => state.features);
+
+  useEffect(() => {
+    if (selectedFeatureIds.length === 0) return;
+    const existingIds = new Set(features.map((feature) => feature.id));
+    const validIds = selectedFeatureIds.filter((featureId) =>
+      existingIds.has(featureId),
+    );
+
+    if (validIds.length !== selectedFeatureIds.length) {
+      setSelectedFeatureIds(validIds);
+    }
+  }, [features, selectedFeatureIds, setSelectedFeatureIds]);
 
   useEffect(() => {
     let animationFrameId: number | null = null;
@@ -226,7 +244,7 @@ export function SelectedFeatureHighlight() {
   }, [map]);
 
   useEffect(() => {
-    if (!selectedFeatureId) {
+    if (selectedFeatureIds.length === 0) {
       const shouldRecenterWorkspace =
         Boolean(workspaceRecenterRequest) &&
         workspaceRecenterRequest?.requestId !==
@@ -257,39 +275,54 @@ export function SelectedFeatureHighlight() {
       mapLayers.push(layer);
     });
 
-    const selectedDisplayLayer =
-      mapLayers.find((layer) => getArrowBodyOwnerId(layer) === selectedFeatureId) ??
-      null;
-    const selectedLayer =
-      mapLayers.find((layer) => getLayerFeatureId(layer) === selectedFeatureId) ??
-      null;
-    const selectedLeafletLayer = selectedDisplayLayer ?? selectedLayer;
+    const cleanupHighlights: Array<() => void> = [];
 
-    if (!selectedLeafletLayer) {
-      return;
+    for (const featureId of selectedFeatureIds) {
+      const selectedDisplayLayer =
+        mapLayers.find((layer) => getArrowBodyOwnerId(layer) === featureId) ??
+        null;
+      const selectedLayer =
+        mapLayers.find((layer) => getLayerFeatureId(layer) === featureId) ??
+        null;
+      const selectedLeafletLayer = selectedDisplayLayer ?? selectedLayer;
+
+      if (!selectedLeafletLayer) {
+        continue;
+      }
+
+      if (selectedLeafletLayer instanceof L.Marker) {
+        cleanupHighlights.push(applyMarkerHighlight(selectedLeafletLayer));
+      } else if (
+        selectedLeafletLayer instanceof L.Polygon ||
+        selectedLeafletLayer instanceof L.Polyline
+      ) {
+        cleanupHighlights.push(applyPathHighlight(selectedLeafletLayer));
+      }
     }
 
-    let cleanupHighlight = () => {};
     const shouldFocusFromObjectsPanel =
+      Boolean(selectedFeatureId) &&
       focusedSelectionRequest?.featureId === selectedFeatureId &&
       focusedSelectionRequest.requestId !== lastFocusedRequestIdRef.current;
 
-    if (selectedLeafletLayer instanceof L.Marker) {
-      cleanupHighlight = applyMarkerHighlight(selectedLeafletLayer);
+    if (shouldFocusFromObjectsPanel && selectedFeatureId) {
+      const primaryDisplayLayer =
+        mapLayers.find(
+          (layer) => getArrowBodyOwnerId(layer) === selectedFeatureId,
+        ) ?? null;
+      const primaryLayer =
+        mapLayers.find(
+          (layer) => getLayerFeatureId(layer) === selectedFeatureId,
+        ) ?? null;
+      const primaryLeafletLayer = primaryDisplayLayer ?? primaryLayer;
 
-      if (shouldFocusFromObjectsPanel) {
-        map.panTo(selectedLeafletLayer.getLatLng(), {
-          animate: true,
-        });
-      }
-    } else if (
-      selectedLeafletLayer instanceof L.Polygon ||
-      selectedLeafletLayer instanceof L.Polyline
-    ) {
-      cleanupHighlight = applyPathHighlight(selectedLeafletLayer);
-
-      if (shouldFocusFromObjectsPanel) {
-        const bounds = selectedLeafletLayer.getBounds();
+      if (primaryLeafletLayer instanceof L.Marker) {
+        map.panTo(primaryLeafletLayer.getLatLng(), { animate: true });
+      } else if (
+        primaryLeafletLayer instanceof L.Polygon ||
+        primaryLeafletLayer instanceof L.Polyline
+      ) {
+        const bounds = primaryLeafletLayer.getBounds();
 
         if (bounds.isValid()) {
           map.fitBounds(bounds.pad(0.25), {
@@ -298,20 +331,21 @@ export function SelectedFeatureHighlight() {
           });
         }
       }
-    }
 
-    if (shouldFocusFromObjectsPanel && focusedSelectionRequest) {
-      lastFocusedRequestIdRef.current = focusedSelectionRequest.requestId;
+      if (focusedSelectionRequest) {
+        lastFocusedRequestIdRef.current = focusedSelectionRequest.requestId;
+      }
     }
 
     return () => {
-      cleanupHighlight();
+      cleanupHighlights.forEach((cleanup) => cleanup());
     };
   }, [
     features,
     focusedSelectionRequest,
     map,
     selectedFeatureId,
+    selectedFeatureIds,
     viewRevision,
     workspaceBounds,
     workspaceRecenterRequest,

@@ -1,6 +1,10 @@
 import { create } from "zustand";
 
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
+import {
+  commitEditorHistoryBeforeWorkspaceChange,
+  registerWorkspaceHistoryAccessors,
+} from "@/stores/editor-test-history-coordinator";
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 
 const WORKSPACE_BASEMAP_DETAIL_DELTA = 1;
@@ -35,6 +39,26 @@ function normalizeBasemapZoom(zoom: number | null) {
   return Math.round(clampedZoom * 4) / 4;
 }
 
+function workspaceBoundsEqual(
+  first: WorkspaceBounds | null,
+  second: WorkspaceBounds | null,
+) {
+  if (first === second) {
+    return true;
+  }
+
+  if (!first || !second) {
+    return false;
+  }
+
+  return (
+    first.southWest.lat === second.southWest.lat &&
+    first.southWest.lng === second.southWest.lng &&
+    first.northEast.lat === second.northEast.lat &&
+    first.northEast.lng === second.northEast.lng
+  );
+}
+
 export const useEditorTestWorkspaceStore = create<EditorTestWorkspaceState>(
   (set, get) => ({
     workspaceBounds: null,
@@ -43,6 +67,13 @@ export const useEditorTestWorkspaceStore = create<EditorTestWorkspaceState>(
     workspaceBasemapBaseZoom: null,
 
     setWorkspaceBounds: (bounds) => {
+      if (workspaceBoundsEqual(get().workspaceBounds, bounds)) {
+        return;
+      }
+
+      // La création ou le remplacement de la zone fait désormais partie du
+      // même historique Ctrl+Z/Ctrl+Y que les objets de la carte.
+      commitEditorHistoryBeforeWorkspaceChange();
       set({
         workspaceBounds: bounds,
         workspaceBasemapZoom: null,
@@ -51,6 +82,15 @@ export const useEditorTestWorkspaceStore = create<EditorTestWorkspaceState>(
     },
 
     clearWorkspaceBounds: () => {
+      const state = get();
+      if (
+        state.workspaceBounds === null &&
+        useEditorTestModeStore.getState().currentMode === "workspace-select"
+      ) {
+        return;
+      }
+
+      commitEditorHistoryBeforeWorkspaceChange();
       set({
         workspaceBounds: null,
         pendingFitToWorkspace: false,
@@ -66,6 +106,9 @@ export const useEditorTestWorkspaceStore = create<EditorTestWorkspaceState>(
         return;
       }
 
+      // setWorkspaceBounds a déjà enregistré l'état précédent. Ne pas ajouter
+      // une seconde étape uniquement pour la validation, afin qu'un seul Ctrl+Z
+      // annule bien toute la sélection de zone.
       set({
         pendingFitToWorkspace: true,
         workspaceBasemapZoom: null,
@@ -128,3 +171,29 @@ export const useEditorTestWorkspaceStore = create<EditorTestWorkspaceState>(
     },
   }),
 );
+
+registerWorkspaceHistoryAccessors({
+  capture: () => {
+    const state = useEditorTestWorkspaceStore.getState();
+    return {
+      workspaceBounds: state.workspaceBounds
+        ? structuredClone(state.workspaceBounds)
+        : null,
+      pendingFitToWorkspace: state.pendingFitToWorkspace,
+      workspaceBasemapZoom: state.workspaceBasemapZoom,
+      workspaceBasemapBaseZoom: state.workspaceBasemapBaseZoom,
+      currentMode: useEditorTestModeStore.getState().currentMode,
+    };
+  },
+  restore: (snapshot) => {
+    useEditorTestWorkspaceStore.setState({
+      workspaceBounds: snapshot.workspaceBounds
+        ? structuredClone(snapshot.workspaceBounds)
+        : null,
+      pendingFitToWorkspace: snapshot.pendingFitToWorkspace,
+      workspaceBasemapZoom: snapshot.workspaceBasemapZoom,
+      workspaceBasemapBaseZoom: snapshot.workspaceBasemapBaseZoom,
+    });
+    useEditorTestModeStore.getState().setCurrentMode(snapshot.currentMode);
+  },
+});

@@ -6,6 +6,7 @@ type FeatureWithStyle = {
       weight?: number;
       dashStyle?: string;
       markerSize?: number;
+      renderScale?: number;
     };
   };
 };
@@ -61,9 +62,14 @@ export function getLeafletDashArray(
 
 export function getFeatureMarkerSize(feature: FeatureWithStyle): number {
   const rawValue = Number(feature.properties?.style?.markerSize);
+  const renderScale = Number(feature.properties?.style?.renderScale);
 
   if (!Number.isFinite(rawValue)) {
     return DEFAULT_MARKER_SIZE;
+  }
+
+  if (Number.isFinite(renderScale)) {
+    return Math.min(4096, Math.max(0.5, rawValue));
   }
 
   return Math.min(MAX_MARKER_SIZE, Math.max(MIN_MARKER_SIZE, rawValue));

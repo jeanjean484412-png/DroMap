@@ -1,12 +1,13 @@
 "use client";
 
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
 import { EDITOR_MODE_LABELS } from "@/lib/dromap/editor-mode";
 import type {
   DroMapFeatureDashStyle,
   DroMapMarkerBuiltinSymbol,
+  DroMapMarkerSymbol,
   DroMapZoneHatchingStyle,
   DroMapZoneShapeKind,
 } from "@/lib/dromap/feature";
@@ -18,6 +19,7 @@ import {
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
 import { useEditorTestDrawingOptionsStore } from "@/stores/editor-test-drawing-options";
+import { useEditorTestCustomMarkersStore } from "@/stores/editor-test-custom-markers";
 import {
   getGeoJsonLayerLoadedDisplayData,
   useEditorTestGeoJsonLayersStore,
@@ -32,6 +34,7 @@ import {
   DROMAP_BUILTIN_MARKER_SYMBOLS,
   DROMAP_MARKER_SYMBOL_CATEGORIES,
   getMarkerSymbolHtml,
+  getMarkerSymbolLabel,
   markerSymbolSupportsFill,
   markerSymbolSupportsStrokeWeight,
 } from "./marker-symbol";
@@ -51,9 +54,19 @@ import {
   MIN_ZONE_HATCHING_WEIGHT,
 } from "./zone-style";
 import { DROMAP_QUICK_SHAPES } from "./quick-shape";
+import {
+  bringFloatingPanelToFront,
+  getInitialFloatingPanelZIndex,
+} from "./floating-panel-z-index";
+import { getEffectiveGeoJsonFeatureStyle } from "./geojson-layer-style";
+import { ColorPicker } from "./color-picker";
+import { CustomMarkerLibrary } from "./custom-marker-library";
 
-const MIN_TEXT_FONT_SIZE = 10;
+const MIN_TEXT_FONT_SIZE = 1;
 const MAX_TEXT_FONT_SIZE = 72;
+const TEXT_FONT_SIZE_OPTIONS = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 22, 24, 28, 32, 36, 42, 48, 56, 64, 72,
+] as const;
 const MIN_MARKER_STROKE_WIDTH = 3;
 const MAX_MARKER_STROKE_WIDTH = 13;
 const DEFAULT_MARKER_STROKE_WIDTH = 7;
@@ -103,6 +116,8 @@ const DEFAULT_TEXT_STYLE = {
   color: "#111827",
   opacity: 1,
   fontSize: 22,
+  textBold: false,
+  textItalic: false,
   textRotation: 0,
   textBackgroundEnabled: false,
   textBackgroundColor: "#ffffff",
@@ -110,6 +125,9 @@ const DEFAULT_TEXT_STYLE = {
   textBorderEnabled: false,
   textBorderColor: "#111827",
   textBorderWidth: 2,
+  textOutlineEnabled: true,
+  textOutlineColor: "#ffffff",
+  textOutlineWidth: 1.5,
 };
 
 type LineToolChoice = Extract<
@@ -124,6 +142,7 @@ type MarkerSettingsStep = "symbols" | "style";
 
 type ToolButtonRowProps = {
   label: string;
+  displayLabel?: string;
   active: boolean;
   settingsOpen?: boolean;
   hasSettings?: boolean;
@@ -143,6 +162,196 @@ type MarkerToolButtonRowProps = {
   onSymbolsClick: () => void;
   onStyleClick: () => void;
 };
+
+function SettingsGlyph() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-3.5 w-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 7h10" />
+      <path d="M18 7h2" />
+      <path d="M4 17h2" />
+      <path d="M10 17h10" />
+      <circle cx="16" cy="7" r="2" />
+      <circle cx="8" cy="17" r="2" />
+    </svg>
+  );
+}
+
+function MarkerLibraryGlyph() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-3.5 w-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="4" y="4" width="6" height="6" rx="1" />
+      <rect x="14" y="4" width="6" height="6" rx="1" />
+      <rect x="4" y="14" width="6" height="6" rx="1" />
+      <rect x="14" y="14" width="6" height="6" rx="1" />
+    </svg>
+  );
+}
+
+function ClassicLineGlyph() {
+  return (
+    <svg
+      viewBox="0 0 28 24"
+      className="h-6 w-7"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 18 10 10l6 4 9-9" />
+      <circle cx="3" cy="18" r="1.7" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="10" r="1.7" fill="currentColor" stroke="none" />
+      <circle cx="16" cy="14" r="1.7" fill="currentColor" stroke="none" />
+      <circle cx="25" cy="5" r="1.7" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function FreehandLineGlyph() {
+  return (
+    <svg
+      viewBox="0 0 28 24"
+      className="h-6 w-7"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 17c4-10 7 4 11-4s6 5 11-5" />
+      <path d="m20 19 4-4 2 2-4 4-3 1 1-3Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function TraceLineGlyph() {
+  return (
+    <svg
+      viewBox="0 0 28 24"
+      className="h-6 w-7"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 18c4-9 8-9 12-4s7 2 10-7" strokeDasharray="3 3" />
+      <path d="m20 6 5 1-1 5" />
+      <circle cx="3" cy="18" r="1.8" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function PolygonGlyph() {
+  return (
+    <svg
+      viewBox="0 0 28 24"
+      className="h-6 w-7"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m5 6 9-3 9 6-3 11H8L3 13Z" fill="currentColor" fillOpacity="0.18" />
+      <circle cx="5" cy="6" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="14" cy="3" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="23" cy="9" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="20" cy="20" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="20" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="3" cy="13" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function FreehandZoneGlyph() {
+  return (
+    <svg
+      viewBox="0 0 28 24"
+      className="h-6 w-7"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path
+        d="M4 13c0-5 5-9 10-8 4-3 10 1 9 6 4 5-1 10-6 9-5 3-13-1-13-7Z"
+        fill="currentColor"
+        fillOpacity="0.18"
+      />
+      <path d="m19 20 4-4 2 2-4 4-3 1 1-3Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function PaintBucketGlyph() {
+  return (
+    <svg
+      viewBox="0 0 28 24"
+      className="h-6 w-7"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m5 5 11 11-6 6a2 2 0 0 1-2.8 0L2.8 17.6a2 2 0 0 1 0-2.8L11 6.6" />
+      <path d="M4.5 13h9" />
+      <path
+        d="M22 14.5c1.7 2 2.5 3.3 2.5 4.3a2.5 2.5 0 0 1-5 0c0-1 .8-2.3 2.5-4.3Z"
+        fill="currentColor"
+        fillOpacity="0.28"
+      />
+    </svg>
+  );
+}
+
+function QuickShapeGlyph({ shapeKind }: { shapeKind: DroMapZoneShapeKind }) {
+  return (
+    <svg
+      viewBox="0 0 28 24"
+      className="h-6 w-7"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      {shapeKind === "circle" ? (
+        <circle cx="14" cy="12" r="8" fill="currentColor" fillOpacity="0.14" />
+      ) : shapeKind === "ellipse" ? (
+        <ellipse cx="14" cy="12" rx="10" ry="6.5" fill="currentColor" fillOpacity="0.14" />
+      ) : (
+        <rect x="5" y="5" width="18" height="14" rx="1.5" fill="currentColor" fillOpacity="0.14" />
+      )}
+    </svg>
+  );
+}
+
 const LINE_TOOL_CHOICES: {
   value: LineToolChoice;
   label: string;
@@ -153,24 +362,19 @@ const LINE_TOOL_CHOICES: {
     value: "line",
     label: "Trait classique",
     description: "Ligne droite ou brisée par clics.",
-    icon: <span className="text-lg font-black">━</span>,
+    icon: <ClassicLineGlyph />,
   },
   {
     value: "freehand",
     label: "Dessin libre",
     description: "Trait dessiné en maintenant la souris.",
-    icon: (
-      <span className="flex items-center gap-0.5 text-base font-black">
-        <span>✎</span>
-        <span>━</span>
-      </span>
-    ),
+    icon: <FreehandLineGlyph />,
   },
   {
     value: "trace-line",
     label: "Suivi de trait",
     description: "Suit une frontière vectorielle du fond.",
-    icon: <span className="text-lg font-black">⤳</span>,
+    icon: <TraceLineGlyph />,
   },
 ];
 
@@ -184,30 +388,25 @@ const ZONE_TOOL_CHOICES: {
     value: "zone",
     label: "Zone classique",
     description: "Polygone posé point par point.",
-    icon: <span className="text-lg font-black">▰</span>,
+    icon: <PolygonGlyph />,
   },
   {
     value: "freehand-zone",
     label: "Zone libre",
     description: "Zone dessinée en maintenant la souris.",
-    icon: (
-      <span className="flex items-center gap-0.5 text-base font-black">
-        <span>✎</span>
-        <span>▱</span>
-      </span>
-    ),
+    icon: <FreehandZoneGlyph />,
   },
   {
     value: "fill-zone",
     label: "Remplissage",
     description: "Clique une région ou un département vectoriel du fond.",
-    icon: <span className="text-lg font-black">▣</span>,
+    icon: <PaintBucketGlyph />,
   },
   {
     value: "shape",
     label: "Forme rapide",
     description: "Rectangle, cercle ou ellipse en deux clics.",
-    icon: <span className="text-lg font-black">◧</span>,
+    icon: <QuickShapeGlyph shapeKind="rectangle" />,
   },
 ];
 
@@ -590,19 +789,14 @@ function getSettingsSubtitle(openSettingsTool: EditorTestActiveTool) {
 
 function getLineToolIcon(tool: LineToolChoice) {
   if (tool === "freehand") {
-    return (
-      <span className="flex items-center gap-0.5 text-base font-black">
-        <span>✎</span>
-        <span>━</span>
-      </span>
-    );
+    return <FreehandLineGlyph />;
   }
 
   if (tool === "trace-line") {
-    return <span className="text-lg font-black">⤳</span>;
+    return <TraceLineGlyph />;
   }
 
-  return <span className="text-lg font-black">━</span>;
+  return <ClassicLineGlyph />;
 }
 
 function getActiveLineToolLabel(tool: LineToolChoice) {
@@ -619,29 +813,23 @@ function getActiveLineToolLabel(tool: LineToolChoice) {
 
 function getZoneToolIcon(tool: ZoneToolChoice, shapeKind: DroMapZoneShapeKind) {
   if (tool === "freehand-zone") {
-    return (
-      <span className="flex items-center gap-0.5 text-base font-black">
-        <span>✎</span>
-        <span>▱</span>
-      </span>
-    );
+    return <FreehandZoneGlyph />;
   }
 
   if (tool === "fill-zone") {
-    return <span className="text-lg font-black">▣</span>;
+    return <PaintBucketGlyph />;
   }
 
   if (tool === "shape") {
-    if (shapeKind === "circle") return <span className="text-lg font-black">○</span>;
-    if (shapeKind === "ellipse") return <span className="text-lg font-black">⬭</span>;
-    return <span className="text-lg font-black">▭</span>;
+    return <QuickShapeGlyph shapeKind={shapeKind} />;
   }
 
-  return <span className="text-lg font-black">▰</span>;
+  return <PolygonGlyph />;
 }
 
 function ToolButtonRow({
   label,
+  displayLabel,
   active,
   settingsOpen = false,
   hasSettings = false,
@@ -654,26 +842,31 @@ function ToolButtonRow({
     <div className="flex justify-center gap-1">
       <button
         type="button"
+        data-dromap-tool-control="true"
         aria-pressed={active}
         onClick={onClick}
         className={[
-          "flex h-11 w-11 items-center justify-center rounded-xl border text-lg font-bold shadow-sm transition",
+          "flex h-12 w-14 flex-col items-center justify-center gap-0.5 rounded-2xl border px-1 shadow-sm transition",
           active
-            ? "border-blue-600 bg-blue-600 text-white"
-            : "border-neutral-200 bg-white text-neutral-800 hover:border-neutral-300 hover:bg-neutral-50",
+            ? "border-blue-700 bg-blue-600 text-white shadow-blue-200/70"
+            : "border-neutral-200 bg-white text-neutral-800 hover:border-blue-300 hover:bg-blue-50/60",
         ].join(" ")}
         title={label}
       >
-        {icon}
+        <span className="flex h-7 items-center justify-center">{icon}</span>
+        <span className="max-w-full truncate text-[8px] font-extrabold uppercase leading-none tracking-wide">
+          {displayLabel ?? label}
+        </span>
       </button>
 
       {hasSettings ? (
         <button
           type="button"
+          data-dromap-tool-control="true"
           aria-label={settingsLabel ?? `Paramètres ${label}`}
           onClick={onSettingsClick}
           className={[
-            "flex h-11 w-5 items-center justify-center rounded-lg border text-[10px] font-bold shadow-sm transition",
+            "flex h-12 w-5 items-center justify-center rounded-xl border shadow-sm transition",
             settingsOpen
               ? "border-blue-700 bg-blue-700 text-white"
               : active
@@ -682,10 +875,10 @@ function ToolButtonRow({
           ].join(" ")}
           title={settingsLabel ?? `Ouvrir les paramètres ${label}`}
         >
-          ▸
+          <SettingsGlyph />
         </button>
       ) : (
-        <span className="block h-11 w-5" />
+        <span className="block h-12 w-5" />
       )}
     </div>
   );
@@ -702,7 +895,7 @@ function MarkerToolButtonRow({
 }: MarkerToolButtonRowProps) {
   function smallButtonClass(isOpen: boolean) {
     return [
-      "flex h-5 w-5 items-center justify-center rounded-md border text-[10px] font-bold leading-none shadow-sm transition",
+      "flex h-[22px] w-5 items-center justify-center rounded-md border leading-none shadow-sm transition",
       isOpen
         ? "border-blue-700 bg-blue-700 text-white"
         : active
@@ -715,38 +908,46 @@ function MarkerToolButtonRow({
     <div className="flex justify-center gap-1">
       <button
         type="button"
+        data-dromap-tool-control="true"
         aria-pressed={active}
         onClick={onClick}
         className={[
-          "flex h-11 w-11 items-center justify-center rounded-xl border text-lg font-bold shadow-sm transition",
+          "flex h-12 w-12 flex-col items-center justify-center gap-0.5 rounded-2xl border px-1 shadow-sm transition",
           active
-            ? "border-blue-600 bg-blue-600 text-white"
-            : "border-neutral-200 bg-white text-neutral-800 hover:border-neutral-300 hover:bg-neutral-50",
+            ? "border-blue-700 bg-blue-600 text-white shadow-blue-200/70"
+            : "border-neutral-200 bg-white text-neutral-800 hover:border-blue-300 hover:bg-blue-50/60",
         ].join(" " )}
         title="Marqueur"
       >
-        {icon}
+        <span className="flex h-7 items-center justify-center rounded-lg bg-white/85 px-1 text-neutral-900">
+          {icon}
+        </span>
+        <span className="whitespace-nowrap text-[8px] font-extrabold uppercase leading-none tracking-normal">
+          Marqueur
+        </span>
       </button>
 
-      <div className="flex h-11 w-5 flex-col gap-1">
+      <div className="flex h-12 w-5 flex-col gap-1">
         <button
           type="button"
+          data-dromap-tool-control="true"
           aria-label="Choisir le type de marqueur"
           onClick={onSymbolsClick}
           className={smallButtonClass(symbolsOpen)}
           title="Choisir le type de marqueur"
         >
-          ▸
+          <MarkerLibraryGlyph />
         </button>
 
         <button
           type="button"
+          data-dromap-tool-control="true"
           aria-label="Paramètres du marqueur"
           onClick={onStyleClick}
           className={smallButtonClass(styleOpen)}
           title="Paramètres du marqueur"
         >
-          ⚙
+          <SettingsGlyph />
         </button>
       </div>
     </div>
@@ -754,7 +955,7 @@ function MarkerToolButtonRow({
 }
 
 type MarkerSymbolPreviewProps = {
-  symbolId: DroMapMarkerBuiltinSymbol;
+  symbol: DroMapMarkerSymbol;
   color: string;
   opacity?: number;
   size: number;
@@ -763,7 +964,7 @@ type MarkerSymbolPreviewProps = {
 };
 
 function MarkerSymbolPreview({
-  symbolId,
+  symbol,
   color,
   opacity = 1,
   size,
@@ -782,15 +983,12 @@ function MarkerSymbolPreview({
               weight,
               markerFilled,
             },
-            symbol: {
-              type: "builtin",
-              id: symbolId,
-            },
+            symbol,
           },
         },
         { size },
       ),
-    [color, markerFilled, opacity, size, symbolId, weight],
+    [color, markerFilled, opacity, size, symbol, weight],
   );
 
   return (
@@ -808,8 +1006,13 @@ export default function ModeToolbar() {
   const [markerSettingsStep, setMarkerSettingsStep] =
     useState<MarkerSettingsStep>("symbols");
   const [markerSymbolSearch, setMarkerSymbolSearch] = useState("");
+  const [settingsPanelZIndex, setSettingsPanelZIndex] = useState(
+    getInitialFloatingPanelZIndex(),
+  );
   const [lineToolChoice, setLineToolChoice] = useState<LineToolChoice>("line");
   const [zoneToolChoice, setZoneToolChoice] = useState<ZoneToolChoice>("zone");
+  const settingsPanelRef = useRef<HTMLDivElement | null>(null);
+  const markerLibraryScrollRef = useRef<HTMLDivElement | null>(null);
 
   const currentMode = useEditorTestModeStore((state) => state.currentMode);
 
@@ -829,6 +1032,7 @@ export default function ModeToolbar() {
   const markerSymbol = useEditorTestDrawingOptionsStore(
     (state) => state.markerSymbol,
   );
+  useEditorTestCustomMarkersStore((state) => state.customMarkers);
   const lineStyle = useEditorTestDrawingOptionsStore(
     (state) => state.lineStyle,
   );
@@ -840,22 +1044,57 @@ export default function ModeToolbar() {
   const geoJsonLayers = useEditorTestGeoJsonLayersStore(
     (state) => state.geoJsonLayers,
   );
-  const hasVisibleGeoJsonFillPolygons = useMemo(
-    () =>
-      geoJsonLayers.some(
-        (layer) =>
-          layer.visible !== false &&
-          layer.opacity > 0 &&
-          getGeoJsonLayerLoadedDisplayData(layer, workspaceBounds).features.some(
-            (feature) =>
-              feature.geometry.type === "Polygon" ||
-              feature.geometry.type === "MultiPolygon",
-          ),
-      ),
-    [geoJsonLayers, workspaceBounds],
+  const hasUsableBasemapBoundaries = Boolean(
+    activeBasemap.boundaryOverlay?.layers.some(
+      (layer) => layer.displayRole !== "country-neighbor-context",
+    ),
   );
+  const geoJsonToolCapabilities = useMemo(() => {
+    let canFill = false;
+    let canTrace = false;
+
+    for (const layer of geoJsonLayers) {
+      if (layer.visible === false || layer.opacity <= 0) {
+        continue;
+      }
+
+      const displayData = getGeoJsonLayerLoadedDisplayData(
+        layer,
+        workspaceBounds,
+      );
+
+      for (const feature of displayData.features) {
+        const geometryType = feature.geometry.type;
+        const isPolygon =
+          geometryType === "Polygon" || geometryType === "MultiPolygon";
+        const isTraceableGeometry =
+          geometryType === "LineString" ||
+          geometryType === "MultiLineString" ||
+          isPolygon;
+
+        if (isPolygon) {
+          canFill = true;
+        }
+
+        if (isTraceableGeometry) {
+          const style = getEffectiveGeoJsonFeatureStyle(layer, feature);
+          if (style.strokeOpacity > 0 && style.zoneStrokeEnabled !== false) {
+            canTrace = true;
+          }
+        }
+
+        if (canFill && canTrace) {
+          return { canFill, canTrace };
+        }
+      }
+    }
+
+    return { canFill, canTrace };
+  }, [geoJsonLayers, workspaceBounds]);
   const canUseFillToolOnCurrentBasemap =
-    activeBasemap.kind !== "tile" || hasVisibleGeoJsonFillPolygons;
+    hasUsableBasemapBoundaries || geoJsonToolCapabilities.canFill;
+  const canUseTraceToolOnCurrentBasemap =
+    hasUsableBasemapBoundaries || geoJsonToolCapabilities.canTrace;
   const textStyle = useEditorTestDrawingOptionsStore(
     (state) => state.textStyle,
   );
@@ -865,6 +1104,9 @@ export default function ModeToolbar() {
   );
   const setMarkerBuiltinSymbol = useEditorTestDrawingOptionsStore(
     (state) => state.setMarkerBuiltinSymbol,
+  );
+  const setMarkerSymbol = useEditorTestDrawingOptionsStore(
+    (state) => state.setMarkerSymbol,
   );
   const updateLineStyle = useEditorTestDrawingOptionsStore(
     (state) => state.updateLineStyle,
@@ -876,15 +1118,15 @@ export default function ModeToolbar() {
     (state) => state.updateTextStyle,
   );
 
+  const selectedMarkerIsBuiltin = markerSymbol.type === "builtin";
   const selectedMarkerSymbolId: DroMapMarkerBuiltinSymbol =
-    markerSymbol.type === "builtin" ? markerSymbol.id : "circle";
+    selectedMarkerIsBuiltin ? markerSymbol.id : "circle";
   const markerStrokeWeight = markerStyle.weight ?? DEFAULT_MARKER_STROKE_WIDTH;
-  const selectedMarkerHasStroke = markerSymbolSupportsStrokeWeight(
-    selectedMarkerSymbolId,
-  );
-  const selectedMarkerCanBeFilled = markerSymbolSupportsFill(
-    selectedMarkerSymbolId,
-  );
+  const selectedMarkerHasStroke =
+    selectedMarkerIsBuiltin &&
+    markerSymbolSupportsStrokeWeight(selectedMarkerSymbolId);
+  const selectedMarkerCanBeFilled =
+    selectedMarkerIsBuiltin && markerSymbolSupportsFill(selectedMarkerSymbolId);
   const markerFilledEnabled =
     selectedMarkerCanBeFilled && markerStyle.markerFilled === true;
   const zoneStrokeEnabled = zoneStyle.zoneStrokeEnabled !== false;
@@ -944,6 +1186,26 @@ export default function ModeToolbar() {
   }, [activeTool]);
 
   useEffect(() => {
+    if (lineToolChoice !== "trace-line" || canUseTraceToolOnCurrentBasemap) {
+      return;
+    }
+
+    setLineToolChoice("line");
+    if (activeTool === "trace-line") {
+      resetActiveTool();
+    }
+    if (openSettingsTool === "trace-line") {
+      setOpenSettingsTool("line");
+    }
+  }, [
+    activeTool,
+    canUseTraceToolOnCurrentBasemap,
+    lineToolChoice,
+    openSettingsTool,
+    resetActiveTool,
+  ]);
+
+  useEffect(() => {
     if (zoneToolChoice !== "fill-zone") {
       return;
     }
@@ -965,7 +1227,6 @@ export default function ModeToolbar() {
   }, [
     activeTool,
     canUseFillToolOnCurrentBasemap,
-    hasVisibleGeoJsonFillPolygons,
     openSettingsTool,
     resetActiveTool,
     updateZoneStyle,
@@ -973,6 +1234,17 @@ export default function ModeToolbar() {
     zoneStrokeEnabled,
     zoneToolChoice,
   ]);
+
+  function bringSettingsPanelToFront() {
+    setSettingsPanelZIndex(bringFloatingPanelToFront());
+  }
+
+  function scrollMarkerSettingsToTop() {
+    window.requestAnimationFrame(() => {
+      settingsPanelRef.current?.scrollTo({ top: 0 });
+      markerLibraryScrollRef.current?.scrollTo({ top: 0 });
+    });
+  }
 
   function updateZoneStrokeEnabled(nextValue: boolean) {
     if (zoneToolChoice === "fill-zone" && !nextValue && !zoneFillEnabled) {
@@ -990,16 +1262,6 @@ export default function ModeToolbar() {
     updateZoneStyle({ zoneFillEnabled: nextValue });
   }
 
-  function selectSimpleTool(tool: EditorTestActiveTool) {
-    if (activeTool === tool) {
-      resetActiveTool();
-    } else {
-      setActiveTool(tool);
-    }
-
-    setOpenSettingsTool(null);
-  }
-
   function togglePlacementTool(tool: EditorTestActiveTool) {
     if (activeTool === tool) {
       resetActiveTool();
@@ -1013,6 +1275,7 @@ export default function ModeToolbar() {
 
   function openMarkerSymbolLibrary() {
     setActiveTool("marker");
+    bringSettingsPanelToFront();
     setOpenSettingsTool((current) => {
       if (current === "marker" && markerSettingsStep === "symbols") {
         return null;
@@ -1021,10 +1284,12 @@ export default function ModeToolbar() {
       return "marker";
     });
     setMarkerSettingsStep("symbols");
+    scrollMarkerSettingsToTop();
   }
 
   function openMarkerStyleSettings() {
     setActiveTool("marker");
+    bringSettingsPanelToFront();
     setOpenSettingsTool((current) => {
       if (current === "marker" && markerSettingsStep === "style") {
         return null;
@@ -1033,6 +1298,7 @@ export default function ModeToolbar() {
       return "marker";
     });
     setMarkerSettingsStep("style");
+    scrollMarkerSettingsToTop();
   }
 
   function scrollToMarkerCategory(categoryId: string) {
@@ -1046,13 +1312,23 @@ export default function ModeToolbar() {
   }
 
   function openLineSettings() {
-    setActiveTool(lineToolChoice);
+    const nextLineTool =
+      lineToolChoice === "trace-line" && !canUseTraceToolOnCurrentBasemap
+        ? "line"
+        : lineToolChoice;
+
+    if (nextLineTool !== lineToolChoice) {
+      setLineToolChoice(nextLineTool);
+    }
+
+    setActiveTool(nextLineTool);
+    bringSettingsPanelToFront();
     setOpenSettingsTool((current) =>
       current === "line" ||
       current === "freehand" ||
       current === "trace-line"
         ? null
-        : lineToolChoice,
+        : nextLineTool,
     );
   }
 
@@ -1067,6 +1343,7 @@ export default function ModeToolbar() {
     }
 
     setActiveTool(nextZoneTool);
+    bringSettingsPanelToFront();
     setOpenSettingsTool((current) =>
       current === "zone" ||
       current === "freehand-zone" ||
@@ -1078,8 +1355,18 @@ export default function ModeToolbar() {
   }
 
   function chooseLineTool(tool: LineToolChoice) {
+    if (tool === "trace-line" && !canUseTraceToolOnCurrentBasemap) {
+      setLineToolChoice("line");
+      if (activeTool === "trace-line") {
+        resetActiveTool();
+      }
+      setOpenSettingsTool("line");
+      return;
+    }
+
     setLineToolChoice(tool);
     setActiveTool(tool);
+    bringSettingsPanelToFront();
     setOpenSettingsTool(tool);
   }
 
@@ -1095,6 +1382,7 @@ export default function ModeToolbar() {
 
     setZoneToolChoice(tool);
     setActiveTool(tool);
+    bringSettingsPanelToFront();
     setOpenSettingsTool(tool);
   }
 
@@ -1132,7 +1420,15 @@ export default function ModeToolbar() {
   }
 
   return (
-    <div className="pointer-events-none absolute left-4 top-4 z-[1000] flex max-h-[calc(100vh-2rem)] items-start gap-3">
+    <div
+      className="pointer-events-none absolute left-4 top-4 flex max-h-[calc(100vh-2rem)] items-start gap-3"
+      style={{ zIndex: openSettingsTool ? settingsPanelZIndex : 1000 }}
+      onMouseDownCapture={() => {
+        if (openSettingsTool) {
+          bringSettingsPanelToFront();
+        }
+      }}
+    >
       <div className="pointer-events-auto flex max-h-[calc(100vh-2rem)] w-24 flex-col gap-2 overflow-y-auto rounded-2xl border border-black/10 bg-white/95 p-2 shadow-xl backdrop-blur">
         <div className="rounded-xl bg-neutral-900 px-2 py-2 text-center text-[10px] font-semibold leading-tight text-white">
           {EDITOR_MODE_LABELS[currentMode]}
@@ -1150,13 +1446,6 @@ export default function ModeToolbar() {
             role="toolbar"
             aria-label="Outils d’édition DroMap"
           >
-            <ToolButtonRow
-              label="Modifier"
-              active={activeTool === "edit"}
-              icon="✥"
-              onClick={() => selectSimpleTool("edit")}
-            />
-
             <MarkerToolButtonRow
               active={activeTool === "marker"}
               symbolsOpen={
@@ -1167,7 +1456,7 @@ export default function ModeToolbar() {
               }
               icon={
                 <MarkerSymbolPreview
-                  symbolId={selectedMarkerSymbolId}
+                  symbol={markerSymbol}
                   color={markerStyle.color}
                   opacity={1}
                   size={26}
@@ -1188,6 +1477,7 @@ export default function ModeToolbar() {
 
             <ToolButtonRow
               label={getActiveLineToolLabel(lineToolChoice)}
+              displayLabel="Traits"
               active={
                 activeTool === "line" ||
                 activeTool === "freehand" ||
@@ -1198,7 +1488,16 @@ export default function ModeToolbar() {
               icon={getLineToolIcon(lineToolChoice)}
               settingsLabel="Choisir le type de trait et régler son style"
               onClick={() => {
-                const activated = togglePlacementTool(lineToolChoice);
+                const toolToActivate =
+                  lineToolChoice === "trace-line" && !canUseTraceToolOnCurrentBasemap
+                    ? "line"
+                    : lineToolChoice;
+
+                if (toolToActivate !== lineToolChoice) {
+                  setLineToolChoice(toolToActivate);
+                }
+
+                const activated = togglePlacementTool(toolToActivate);
 
                 if (activated && !lineSettingsOpen) {
                   setOpenSettingsTool(null);
@@ -1209,6 +1508,7 @@ export default function ModeToolbar() {
 
             <ToolButtonRow
               label={getActiveToolLabel(zoneToolChoice, zoneStyle.zoneShapeKind)}
+              displayLabel="Zones"
               active={
                 activeTool === "zone" ||
                 activeTool === "freehand-zone" ||
@@ -1240,6 +1540,7 @@ export default function ModeToolbar() {
 
             <ToolButtonRow
               label="Texte"
+              displayLabel="Texte"
               active={activeTool === "text"}
               settingsOpen={openSettingsTool === "text"}
               hasSettings
@@ -1254,6 +1555,7 @@ export default function ModeToolbar() {
               }}
               onSettingsClick={() => {
                 setActiveTool("text");
+                bringSettingsPanelToFront();
                 setOpenSettingsTool((current) =>
                   current === "text" ? null : "text",
                 );
@@ -1265,7 +1567,9 @@ export default function ModeToolbar() {
         <div className="border-t border-neutral-200 pt-2">
           <div className="mb-2 rounded-xl bg-neutral-50 px-2 py-2 text-center text-[10px] leading-tight text-neutral-500">
             {currentMode === "edit"
-              ? getActiveToolLabel(activeTool, zoneStyle.zoneShapeKind)
+              ? activeTool === "select"
+                ? "Sélection / modification"
+                : getActiveToolLabel(activeTool, zoneStyle.zoneShapeKind)
               : "Zone"}
           </div>
 
@@ -1283,6 +1587,8 @@ export default function ModeToolbar() {
 
       {openSettingsTool ? (
         <div
+          ref={settingsPanelRef}
+          data-dromap-tool-settings-panel="true"
           className={`pointer-events-auto ${settingsPanelWidth} max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl border border-black/10 bg-white/95 p-3 text-xs text-neutral-700 shadow-xl backdrop-blur`}
         >
           <div className="mb-3 flex items-center justify-between gap-2">
@@ -1299,6 +1605,7 @@ export default function ModeToolbar() {
               {canResetCurrentSettings ? (
                 <button
                   type="button"
+                  data-dromap-tool-control="true"
                   onClick={resetCurrentSettings}
                   className="rounded-lg px-2 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900"
                   title="Réinitialiser les paramètres de cet outil"
@@ -1309,6 +1616,7 @@ export default function ModeToolbar() {
 
               <button
                 type="button"
+                data-dromap-tool-control="true"
                 onClick={() => setOpenSettingsTool(null)}
                 className="rounded-lg px-2 py-1 text-xs text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
               >
@@ -1322,6 +1630,20 @@ export default function ModeToolbar() {
               <div className="space-y-3">
                 <div className="rounded-lg bg-neutral-50 px-2 py-2 text-[11px] leading-snug text-neutral-600">
                   Choisis le marqueur à poser. Le bouton de la toolbar prendra ensuite cette image.
+                </div>
+
+                <CustomMarkerLibrary
+                  selectedSymbol={markerSymbol}
+                  onSelect={(symbol) => {
+                    setMarkerSymbol(symbol);
+                    setActiveTool("marker");
+                    setMarkerSettingsStep("style");
+                    scrollMarkerSettingsToTop();
+                  }}
+                />
+
+                <div className="border-t border-neutral-200 pt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Bibliothèque DroMap
                 </div>
 
                 <label className="block">
@@ -1368,7 +1690,10 @@ export default function ModeToolbar() {
                   )}
                 </div>
 
-                <div className="max-h-[56vh] space-y-4 overflow-y-auto pr-1">
+                <div
+                  ref={markerLibraryScrollRef}
+                  className="max-h-[56vh] space-y-4 overflow-y-auto pr-1"
+                >
 
                   {markerSymbolGroups.map(({ category, options }) => {
                     return (
@@ -1383,7 +1708,9 @@ export default function ModeToolbar() {
 
                         <div className="grid grid-cols-4 gap-2">
                           {options.map((option) => {
-                            const isSelected = selectedMarkerSymbolId === option.id;
+                            const isSelected =
+                              selectedMarkerIsBuiltin &&
+                              selectedMarkerSymbolId === option.id;
 
                             return (
                               <button
@@ -1396,6 +1723,7 @@ export default function ModeToolbar() {
                                   }
                                   setActiveTool("marker");
                                   setMarkerSettingsStep("style");
+                                  scrollMarkerSettingsToTop();
                                 }}
                                 className={[
                                   "flex min-h-[5.25rem] flex-col items-center justify-center gap-1 rounded-xl border px-2 py-2 text-center transition",
@@ -1406,7 +1734,7 @@ export default function ModeToolbar() {
                                 title={option.label}
                               >
                                 <MarkerSymbolPreview
-                                  symbolId={option.id}
+                                  symbol={{ type: "builtin", id: option.id }}
                                   color={markerStyle.color}
                                   opacity={1}
                                   size={30}
@@ -1432,7 +1760,7 @@ export default function ModeToolbar() {
               <div className="space-y-3">
                 <div className="flex items-center gap-3 rounded-xl bg-neutral-50 px-3 py-2">
                   <MarkerSymbolPreview
-                    symbolId={selectedMarkerSymbolId}
+                    symbol={markerSymbol}
                     color={markerStyle.color}
                     opacity={1}
                     size={38}
@@ -1441,15 +1769,19 @@ export default function ModeToolbar() {
                   />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-semibold text-neutral-900">
-                      {
-                        DROMAP_BUILTIN_MARKER_SYMBOLS.find(
-                          (option) => option.id === selectedMarkerSymbolId,
-                        )?.label
-                      }
+                      {getMarkerSymbolLabel({
+                        properties: {
+                          style: markerStyle,
+                          symbol: markerSymbol,
+                        },
+                      })}
                     </div>
                     <button
                       type="button"
-                      onClick={() => setMarkerSettingsStep("symbols")}
+                      onClick={() => {
+                        setMarkerSettingsStep("symbols");
+                        scrollMarkerSettingsToTop();
+                      }}
                       className="mt-1 rounded-md px-0 text-[11px] font-medium text-blue-600 hover:text-blue-800"
                     >
                       ← Revenir au choix du marqueur
@@ -1457,17 +1789,20 @@ export default function ModeToolbar() {
                   </div>
                 </div>
 
-                <label className="flex items-center justify-between gap-3">
-                  <span>Couleur</span>
-                  <input
-                    type="color"
-                    value={markerStyle.color}
-                    onChange={(event) =>
-                      updateMarkerStyle({ color: event.target.value })
-                    }
-                    className="h-8 w-10 cursor-pointer border-0 bg-transparent p-0"
-                  />
-                </label>
+                {selectedMarkerIsBuiltin ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Couleur</span>
+                    <ColorPicker
+                      value={markerStyle.color}
+                      onChange={(color) => updateMarkerStyle({ color })}
+                      ariaLabel="Couleur du marqueur"
+                    />
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-[11px] leading-relaxed text-violet-900">
+                    Les couleurs de ce marqueur personnalisé sont conservées telles qu’elles ont été dessinées ou importées.
+                  </div>
+                )}
 
                 {selectedMarkerCanBeFilled ? (
                   <label className="flex items-center justify-between gap-3 rounded-lg bg-neutral-50 px-2 py-2">
@@ -1513,7 +1848,7 @@ export default function ModeToolbar() {
                     type="range"
                     min={MIN_MARKER_SIZE}
                     max={MAX_MARKER_SIZE}
-                    step="1"
+                    step="0.5"
                     value={markerStyle.markerSize}
                     onChange={(event) =>
                       updateMarkerStyle({
@@ -1534,7 +1869,7 @@ export default function ModeToolbar() {
                       type="range"
                       min={MIN_MARKER_STROKE_WIDTH}
                       max={MAX_MARKER_STROKE_WIDTH}
-                      step="1"
+                      step="0.5"
                       value={markerStrokeWeight}
                       onChange={(event) =>
                         updateMarkerStyle({
@@ -1554,40 +1889,52 @@ export default function ModeToolbar() {
           {lineSettingsOpen ? (
             <div className="space-y-3">
               <div className="grid grid-cols-3 gap-2 rounded-lg bg-neutral-50 p-2">
-                {LINE_TOOL_CHOICES.map((choice) => (
-                  <button
-                    key={choice.value}
-                    type="button"
-                    onClick={() => chooseLineTool(choice.value)}
-                    className={[
-                      "flex min-h-[5rem] flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-center transition",
-                      lineToolChoice === choice.value
-                        ? "border-blue-500 bg-blue-50 text-blue-700"
-                        : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
-                    ].join(" ")}
-                  >
-                    {choice.icon}
-                    <span className="text-[11px] font-semibold">
-                      {choice.label}
-                    </span>
-                    <span className="text-[10px] leading-snug text-neutral-500">
-                      {choice.description}
-                    </span>
-                  </button>
-                ))}
+                {LINE_TOOL_CHOICES.map((choice) => {
+                  const traceDisabled =
+                    choice.value === "trace-line" && !canUseTraceToolOnCurrentBasemap;
+
+                  return (
+                    <button
+                      key={choice.value}
+                      type="button"
+                      disabled={traceDisabled}
+                      title={
+                        traceDisabled
+                          ? "Le suivi de trait nécessite des frontières d’un fond blanc vectoriel ou des lignes/contours GeoJSON visibles."
+                          : undefined
+                      }
+                      onClick={() => chooseLineTool(choice.value)}
+                      className={[
+                        "flex min-h-[5rem] flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-center transition",
+                        traceDisabled
+                          ? "cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-400 opacity-70"
+                          : lineToolChoice === choice.value
+                            ? "border-blue-500 bg-blue-50 text-blue-700"
+                            : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
+                      ].join(" ")}
+                    >
+                      {choice.icon}
+                      <span className="text-[11px] font-semibold">
+                        {choice.label}
+                      </span>
+                      <span className="text-[10px] leading-snug text-neutral-500">
+                        {traceDisabled
+                          ? "Aucune ligne vectorielle disponible."
+                          : choice.description}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
 
-              <label className="flex items-center justify-between gap-3">
+              <div className="flex items-center justify-between gap-3">
                 <span>Couleur</span>
-                <input
-                  type="color"
+                <ColorPicker
                   value={lineStyle.color}
-                  onChange={(event) =>
-                    updateLineStyle({ color: event.target.value })
-                  }
-                  className="h-8 w-10 cursor-pointer border-0 bg-transparent p-0"
+                  onChange={(color) => updateLineStyle({ color })}
+                  ariaLabel="Couleur du trait"
                 />
-              </label>
+              </div>
 
               <label className="flex items-center justify-between gap-3">
                 <span>Trait</span>
@@ -1644,7 +1991,7 @@ export default function ModeToolbar() {
                   type="range"
                   min="1"
                   max="12"
-                  step="1"
+                  step="0.5"
                   value={lineStyle.weight}
                   onChange={(event) =>
                     updateLineStyle({ weight: Number(event.target.value) })
@@ -1663,7 +2010,7 @@ export default function ModeToolbar() {
                     type="range"
                     min="0"
                     max="100"
-                    step="1"
+                    step="0.5"
                     value={lineStyle.freehandSmoothing ?? 0}
                     onChange={(event) =>
                       updateLineStyle({
@@ -1722,7 +2069,7 @@ export default function ModeToolbar() {
                       disabled={fillDisabled}
                       title={
                         fillDisabled
-                          ? "Le remplissage est indisponible sur ce fond classique tant qu’aucune zone GeoJSON visible n’est disponible. Utilise un fond blanc/vectoriel ou affiche un calque GeoJSON polygonal."
+                          ? "Le remplissage nécessite les frontières d’un fond blanc vectoriel ou un calque GeoJSON polygonal visible."
                           : undefined
                       }
                       onClick={() => chooseZoneTool(choice.value)}
@@ -1741,7 +2088,7 @@ export default function ModeToolbar() {
                       </span>
                       <span className="text-[10px] leading-snug text-neutral-500">
                         {fillDisabled
-                          ? "Indisponible sur les fonds classiques."
+                          ? "Aucun polygone vectoriel disponible."
                           : choice.description}
                       </span>
                     </button>
@@ -1816,7 +2163,7 @@ export default function ModeToolbar() {
                     type="range"
                     min="0"
                     max="100"
-                    step="1"
+                    step="0.5"
                     value={zoneStyle.freehandSmoothing ?? 0}
                     onChange={(event) =>
                       updateZoneStyle({
@@ -1858,31 +2205,25 @@ export default function ModeToolbar() {
               </div>
 
               {zoneStrokeEnabled ? (
-                <label className="flex items-center justify-between gap-3">
+                <div className="flex items-center justify-between gap-3">
                   <span>Couleur contour</span>
-                  <input
-                    type="color"
+                  <ColorPicker
                     value={zoneStyle.color}
-                    onChange={(event) =>
-                      updateZoneStyle({ color: event.target.value })
-                    }
-                    className="h-8 w-10 cursor-pointer border-0 bg-transparent p-0"
+                    onChange={(color) => updateZoneStyle({ color })}
+                    ariaLabel="Couleur du contour"
                   />
-                </label>
+                </div>
               ) : null}
 
               {zoneFillEnabled ? (
-                <label className="flex items-center justify-between gap-3">
+                <div className="flex items-center justify-between gap-3">
                   <span>Couleur fond</span>
-                  <input
-                    type="color"
+                  <ColorPicker
                     value={zoneStyle.fillColor}
-                    onChange={(event) =>
-                      updateZoneStyle({ fillColor: event.target.value })
-                    }
-                    className="h-8 w-10 cursor-pointer border-0 bg-transparent p-0"
+                    onChange={(fillColor) => updateZoneStyle({ fillColor })}
+                    ariaLabel="Couleur du fond"
                   />
-                </label>
+                </div>
               ) : null}
 
               {zoneStrokeEnabled ? (
@@ -1916,7 +2257,7 @@ export default function ModeToolbar() {
                       type="range"
                       min="1"
                       max="12"
-                      step="1"
+                      step="0.5"
                       value={zoneStyle.weight}
                       onChange={(event) =>
                         updateZoneStyle({ weight: Number(event.target.value) })
@@ -1990,19 +2331,14 @@ export default function ModeToolbar() {
 
               {zoneStyle.zoneHatchingStyle !== "none" ? (
                 <>
-                  <label className="flex items-center justify-between gap-3">
+                  <div className="flex items-center justify-between gap-3">
                     <span>Couleur hachures</span>
-                    <input
-                      type="color"
+                    <ColorPicker
                       value={zoneStyle.zoneHatchingColor}
-                      onChange={(event) =>
-                        updateZoneStyle({
-                          zoneHatchingColor: event.target.value,
-                        })
-                      }
-                      className="h-8 w-10 cursor-pointer border-0 bg-transparent p-0"
+                      onChange={(zoneHatchingColor) => updateZoneStyle({ zoneHatchingColor })}
+                      ariaLabel="Couleur des hachures"
                     />
-                  </label>
+                  </div>
 
                   <label className="block">
                     <div className="mb-1 flex justify-between">
@@ -2014,7 +2350,7 @@ export default function ModeToolbar() {
                       type="range"
                       min={MIN_ZONE_HATCHING_WEIGHT}
                       max={MAX_ZONE_HATCHING_WEIGHT}
-                      step="1"
+                      step="0.5"
                       value={zoneStyle.zoneHatchingWeight}
                       onChange={(event) =>
                         updateZoneStyle({
@@ -2034,7 +2370,7 @@ export default function ModeToolbar() {
                       type="range"
                       min={MIN_ZONE_HATCHING_SPACING}
                       max={MAX_ZONE_HATCHING_SPACING}
-                      step="1"
+                      step="0.5"
                       value={zoneStyle.zoneHatchingSpacing}
                       onChange={(event) =>
                         updateZoneStyle({
@@ -2061,19 +2397,14 @@ export default function ModeToolbar() {
 
               {zoneStyle.zoneDotsEnabled ? (
                 <>
-                  <label className="flex items-center justify-between gap-3">
+                  <div className="flex items-center justify-between gap-3">
                     <span>Couleur points</span>
-                    <input
-                      type="color"
+                    <ColorPicker
                       value={zoneStyle.zoneDotsColor}
-                      onChange={(event) =>
-                        updateZoneStyle({
-                          zoneDotsColor: event.target.value,
-                        })
-                      }
-                      className="h-8 w-10 cursor-pointer border-0 bg-transparent p-0"
+                      onChange={(zoneDotsColor) => updateZoneStyle({ zoneDotsColor })}
+                      ariaLabel="Couleur des points"
                     />
-                  </label>
+                  </div>
 
                   <label className="block">
                     <div className="mb-1 flex justify-between">
@@ -2105,7 +2436,7 @@ export default function ModeToolbar() {
                       type="range"
                       min={MIN_ZONE_DOTS_SPACING}
                       max={MAX_ZONE_DOTS_SPACING}
-                      step="1"
+                      step="0.5"
                       value={zoneStyle.zoneDotsSpacing}
                       onChange={(event) =>
                         updateZoneStyle({
@@ -2121,17 +2452,14 @@ export default function ModeToolbar() {
 
           {openSettingsTool === "text" ? (
             <div className="space-y-3">
-              <label className="flex items-center justify-between gap-3">
+              <div className="flex items-center justify-between gap-3">
                 <span>Couleur</span>
-                <input
-                  type="color"
+                <ColorPicker
                   value={textStyle.color}
-                  onChange={(event) =>
-                    updateTextStyle({ color: event.target.value })
-                  }
-                  className="h-8 w-10 cursor-pointer border-0 bg-transparent p-0"
+                  onChange={(color) => updateTextStyle({ color })}
+                  ariaLabel="Couleur du texte"
                 />
-              </label>
+              </div>
 
               <label className="block">
                 <div className="mb-1 flex justify-between">
@@ -2153,27 +2481,87 @@ export default function ModeToolbar() {
                 />
               </label>
 
-              <label className="block">
-                <div className="mb-1 flex justify-between">
-                  <span>Taille</span>
-                  <span>{textStyle.fontSize}px</span>
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-2">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="font-semibold text-blue-950">Police</span>
+                  <span className="tabular-nums font-bold text-blue-900">
+                    {textStyle.fontSize}px
+                  </span>
                 </div>
-                <input
-                  className="w-full"
-                  type="range"
-                  min={MIN_TEXT_FONT_SIZE}
-                  max={MAX_TEXT_FONT_SIZE}
-                  step="1"
-                  value={textStyle.fontSize}
-                  onChange={(event) =>
-                    updateTextStyle({
-                      fontSize: Number(event.target.value),
-                    })
-                  }
-                />
-              </label>
+                <div className="grid grid-cols-[1fr_5.5rem] gap-2">
+                  <select
+                    value={textStyle.fontSize}
+                    onChange={(event) =>
+                      updateTextStyle({
+                        fontSize: Math.min(
+                          MAX_TEXT_FONT_SIZE,
+                          Math.max(MIN_TEXT_FONT_SIZE, Number(event.target.value)),
+                        ),
+                      })
+                    }
+                    className="rounded-md border border-blue-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    aria-label="Taille prédéfinie des nouveaux textes"
+                  >
+                    {!(TEXT_FONT_SIZE_OPTIONS as readonly number[]).includes(
+                      textStyle.fontSize,
+                    ) ? (
+                      <option value={textStyle.fontSize}>
+                        {textStyle.fontSize} px
+                      </option>
+                    ) : null}
+                    {TEXT_FONT_SIZE_OPTIONS.map((size) => (
+                      <option key={size} value={size}>{size} px</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min={MIN_TEXT_FONT_SIZE}
+                    max={MAX_TEXT_FONT_SIZE}
+                    step="0.5"
+                    value={textStyle.fontSize}
+                    onChange={(event) => {
+                      const raw = Number(event.target.value);
+                      if (!Number.isFinite(raw)) return;
+                      updateTextStyle({
+                        fontSize: Math.min(
+                          MAX_TEXT_FONT_SIZE,
+                          Math.max(MIN_TEXT_FONT_SIZE, raw),
+                        ),
+                      });
+                    }}
+                    className="rounded-md border border-blue-200 bg-white px-2 py-1.5 text-xs font-semibold tabular-nums text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    aria-label="Taille exacte des nouveaux textes"
+                  />
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => updateTextStyle({ textBold: !textStyle.textBold })}
+                    className={[
+                      "rounded-md border px-2 py-1.5 text-xs font-extrabold transition",
+                      textStyle.textBold
+                        ? "border-blue-700 bg-blue-700 text-white"
+                        : "border-blue-200 bg-white text-blue-900 hover:bg-blue-100",
+                    ].join(" ")}
+                  >
+                    Gras
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateTextStyle({ textItalic: !textStyle.textItalic })}
+                    className={[
+                      "rounded-md border px-2 py-1.5 text-xs font-semibold italic transition",
+                      textStyle.textItalic
+                        ? "border-blue-700 bg-blue-700 text-white"
+                        : "border-blue-200 bg-white text-blue-900 hover:bg-blue-100",
+                    ].join(" ")}
+                  >
+                    Italique
+                  </button>
+                </div>
+              </div>
 
-              <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-2">
+              <div className="grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-2">
                 <label className="flex items-center justify-between gap-2">
                   <span>Fond</span>
                   <input
@@ -2201,23 +2589,56 @@ export default function ModeToolbar() {
                     className="h-4 w-4 cursor-pointer rounded border-slate-300"
                   />
                 </label>
+
+                <label className="flex items-center justify-between gap-2">
+                  <span>Contour blanc</span>
+                  <input
+                    type="checkbox"
+                    checked={textStyle.textOutlineEnabled}
+                    onChange={(event) =>
+                      updateTextStyle({
+                        textOutlineEnabled: event.target.checked,
+                        textOutlineColor: "#ffffff",
+                      })
+                    }
+                    className="h-4 w-4 cursor-pointer rounded border-slate-300"
+                  />
+                </label>
               </div>
+
+              {textStyle.textOutlineEnabled ? (
+                <label className="block">
+                  <div className="mb-1 flex justify-between">
+                    <span>Épaisseur contour blanc</span>
+                    <span>{textStyle.textOutlineWidth}px</span>
+                  </div>
+                  <input
+                    className="w-full"
+                    type="range"
+                    min="0"
+                    max="6"
+                    step="0.25"
+                    value={textStyle.textOutlineWidth}
+                    onChange={(event) =>
+                      updateTextStyle({
+                        textOutlineWidth: Number(event.target.value),
+                        textOutlineColor: "#ffffff",
+                      })
+                    }
+                  />
+                </label>
+              ) : null}
 
               {textStyle.textBackgroundEnabled ? (
                 <>
-                  <label className="flex items-center justify-between gap-3">
+                  <div className="flex items-center justify-between gap-3">
                     <span>Couleur fond</span>
-                    <input
-                      type="color"
+                    <ColorPicker
                       value={textStyle.textBackgroundColor}
-                      onChange={(event) =>
-                        updateTextStyle({
-                          textBackgroundColor: event.target.value,
-                        })
-                      }
-                      className="h-8 w-10 cursor-pointer border-0 bg-transparent p-0"
+                      onChange={(textBackgroundColor) => updateTextStyle({ textBackgroundColor })}
+                      ariaLabel="Couleur du fond du texte"
                     />
-                  </label>
+                  </div>
 
                   <label className="block">
                     <div className="mb-1 flex justify-between">
@@ -2243,19 +2664,14 @@ export default function ModeToolbar() {
 
               {textStyle.textBorderEnabled ? (
                 <>
-                  <label className="flex items-center justify-between gap-3">
+                  <div className="flex items-center justify-between gap-3">
                     <span>Couleur cadre</span>
-                    <input
-                      type="color"
+                    <ColorPicker
                       value={textStyle.textBorderColor}
-                      onChange={(event) =>
-                        updateTextStyle({
-                          textBorderColor: event.target.value,
-                        })
-                      }
-                      className="h-8 w-10 cursor-pointer border-0 bg-transparent p-0"
+                      onChange={(textBorderColor) => updateTextStyle({ textBorderColor })}
+                      ariaLabel="Couleur du cadre du texte"
                     />
-                  </label>
+                  </div>
 
                   <label className="block">
                     <div className="mb-1 flex justify-between">
@@ -2267,7 +2683,7 @@ export default function ModeToolbar() {
                       type="range"
                       min={MIN_TEXT_BORDER_WIDTH}
                       max={MAX_TEXT_BORDER_WIDTH}
-                      step="1"
+                      step="0.5"
                       value={textStyle.textBorderWidth}
                       onChange={(event) =>
                         updateTextStyle({

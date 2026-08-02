@@ -7,6 +7,7 @@ import { useMap } from "react-leaflet";
 import type { DroMapFeature } from "@/lib/dromap/feature";
 import {
   isBoundaryFillZoneFeature,
+  isFeatureGeometryLocked,
   isFreehandLineFeature,
   isTracedLineFeature,
   isFeatureLocked,
@@ -284,6 +285,7 @@ function enableLayerEdit(layer: L.Layer) {
     (feature && isTracedLineFeature(feature)) ||
     (feature && isFreehandZoneFeature(feature)) ||
     (feature && isQuickShapeZoneFeature(feature)) ||
+    (feature && isFeatureGeometryLocked(feature)) ||
     (feature && isBoundaryFillZoneFeature(feature))
   ) {
     disableLayerEdit(layer);
@@ -441,6 +443,7 @@ function syncLayerGeometryToStore(layer: L.Layer) {
   if (
     !existingFeature ||
     isFeatureEffectivelyLocked(existingFeature, useEditorTestLayersStore.getState().layers) ||
+    isFeatureGeometryLocked(existingFeature) ||
     isBoundaryFillZoneFeature(existingFeature)
   ) {
     return;
@@ -611,6 +614,7 @@ function bindManualBodyDrag(map: L.Map, layer: L.Layer): () => void {
     const canDragLayer =
       latestMode === "edit" &&
       !isFeatureEffectivelyLocked(feature, useEditorTestLayersStore.getState().layers) &&
+      !isFeatureGeometryLocked(feature) &&
       !isBoundaryFillZoneFeature(feature) &&
       (latestTool === "edit" ||
         (latestTool === "select" &&

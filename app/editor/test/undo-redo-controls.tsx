@@ -47,6 +47,7 @@ export function UndoRedoControls() {
     <div className="flex justify-center gap-2">
       <button
         type="button"
+        data-dromap-tool-control="true"
         onClick={handleUndo}
         disabled={!canUndo}
         title="Annuler"
@@ -58,6 +59,7 @@ export function UndoRedoControls() {
 
       <button
         type="button"
+        data-dromap-tool-control="true"
         onClick={handleRedo}
         disabled={!canRedo}
         title="Rétablir"

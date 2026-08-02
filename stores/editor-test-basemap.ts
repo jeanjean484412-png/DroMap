@@ -15,6 +15,7 @@ type EditorTestBasemapState = {
   basemapId: DromapBasemapId;
   basemapFitRequestId: number;
   activeBasemapBounds: DromapBasemapBounds | null;
+  showCountryNeighborContext: boolean;
   setBasemapId: (
     basemapId: DromapBasemapId,
     options?: SetBasemapOptions,
@@ -22,6 +23,7 @@ type EditorTestBasemapState = {
   setBasemapIdFromUnknown: (basemapId: unknown) => void;
   resetBasemapId: () => void;
   setActiveBasemapBounds: (bounds: DromapBasemapBounds | null) => void;
+  setShowCountryNeighborContext: (show: boolean) => void;
 };
 
 export const useEditorTestBasemapStore = create<EditorTestBasemapState>(
@@ -29,6 +31,7 @@ export const useEditorTestBasemapStore = create<EditorTestBasemapState>(
     basemapId: DEFAULT_DROMAP_BASEMAP_ID,
     basemapFitRequestId: 0,
     activeBasemapBounds: null,
+    showCountryNeighborContext: true,
 
     setBasemapId: (basemapId, options) => {
       set((state) => ({
@@ -52,11 +55,16 @@ export const useEditorTestBasemapStore = create<EditorTestBasemapState>(
       set({
         basemapId: DEFAULT_DROMAP_BASEMAP_ID,
         activeBasemapBounds: null,
+        showCountryNeighborContext: true,
       });
     },
 
     setActiveBasemapBounds: (bounds) => {
       set({ activeBasemapBounds: bounds });
+    },
+
+    setShowCountryNeighborContext: (show) => {
+      set({ showCountryNeighborContext: show });
     },
   }),
 );

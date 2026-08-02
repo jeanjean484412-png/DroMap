@@ -1,4 +1,4 @@
-import L from "leaflet";
+import type { LatLngTuple } from "leaflet";
 
 /** Bounds Leaflet sérialisables (zone de travail, hors features pédagogiques). */
 export type WorkspaceBounds = {
@@ -26,6 +26,73 @@ export type WorkspaceClampBounds = {
   north: number;
   east: number;
 };
+
+type LatLngLike = {
+  lat: number;
+  lng: number;
+};
+
+type LatLngBoundsLike = {
+  getSouth: () => number;
+  getWest: () => number;
+  getNorth: () => number;
+  getEast: () => number;
+  getSouthWest: () => LatLngLike;
+  getNorthEast: () => LatLngLike;
+};
+
+type RectangleLike = {
+  getBounds: () => LatLngBoundsLike;
+};
+
+export const DROMAP_FULL_WORLD_WORKSPACE_BOUNDS: WorkspaceBounds = {
+  southWest: { lat: -85.05112878, lng: -180 },
+  northEast: { lat: 85.05112878, lng: 180 },
+};
+
+const FULL_WORLD_BOUNDS_EPSILON = 0.01;
+
+export function isFullWorldWorkspaceBounds(
+  bounds: WorkspaceBounds | null | undefined,
+): boolean {
+  if (!bounds) {
+    return false;
+  }
+
+  const southWest =
+    bounds.southWest ??
+    bounds.sw ??
+    bounds._southWest ??
+    (typeof bounds.south === "number" && typeof bounds.west === "number"
+      ? { lat: bounds.south, lng: bounds.west }
+      : null);
+  const northEast =
+    bounds.northEast ??
+    bounds.ne ??
+    bounds._northEast ??
+    (typeof bounds.north === "number" && typeof bounds.east === "number"
+      ? { lat: bounds.north, lng: bounds.east }
+      : null);
+
+  if (!southWest || !northEast) {
+    return false;
+  }
+
+  return (
+    Math.abs(
+      southWest.lat - DROMAP_FULL_WORLD_WORKSPACE_BOUNDS.southWest.lat,
+    ) <= FULL_WORLD_BOUNDS_EPSILON &&
+    Math.abs(
+      northEast.lat - DROMAP_FULL_WORLD_WORKSPACE_BOUNDS.northEast.lat,
+    ) <= FULL_WORLD_BOUNDS_EPSILON &&
+    Math.abs(
+      southWest.lng - DROMAP_FULL_WORLD_WORKSPACE_BOUNDS.southWest.lng,
+    ) <= FULL_WORLD_BOUNDS_EPSILON &&
+    Math.abs(
+      northEast.lng - DROMAP_FULL_WORLD_WORKSPACE_BOUNDS.northEast.lng,
+    ) <= FULL_WORLD_BOUNDS_EPSILON
+  );
+}
 
 const WORKSPACE_MIN_LAT = -85.05112878;
 const WORKSPACE_MAX_LAT = 85.05112878;
@@ -58,7 +125,7 @@ function clampToRange(value: number, min: number, max: number) {
 }
 
 export function getWorkspaceClampBoundsFromLatLngBounds(
-  bounds: L.LatLngBounds,
+  bounds: LatLngBoundsLike,
 ): WorkspaceClampBounds {
   return {
     south: clampLatitude(bounds.getSouth()),
@@ -69,8 +136,8 @@ export function getWorkspaceClampBoundsFromLatLngBounds(
 }
 
 export function normalizeWorkspaceBounds(
-  southWest: L.LatLng,
-  northEast: L.LatLng,
+  southWest: LatLngLike,
+  northEast: LatLngLike,
   clampBounds?: WorkspaceClampBounds | null,
 ): WorkspaceBounds {
   const defaultSouth = clampLatitude(Math.min(southWest.lat, northEast.lat));
@@ -136,14 +203,14 @@ export function clampWorkspaceBounds(
   clampBounds?: WorkspaceClampBounds | null,
 ): WorkspaceBounds {
   return normalizeWorkspaceBounds(
-    L.latLng(bounds.southWest.lat, bounds.southWest.lng),
-    L.latLng(bounds.northEast.lat, bounds.northEast.lng),
+    bounds.southWest,
+    bounds.northEast,
     clampBounds,
   );
 }
 
 export function boundsFromRectangle(
-  layer: L.Rectangle,
+  layer: RectangleLike,
   clampBounds?: WorkspaceClampBounds | null,
 ): WorkspaceBounds {
   const bounds = layer.getBounds();
@@ -155,9 +222,18 @@ export function boundsFromRectangle(
   );
 }
 
-export function toLatLngBounds(bounds: WorkspaceBounds): L.LatLngBounds {
-  return L.latLngBounds(
+/**
+ * Renvoie une expression Leaflet sérialisable sans instancier Leaflet ici.
+ *
+ * Ce fichier est importé par des composants évalués côté serveur par Next.js.
+ * Il ne doit donc jamais importer le runtime Leaflet, qui accède à `window`
+ * pendant l'évaluation du module.
+ */
+export function toLatLngBounds(
+  bounds: WorkspaceBounds,
+): [LatLngTuple, LatLngTuple] {
+  return [
     [bounds.southWest.lat, bounds.southWest.lng],
     [bounds.northEast.lat, bounds.northEast.lng],
-  );
+  ];
 }

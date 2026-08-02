@@ -1,3 +1,5 @@
+import type { Map as LeafletMap } from "leaflet";
+
 import type {
   DroMapFeature,
   DroMapGeometry,
@@ -5,7 +7,10 @@ import type {
   DroMapPoint,
   DroMapPolygon,
 } from "@/lib/dromap/feature";
-import { isFeatureLocked } from "@/lib/dromap/feature";
+import {
+  isFeatureGeometryLocked,
+  isFeatureLocked,
+} from "@/lib/dromap/feature";
 import {
   isFeatureEffectivelyLocked,
   useEditorTestLayersStore,
@@ -15,10 +20,14 @@ import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
 import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 
-const DEFAULT_DUPLICATE_LNG_OFFSET = 0.01;
-const DEFAULT_DUPLICATE_LAT_OFFSET = -0.01;
-const WORKSPACE_DUPLICATE_OFFSET_RATIO = 0.025;
-const FEATURE_DUPLICATE_OFFSET_RATIO = 0.12;
+/** Décalage visuel constant entre l'original et sa copie. */
+const DUPLICATE_PIXEL_OFFSET = 28;
+
+/** Repli utilisé uniquement si la carte Leaflet n'est pas encore montée. */
+const FALLBACK_DUPLICATE_LNG_OFFSET = 0.01;
+const FALLBACK_DUPLICATE_LAT_OFFSET = -0.01;
+
+type Coordinate = [number, number];
 
 type CoordinatesBounds = {
   minLng: number;
@@ -27,10 +36,21 @@ type CoordinatesBounds = {
   maxLat: number;
 };
 
-type DuplicateOffset = {
+type GeographicOffset = {
   lng: number;
   lat: number;
 };
+
+type PixelOffset = {
+  x: number;
+  y: number;
+};
+
+let currentDuplicationMap: LeafletMap | null = null;
+
+export function setFeatureDuplicationMap(map: LeafletMap | null) {
+  currentDuplicationMap = map;
+}
 
 function cloneDroMapFeature(feature: DroMapFeature): DroMapFeature {
   if (typeof structuredClone === "function") {
@@ -50,7 +70,7 @@ function createFeatureId() {
 
 function expandBoundsWithCoordinate(
   bounds: CoordinatesBounds | null,
-  coordinate: [number, number],
+  coordinate: Coordinate,
 ): CoordinatesBounds {
   const [lng, lat] = coordinate;
 
@@ -83,175 +103,176 @@ function getGeometryBounds(geometry: DroMapGeometry): CoordinatesBounds | null {
     );
   }
 
-  if (geometry.type === "Polygon") {
-    return geometry.coordinates.reduce<CoordinatesBounds | null>(
-      (polygonBounds, ring) =>
-        ring.reduce<CoordinatesBounds | null>(
-          (ringBounds, coordinate) => expandBoundsWithCoordinate(ringBounds, coordinate),
-          polygonBounds,
-        ),
-      null,
-    );
-  }
-
-  return null;
-}
-
-function getWorkspaceSize(workspaceBounds: WorkspaceBounds | null) {
-  if (!workspaceBounds) {
-    return null;
-  }
-
-  const lngSize = Math.abs(
-    workspaceBounds.northEast.lng - workspaceBounds.southWest.lng,
+  return geometry.coordinates.reduce<CoordinatesBounds | null>(
+    (polygonBounds, ring) =>
+      ring.reduce<CoordinatesBounds | null>(
+        (ringBounds, coordinate) =>
+          expandBoundsWithCoordinate(ringBounds, coordinate),
+        polygonBounds,
+      ),
+    null,
   );
-  const latSize = Math.abs(
-    workspaceBounds.northEast.lat - workspaceBounds.southWest.lat,
-  );
-
-  if (!Number.isFinite(lngSize) || !Number.isFinite(latSize)) {
-    return null;
-  }
-
-  if (lngSize <= 0 || latSize <= 0) {
-    return null;
-  }
-
-  return {
-    lngSize,
-    latSize,
-  };
 }
 
-function getFeatureSize(featureBounds: CoordinatesBounds | null) {
-  if (!featureBounds) {
-    return null;
-  }
-
-  return {
-    lngSize: Math.abs(featureBounds.maxLng - featureBounds.minLng),
-    latSize: Math.abs(featureBounds.maxLat - featureBounds.minLat),
-  };
-}
-
-function getDuplicateOffset(
-  feature: DroMapFeature,
+function geometryFitsWorkspace(
+  geometry: DroMapGeometry,
   workspaceBounds: WorkspaceBounds | null,
-): DuplicateOffset {
-  const featureBounds = getGeometryBounds(feature.geometry);
-  const workspaceSize = getWorkspaceSize(workspaceBounds);
-  const featureSize = getFeatureSize(featureBounds);
+) {
+  if (!workspaceBounds) {
+    return true;
+  }
 
-  const lngOffset = Math.max(
-    workspaceSize
-      ? workspaceSize.lngSize * WORKSPACE_DUPLICATE_OFFSET_RATIO
-      : DEFAULT_DUPLICATE_LNG_OFFSET,
-    featureSize ? featureSize.lngSize * FEATURE_DUPLICATE_OFFSET_RATIO : 0,
-    DEFAULT_DUPLICATE_LNG_OFFSET,
+  const bounds = getGeometryBounds(geometry);
+
+  if (!bounds) {
+    return true;
+  }
+
+  return (
+    bounds.minLng >= workspaceBounds.southWest.lng &&
+    bounds.maxLng <= workspaceBounds.northEast.lng &&
+    bounds.minLat >= workspaceBounds.southWest.lat &&
+    bounds.maxLat <= workspaceBounds.northEast.lat
   );
+}
 
-  const latOffset = Math.max(
-    workspaceSize
-      ? workspaceSize.latSize * WORKSPACE_DUPLICATE_OFFSET_RATIO
-      : Math.abs(DEFAULT_DUPLICATE_LAT_OFFSET),
-    featureSize ? featureSize.latSize * FEATURE_DUPLICATE_OFFSET_RATIO : 0,
-    Math.abs(DEFAULT_DUPLICATE_LAT_OFFSET),
-  );
+function translateCoordinateByPixels(
+  coordinate: Coordinate,
+  map: LeafletMap,
+  offset: PixelOffset,
+): Coordinate {
+  const zoom = map.getZoom();
+  const projectedPoint = map.project([coordinate[1], coordinate[0]], zoom);
+  const shiftedPoint = projectedPoint.add([offset.x, offset.y]);
+  const shiftedLatLng = map.unproject(shiftedPoint, zoom);
 
-  let nextLngOffset = lngOffset;
-  let nextLatOffset = -latOffset;
+  return [shiftedLatLng.lng, shiftedLatLng.lat];
+}
 
-  if (workspaceBounds && featureBounds) {
-    if (featureBounds.maxLng + nextLngOffset > workspaceBounds.northEast.lng) {
-      nextLngOffset = -lngOffset;
-    }
+function translateGeometryByPixels(
+  geometry: DroMapGeometry,
+  map: LeafletMap,
+  offset: PixelOffset,
+): DroMapGeometry {
+  if (geometry.type === "Point") {
+    return {
+      ...geometry,
+      coordinates: translateCoordinateByPixels(geometry.coordinates, map, offset),
+    } as DroMapPoint;
+  }
 
-    if (featureBounds.minLat + nextLatOffset < workspaceBounds.southWest.lat) {
-      nextLatOffset = latOffset;
-    }
+  if (geometry.type === "LineString") {
+    return {
+      ...geometry,
+      coordinates: geometry.coordinates.map((coordinate) =>
+        translateCoordinateByPixels(coordinate, map, offset),
+      ),
+    } as DroMapLineString;
   }
 
   return {
-    lng: nextLngOffset,
-    lat: nextLatOffset,
-  };
-}
-
-function translatePointGeometry(
-  geometry: DroMapPoint,
-  offset: DuplicateOffset,
-): DroMapPoint {
-  return {
     ...geometry,
-    coordinates: [
-      geometry.coordinates[0] + offset.lng,
-      geometry.coordinates[1] + offset.lat,
-    ],
-  };
-}
-
-function translateLineStringGeometry(
-  geometry: DroMapLineString,
-  offset: DuplicateOffset,
-): DroMapLineString {
-  return {
-    ...geometry,
-    coordinates: geometry.coordinates.map(
-      (coordinate) =>
-        [coordinate[0] + offset.lng, coordinate[1] + offset.lat] as [
-          number,
-          number,
-        ],
+    coordinates: geometry.coordinates.map((ring) =>
+      ring.map((coordinate) =>
+        translateCoordinateByPixels(coordinate, map, offset),
+      ),
     ),
-  };
+  } as DroMapPolygon;
 }
 
-function translatePolygonGeometry(
-  geometry: DroMapPolygon,
-  offset: DuplicateOffset,
-): DroMapPolygon {
+function translateGeometryByGeographicOffset(
+  geometry: DroMapGeometry,
+  offset: GeographicOffset,
+): DroMapGeometry {
+  if (geometry.type === "Point") {
+    return {
+      ...geometry,
+      coordinates: [
+        geometry.coordinates[0] + offset.lng,
+        geometry.coordinates[1] + offset.lat,
+      ],
+    } as DroMapPoint;
+  }
+
+  if (geometry.type === "LineString") {
+    return {
+      ...geometry,
+      coordinates: geometry.coordinates.map(
+        (coordinate) =>
+          [coordinate[0] + offset.lng, coordinate[1] + offset.lat] as Coordinate,
+      ),
+    } as DroMapLineString;
+  }
+
   return {
     ...geometry,
     coordinates: geometry.coordinates.map((ring) =>
       ring.map(
         (coordinate) =>
-          [coordinate[0] + offset.lng, coordinate[1] + offset.lat] as [
-            number,
-            number,
-          ],
+          [coordinate[0] + offset.lng, coordinate[1] + offset.lat] as Coordinate,
       ),
     ),
-  };
+  } as DroMapPolygon;
 }
 
-function translateGeometry(
+function getPixelTranslatedGeometry(
   geometry: DroMapGeometry,
-  offset: DuplicateOffset,
-): DroMapGeometry {
-  if (geometry.type === "Point") {
-    return translatePointGeometry(geometry, offset);
+  map: LeafletMap,
+  workspaceBounds: WorkspaceBounds | null,
+) {
+  const candidateOffsets: PixelOffset[] = [
+    { x: DUPLICATE_PIXEL_OFFSET, y: DUPLICATE_PIXEL_OFFSET },
+    { x: -DUPLICATE_PIXEL_OFFSET, y: DUPLICATE_PIXEL_OFFSET },
+    { x: DUPLICATE_PIXEL_OFFSET, y: -DUPLICATE_PIXEL_OFFSET },
+    { x: -DUPLICATE_PIXEL_OFFSET, y: -DUPLICATE_PIXEL_OFFSET },
+  ];
+
+  const translatedCandidates = candidateOffsets.map((offset) =>
+    translateGeometryByPixels(geometry, map, offset),
+  );
+
+  return (
+    translatedCandidates.find((candidate) =>
+      geometryFitsWorkspace(candidate, workspaceBounds),
+    ) ?? translatedCandidates[0] ?? geometry
+  );
+}
+
+function getDuplicatedGeometry(
+  geometry: DroMapGeometry,
+  workspaceBounds: WorkspaceBounds | null,
+) {
+  const map = currentDuplicationMap;
+
+  if (map) {
+    return getPixelTranslatedGeometry(geometry, map, workspaceBounds);
   }
 
-  if (geometry.type === "LineString") {
-    return translateLineStringGeometry(geometry, offset);
-  }
-
-  return translatePolygonGeometry(geometry, offset);
+  return translateGeometryByGeographicOffset(geometry, {
+    lng: FALLBACK_DUPLICATE_LNG_OFFSET,
+    lat: FALLBACK_DUPLICATE_LAT_OFFSET,
+  });
 }
 
 export function duplicateDroMapFeature(
   feature: DroMapFeature,
   workspaceBounds: WorkspaceBounds | null,
 ): DroMapFeature {
-  const offset = getDuplicateOffset(feature, workspaceBounds);
   const duplicatedFeature = cloneDroMapFeature(feature);
+  const {
+    lockOverride: _lockOverride,
+    ...duplicatedProperties
+  } = duplicatedFeature.properties;
 
   return {
     ...duplicatedFeature,
     id: createFeatureId(),
-    geometry: translateGeometry(duplicatedFeature.geometry, offset),
+    geometry: getDuplicatedGeometry(
+      duplicatedFeature.geometry,
+      workspaceBounds,
+    ),
     properties: {
-      ...duplicatedFeature.properties,
+      ...duplicatedProperties,
       style: {
         ...duplicatedFeature.properties.style,
       },
@@ -287,7 +308,11 @@ export function duplicateSelectedFeature() {
 
   if (
     isFeatureLocked(feature) ||
-    isFeatureEffectivelyLocked(feature, useEditorTestLayersStore.getState().layers)
+    isFeatureGeometryLocked(feature) ||
+    isFeatureEffectivelyLocked(
+      feature,
+      useEditorTestLayersStore.getState().layers,
+    )
   ) {
     return false;
   }
