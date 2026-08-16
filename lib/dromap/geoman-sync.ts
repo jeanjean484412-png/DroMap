@@ -13,6 +13,7 @@ import {
   isFeatureEffectivelyLocked,
   useEditorTestLayersStore,
 } from "@/stores/editor-test-layers";
+import { dispatchFeatureBodyDragPreview } from "@/lib/dromap/drag-preview";
 
 type GeomanLayerEvent = {
   layer: L.Layer;
@@ -24,8 +25,11 @@ type GeomanVertexDragEvent = GeomanLayerEvent & {
 };
 
 type DromapGeomanLayer = L.Layer & {
+  dromapBodyDragActive?: boolean;
+  dromapBodyDragPreviewAnchor?: [number, number] | null;
   dromapEditHistoryCommitted?: boolean;
   dromapGeomanEventsBound?: boolean;
+  dromapVertexDragActive?: boolean;
 };
 
 function getDromapLayer(layer: L.Layer): DromapGeomanLayer {
@@ -46,6 +50,63 @@ function commitEditHistoryOnce(layer: L.Layer): void {
 function resetEditHistoryCommit(layer: L.Layer): void {
   const dromapLayer = getDromapLayer(layer);
   dromapLayer.dromapEditHistoryCommitted = false;
+}
+
+function getBodyDragPreviewAnchor(layer: L.Layer): [number, number] | null {
+  const id = getLayerFeatureId(layer);
+  if (!id) return null;
+
+  const existing = useEditorTestFeaturesStore
+    .getState()
+    .features.find((feature) => feature.id === id);
+  if (!existing) return null;
+
+  const shape =
+    existing.geometry.type === "Point"
+      ? "Marker"
+      : existing.geometry.type === "Polygon"
+        ? "Polygon"
+        : "Line";
+  const feature = layerToDroMapFeature(layer, shape, existing);
+  if (!feature) return null;
+
+  if (feature.geometry.type === "Point") {
+    return feature.geometry.coordinates;
+  }
+
+  if (feature.geometry.type === "LineString") {
+    return feature.geometry.coordinates[0] ?? null;
+  }
+
+  return feature.geometry.coordinates[0]?.[0] ?? null;
+}
+
+function resetBodyDragPreview(layer: L.Layer): void {
+  getDromapLayer(layer).dromapBodyDragPreviewAnchor =
+    getBodyDragPreviewAnchor(layer);
+}
+
+function dispatchBodyDragPreview(layer: L.Layer): void {
+  const dromapLayer = getDromapLayer(layer);
+  const previousAnchor = dromapLayer.dromapBodyDragPreviewAnchor;
+  const nextAnchor = getBodyDragPreviewAnchor(layer);
+
+  dromapLayer.dromapBodyDragPreviewAnchor = nextAnchor;
+
+  const featureId = getLayerFeatureId(layer);
+  if (!featureId || !previousAnchor || !nextAnchor) return;
+
+  const lngDelta = nextAnchor[0] - previousAnchor[0];
+  const latDelta = nextAnchor[1] - previousAnchor[1];
+
+  if (latDelta === 0 && lngDelta === 0) return;
+
+  dispatchFeatureBodyDragPreview({
+    featureId,
+    sourceLayer: layer,
+    latDelta,
+    lngDelta,
+  });
 }
 
 function dispatchFeatureGeometryPreviewEvent(layer: L.Layer): void {
@@ -193,16 +254,24 @@ export function bindLayerGeomanEvents(layer: L.Layer): void {
 
   dromapLayer.dromapGeomanEventsBound = true;
 
-  const onEdit = (event: GeomanLayerEvent) =>
+  const onEdit = (event: GeomanLayerEvent) => {
+    const currentLayer = getDromapLayer(layer);
+    if (
+      currentLayer.dromapBodyDragActive ||
+      currentLayer.dromapVertexDragActive
+    ) return;
+
     syncEditToStoreWithSessionHistory(event);
+  };
 
   const onMarkerDragStart = () => {
+    getDromapLayer(layer).dromapVertexDragActive = true;
     commitEditHistoryOnce(layer);
     dispatchFeatureDragLifecycleEvent("dromap:feature-drag-start", layer);
     dispatchFeatureGeometryPreviewEvent(layer);
   };
 
-  const onMarkerDrag = (_event: GeomanVertexDragEvent) => {
+  const onMarkerDrag: L.LeafletEventHandlerFn = () => {
     // La poignée Geoman se déplace en direct. La flèche DroMap visible, elle,
     // est une couche dérivée : on lui transmet donc la géométrie temporaire
     // sans réécrire le store à chaque pixel, ce qui évite de recréer les
@@ -210,35 +279,55 @@ export function bindLayerGeomanEvents(layer: L.Layer): void {
     dispatchFeatureGeometryPreviewEvent(layer);
   };
 
-  const onMarkerDragEnd = (event: GeomanVertexDragEvent) => {
+  const onMarkerDragEnd: L.LeafletEventHandlerFn = (leafletEvent) => {
+    const event = leafletEvent as unknown as GeomanVertexDragEvent;
+
     dispatchFeatureGeometryPreviewEvent(layer);
     syncEditToStore(event);
-    resetEditHistoryCommit(layer);
     dispatchFeatureDragLifecycleEvent("dromap:feature-drag-end", layer);
+
+    window.setTimeout(() => {
+      getDromapLayer(layer).dromapVertexDragActive = false;
+      resetEditHistoryCommit(layer);
+    }, 0);
   };
 
   const onDragStart = () => {
-    // On mémorise l'état initial une seule fois, puis on synchronise la
-    // géométrie pendant le drag sans créer une entrée d'historique par pixel.
-    commitEditHistoryOnce(layer);
+    const dromapLayer = getDromapLayer(layer);
+    dromapLayer.dromapBodyDragActive = true;
+    resetBodyDragPreview(layer);
     dispatchFeatureDragLifecycleEvent("dromap:feature-drag-start", layer);
   };
 
-  const onDrag = (event: GeomanLayerEvent) => {
-    syncEditToStore(event);
+  const onDrag = () => {
+    dispatchBodyDragPreview(layer);
   };
 
   const onDragEnd = (event: GeomanLayerEvent) => {
-    syncEditToStore(event);
+    dispatchBodyDragPreview(layer);
+    syncDragEndToStoreWithHistory(event);
+    getDromapLayer(layer).dromapBodyDragPreviewAnchor = null;
     resetEditHistoryCommit(layer);
     dispatchFeatureDragLifecycleEvent("dromap:feature-drag-end", layer);
+
+    window.setTimeout(() => {
+      getDromapLayer(layer).dromapBodyDragActive = false;
+    }, 0);
   };
 
   const onEditEnabled = () => {
+    const dromapLayer = getDromapLayer(layer);
+    dromapLayer.dromapBodyDragActive = false;
+    dromapLayer.dromapBodyDragPreviewAnchor = null;
+    dromapLayer.dromapVertexDragActive = false;
     resetEditHistoryCommit(layer);
   };
 
   const onEditDisabled = () => {
+    const dromapLayer = getDromapLayer(layer);
+    dromapLayer.dromapBodyDragActive = false;
+    dromapLayer.dromapBodyDragPreviewAnchor = null;
+    dromapLayer.dromapVertexDragActive = false;
     resetEditHistoryCommit(layer);
   };
 

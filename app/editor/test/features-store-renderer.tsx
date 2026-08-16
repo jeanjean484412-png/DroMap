@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import L from "leaflet";
 import { useMap } from "react-leaflet";
 
@@ -31,6 +31,15 @@ import {
   getZoneVisibleStrokeOpacity,
 } from "./zone-style";
 import { bindLayerGeomanEvents } from "@/lib/dromap/geoman-sync";
+import {
+  DROMAP_FEATURE_ID_SET_EVENT,
+  getLayerFeatureId,
+  setLayerFeatureId,
+} from "@/lib/dromap/layer-id";
+import {
+  DROMAP_FEATURE_BODY_DRAG_PREVIEW_EVENT,
+  type FeatureBodyDragPreviewDetail,
+} from "@/lib/dromap/drag-preview";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
 import { useEditorTestToolStore } from "@/stores/editor-test-tool";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
@@ -164,10 +173,6 @@ function refreshGeomanEditHandles(layer: L.Layer) {
   pm.enable();
 }
 
-function getLayerFeatureId(layer: L.Layer) {
-  return (layer as DromapLayer).dromapFeatureId;
-}
-
 function getLayerDrawOrderOwnerId(layer: L.Layer) {
   const dromapLayer = layer as DromapLayer &
     DromapArrowLayer &
@@ -180,22 +185,6 @@ function getLayerDrawOrderOwnerId(layer: L.Layer) {
     (dromapLayer as DromapZoneHatchingLayer).dromapHatchOwnerId ??
     (dromapLayer as DromapZoneOutlineLayer).dromapZoneOutlineOwnerId
   );
-}
-
-function setLayerFeatureId(layer: L.Layer, featureId: string) {
-  (layer as DromapLayer).dromapFeatureId = featureId;
-}
-
-function findLayerByFeatureId(map: L.Map, featureId: string): L.Layer | null {
-  let foundLayer: L.Layer | null = null;
-
-  map.eachLayer((layer) => {
-    if (getLayerFeatureId(layer) === featureId) {
-      foundLayer = layer;
-    }
-  });
-
-  return foundLayer;
 }
 
 function isDromapArrowLayer(layer: L.Layer): layer is DromapArrowLayer {
@@ -441,6 +430,13 @@ function addLineArrowLayersForFeature(
   const dromapArrowLayer = arrowLayer as DromapArrowLayer;
   dromapArrowLayer.dromapArrowOwnerId = feature.id;
   dromapArrowLayer.dromapArrowKind = "line-end";
+  if (arrowLayer instanceof L.LayerGroup) {
+    arrowLayer.eachLayer((layer) => {
+      const arrowPart = layer as DromapArrowLayer;
+      arrowPart.dromapArrowOwnerId = feature.id;
+      arrowPart.dromapArrowKind = "line-end";
+    });
+  }
   arrowLayer.addTo(map);
 }
 
@@ -587,6 +583,71 @@ function createPointIcon(feature: DroMapFeature, currentZoom: number) {
 type DromapFeatureMapLabelLayer = L.Marker & {
   dromapFeatureMapLabelOwnerId?: string;
 };
+
+function getLayerDragPreviewOwnerId(layer: L.Layer) {
+  return (
+    (layer as DromapArrowLayer).dromapArrowOwnerId ??
+    (layer as DromapLineHitboxLayer).dromapHitboxOwnerId ??
+    (layer as DromapZoneHatchingLayer).dromapHatchOwnerId ??
+    (layer as DromapZoneOutlineLayer).dromapZoneOutlineOwnerId ??
+    (layer as DromapFeatureMapLabelLayer).dromapFeatureMapLabelOwnerId
+  );
+}
+
+function translatePreviewLatLngs(
+  value: L.LatLng | L.LatLng[] | L.LatLng[][] | L.LatLng[][][],
+  latDelta: number,
+  lngDelta: number,
+): L.LatLng | L.LatLng[] | L.LatLng[][] | L.LatLng[][][] {
+  if (value instanceof L.LatLng) {
+    return L.latLng(value.lat + latDelta, value.lng + lngDelta);
+  }
+
+  return value.map((item) =>
+    translatePreviewLatLngs(item, latDelta, lngDelta),
+  ) as L.LatLng[] | L.LatLng[][] | L.LatLng[][][];
+}
+
+function translateDragPreviewLayer(
+  layer: L.Layer,
+  latDelta: number,
+  lngDelta: number,
+) {
+  if (layer instanceof L.Marker) {
+    const currentLatLng = layer.getLatLng();
+    layer.setLatLng(
+      L.latLng(currentLatLng.lat + latDelta, currentLatLng.lng + lngDelta),
+    );
+    return;
+  }
+
+  if (layer instanceof L.Polygon || layer instanceof L.Polyline) {
+    layer.setLatLngs(
+      translatePreviewLatLngs(
+        layer.getLatLngs(),
+        latDelta,
+        lngDelta,
+      ) as L.LatLngExpression[],
+    );
+    return;
+  }
+
+  if (layer instanceof L.ImageOverlay) {
+    const bounds = layer.getBounds();
+    layer.setBounds(
+      L.latLngBounds(
+        L.latLng(
+          bounds.getSouthWest().lat + latDelta,
+          bounds.getSouthWest().lng + lngDelta,
+        ),
+        L.latLng(
+          bounds.getNorthEast().lat + latDelta,
+          bounds.getNorthEast().lng + lngDelta,
+        ),
+      ),
+    );
+  }
+}
 
 function ensureFeatureMapLabelPane(map: L.Map, featureCount: number) {
   const pane =
@@ -965,6 +1026,10 @@ function updateExistingLayerFromFeature(
 
 export function FeaturesStoreRenderer() {
   const map = useMap();
+  const featureLayersByIdRef = useRef(new Map<string, L.Layer>());
+  const derivedLayersByFeatureIdRef = useRef(
+    new Map<string, Set<L.Layer>>(),
+  );
 
   const features = useEditorTestFeaturesStore((state) => state.features);
   const layers = useEditorTestLayersStore((state) => state.layers);
@@ -992,6 +1057,109 @@ export function FeaturesStoreRenderer() {
   );
 
   useEffect(() => {
+    const featureLayersById = featureLayersByIdRef.current;
+    const derivedLayersByFeatureId = derivedLayersByFeatureIdRef.current;
+    const observedLayers = new Set<L.Layer>();
+
+    const unregisterLayer = (layer: L.Layer) => {
+      const featureId = getLayerFeatureId(layer);
+
+      if (featureId && featureLayersById.get(featureId) === layer) {
+        featureLayersById.delete(featureId);
+      }
+
+      const ownerId = getLayerDragPreviewOwnerId(layer);
+      const ownedLayers = ownerId
+        ? derivedLayersByFeatureId.get(ownerId)
+        : null;
+
+      if (ownerId && ownedLayers) {
+        ownedLayers.delete(layer);
+
+        if (ownedLayers.size === 0) {
+          derivedLayersByFeatureId.delete(ownerId);
+        }
+      }
+    };
+
+    const registerLayer = (layer: L.Layer) => {
+      const featureId = getLayerFeatureId(layer);
+      if (!featureId) return;
+
+      const previousLayer = featureLayersById.get(featureId);
+      if (
+        previousLayer &&
+        previousLayer !== layer &&
+        map.hasLayer(previousLayer)
+      ) {
+        map.removeLayer(previousLayer);
+      }
+
+      featureLayersById.set(featureId, layer);
+    };
+
+    const registerDerivedLayer = (layer: L.Layer) => {
+      const ownerId = getLayerDragPreviewOwnerId(layer);
+      if (!ownerId) return;
+
+      const ownedLayers = derivedLayersByFeatureId.get(ownerId) ?? new Set();
+      ownedLayers.add(layer);
+      derivedLayersByFeatureId.set(ownerId, ownedLayers);
+    };
+
+    const handleFeatureIdSet: L.LeafletEventHandlerFn = (event) => {
+      registerLayer(event.target as L.Layer);
+    };
+
+    const observeLayer = (layer: L.Layer) => {
+      if (observedLayers.has(layer)) return;
+
+      observedLayers.add(layer);
+      layer.on(DROMAP_FEATURE_ID_SET_EVENT, handleFeatureIdSet);
+      registerLayer(layer);
+      registerDerivedLayer(layer);
+    };
+
+    const forgetLayer = (layer: L.Layer) => {
+      if (observedLayers.delete(layer)) {
+        layer.off(DROMAP_FEATURE_ID_SET_EVENT, handleFeatureIdSet);
+      }
+
+      unregisterLayer(layer);
+    };
+
+    const handleLayerAdd = (event: L.LayerEvent) => {
+      observeLayer(event.layer);
+    };
+
+    const handleLayerRemove = (event: L.LayerEvent) => {
+      forgetLayer(event.layer);
+    };
+
+    // Une seule passe initialise l'index pour les couches déjà présentes.
+    // Les ajouts, suppressions et identifiants assignés après layeradd sont
+    // ensuite suivis de façon incrémentale.
+    map.eachLayer(observeLayer);
+    map.on("layeradd", handleLayerAdd);
+    map.on("layerremove", handleLayerRemove);
+
+    return () => {
+      map.off("layeradd", handleLayerAdd);
+      map.off("layerremove", handleLayerRemove);
+
+      for (const layer of observedLayers) {
+        layer.off(DROMAP_FEATURE_ID_SET_EVENT, handleFeatureIdSet);
+      }
+
+      observedLayers.clear();
+      featureLayersById.clear();
+      derivedLayersByFeatureId.clear();
+    };
+  }, [map]);
+
+  useEffect(() => {
+    const featureLayersById = featureLayersByIdRef.current;
+    const derivedLayersByFeatureId = derivedLayersByFeatureIdRef.current;
     const renderableFeatures = getRenderableFeaturesForLayers(
       features,
       layers,
@@ -1031,13 +1199,11 @@ export function FeaturesStoreRenderer() {
         activeTool,
       );
 
-      map.eachLayer((layer) => {
-        const featureId = getLayerFeatureId(layer);
-
-        if (featureId && !featureIds.has(featureId)) {
+      for (const [featureId, layer] of Array.from(featureLayersById)) {
+        if (!featureIds.has(featureId)) {
           map.removeLayer(layer);
         }
-      });
+      }
 
       if (shouldUseInteractiveFeatureHitboxes(activeTool)) {
         syncLineHitboxLayers(map, displayFeaturesByDrawOrder, paneNamesById);
@@ -1046,7 +1212,13 @@ export function FeaturesStoreRenderer() {
       }
 
       for (const feature of displayFeaturesByDrawOrder) {
-        const existingLayer = findLayerByFeatureId(map, feature.id);
+        const indexedLayer = featureLayersById.get(feature.id);
+        const existingLayer =
+          indexedLayer && map.hasLayer(indexedLayer) ? indexedLayer : null;
+
+        if (indexedLayer && !existingLayer) {
+          featureLayersById.delete(feature.id);
+        }
 
         if (existingLayer) {
           const updated = updateExistingLayerFromFeature(
@@ -1078,6 +1250,7 @@ export function FeaturesStoreRenderer() {
         clearLegacyFeatureMapLabel(layer);
         bindLayerGeomanEvents(layer);
         layer.addTo(map);
+        featureLayersById.set(feature.id, layer);
       }
 
       const currentFeatureMapLabelRenderScale =
@@ -1160,6 +1333,49 @@ export function FeaturesStoreRenderer() {
       );
     };
 
+    const handleFeatureBodyDragPreview = (event: Event) => {
+      const detail = (event as CustomEvent<FeatureBodyDragPreviewDetail>)
+        .detail;
+      const featureId = detail?.featureId;
+      const latDelta = detail?.latDelta;
+      const lngDelta = detail?.lngDelta;
+
+      if (
+        !featureId ||
+        !Number.isFinite(latDelta) ||
+        !Number.isFinite(lngDelta) ||
+        (latDelta === 0 && lngDelta === 0)
+      ) {
+        return;
+      }
+
+      const primaryLayer = featureLayersById.get(featureId);
+
+      if (
+        primaryLayer &&
+        primaryLayer !== detail.sourceLayer &&
+        map.hasLayer(primaryLayer)
+      ) {
+        translateDragPreviewLayer(primaryLayer, latDelta, lngDelta);
+      }
+
+      const derivedLayers = derivedLayersByFeatureId.get(featureId);
+      if (derivedLayers) {
+        for (const derivedLayer of derivedLayers) {
+          if (
+            derivedLayer !== detail.sourceLayer &&
+            map.hasLayer(derivedLayer)
+          ) {
+            translateDragPreviewLayer(derivedLayer, latDelta, lngDelta);
+          }
+        }
+      }
+
+      if (detail.refreshEditHandles && primaryLayer) {
+        refreshGeomanEditHandles(primaryLayer);
+      }
+    };
+
     renderAtCurrentZoom();
 
     map.on("moveend zoomend resize", renderAtCurrentZoom);
@@ -1167,12 +1383,20 @@ export function FeaturesStoreRenderer() {
       "dromap:feature-geometry-preview",
       handleFeatureGeometryPreview,
     );
+    window.addEventListener(
+      DROMAP_FEATURE_BODY_DRAG_PREVIEW_EVENT,
+      handleFeatureBodyDragPreview,
+    );
 
     return () => {
       map.off("moveend zoomend resize", renderAtCurrentZoom);
       window.removeEventListener(
         "dromap:feature-geometry-preview",
         handleFeatureGeometryPreview,
+      );
+      window.removeEventListener(
+        DROMAP_FEATURE_BODY_DRAG_PREVIEW_EVENT,
+        handleFeatureBodyDragPreview,
       );
       removeFeatureMapLabelLayers(map);
       removeLineArrowLayers(map);

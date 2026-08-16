@@ -16,6 +16,7 @@ import {
   layerToDroMapFeature,
 } from "@/lib/dromap/feature";
 import { deactivateGeomanModes } from "@/lib/dromap/geoman-toolbar";
+import { dispatchFeatureBodyDragPreview } from "@/lib/dromap/drag-preview";
 import { createQuickShapeFeatureFromPlacement } from "./quick-shape";
 import { getLayerFeatureId as getStoredLayerFeatureId } from "@/lib/dromap/layer-id";
 import {
@@ -467,7 +468,7 @@ function syncLayerGeometryToStore(layer: L.Layer) {
       return;
     }
 
-    store.updateFeature(featureId, {
+    const nextFeature: DroMapFeature = {
       ...existingFeature,
       geometry: raw.geometry,
       properties: {
@@ -475,7 +476,9 @@ function syncLayerGeometryToStore(layer: L.Layer) {
         style: { ...existingFeature.properties.style },
         meta: { version: 1 },
       },
-    });
+    };
+
+    store.updateFeatureWithHistory(featureId, () => nextFeature);
 
     return;
   }
@@ -486,7 +489,7 @@ function syncLayerGeometryToStore(layer: L.Layer) {
     return;
   }
 
-  store.updateFeature(featureId, nextFeature);
+  store.updateFeatureWithHistory(featureId, () => nextFeature);
 }
 
 function suppressNextLayerClick(layer: L.Layer) {
@@ -530,14 +533,54 @@ function bindManualBodyDrag(map: L.Map, layer: L.Layer): () => void {
   let previousLatLng: L.LatLng | null = null;
   let startPoint: L.Point | null = null;
   let hasMovedEnough = false;
-  let hasCommittedHistory = false;
   let wasMapDraggingEnabled = false;
+  let previewFrameId: number | null = null;
+  let pendingPreviewLatDelta = 0;
+  let pendingPreviewLngDelta = 0;
 
   const container = map.getContainer();
 
   const cleanupDocumentListeners = () => {
     document.removeEventListener("mousemove", handleDocumentMouseMove, true);
     document.removeEventListener("mouseup", handleDocumentMouseUp, true);
+  };
+
+  const flushBodyDragPreview = () => {
+    if (previewFrameId !== null) {
+      window.cancelAnimationFrame(previewFrameId);
+      previewFrameId = null;
+    }
+
+    const featureId = getEditableFeatureId(layer);
+    const latDelta = pendingPreviewLatDelta;
+    const lngDelta = pendingPreviewLngDelta;
+
+    pendingPreviewLatDelta = 0;
+    pendingPreviewLngDelta = 0;
+
+    if (!featureId || (latDelta === 0 && lngDelta === 0)) {
+      return;
+    }
+
+    dispatchFeatureBodyDragPreview({
+      featureId,
+      sourceLayer: layer,
+      latDelta,
+      lngDelta,
+      refreshEditHandles: true,
+    });
+  };
+
+  const scheduleBodyDragPreview = (latDelta: number, lngDelta: number) => {
+    pendingPreviewLatDelta += latDelta;
+    pendingPreviewLngDelta += lngDelta;
+
+    if (previewFrameId !== null) return;
+
+    previewFrameId = window.requestAnimationFrame(() => {
+      previewFrameId = null;
+      flushBodyDragPreview();
+    });
   };
 
   const stopDragging = () => {
@@ -550,8 +593,14 @@ function bindManualBodyDrag(map: L.Map, layer: L.Layer): () => void {
     isDragging = false;
 
     if (shouldTreatAsDrag) {
+      flushBodyDragPreview();
       suppressNextLayerClick(layer);
       syncLayerGeometryToStore(layer);
+      window.dispatchEvent(
+        new CustomEvent("dromap:feature-drag-end", {
+          detail: { featureId: getEditableFeatureId(layer) ?? null },
+        }),
+      );
     } else {
       /**
        * Clic court en mode Modifier :
@@ -564,7 +613,6 @@ function bindManualBodyDrag(map: L.Map, layer: L.Layer): () => void {
     previousLatLng = null;
     startPoint = null;
     hasMovedEnough = false;
-    hasCommittedHistory = false;
 
     container.style.cursor = "default";
 
@@ -593,11 +641,11 @@ function bindManualBodyDrag(map: L.Map, layer: L.Layer): () => void {
 
     if (!hasMovedEnough) {
       hasMovedEnough = true;
-
-      if (!hasCommittedHistory) {
-        useEditorTestFeaturesStore.getState().commitFeaturesHistory();
-        hasCommittedHistory = true;
-      }
+      window.dispatchEvent(
+        new CustomEvent("dromap:feature-drag-start", {
+          detail: { featureId: getEditableFeatureId(layer) ?? null },
+        }),
+      );
     }
 
     const latDelta = currentLatLng.lat - previousLatLng.lat;
@@ -606,7 +654,7 @@ function bindManualBodyDrag(map: L.Map, layer: L.Layer): () => void {
     previousLatLng = currentLatLng;
 
     translateLayer(layer, latDelta, lngDelta);
-    syncLayerGeometryToStore(layer);
+    scheduleBodyDragPreview(latDelta, lngDelta);
   };
 
   const handleDocumentMouseUp = () => {
@@ -650,7 +698,6 @@ function bindManualBodyDrag(map: L.Map, layer: L.Layer): () => void {
 
     isDragging = true;
     hasMovedEnough = false;
-    hasCommittedHistory = false;
     previousLatLng = event.latlng;
     startPoint = map.latLngToContainerPoint(event.latlng);
     wasMapDraggingEnabled = map.dragging.enabled();
@@ -665,8 +712,17 @@ function bindManualBodyDrag(map: L.Map, layer: L.Layer): () => void {
   layer.on("mousedown", handleMouseDown);
 
   return () => {
+    if (isDragging) {
+      stopDragging();
+    }
+
     layer.off("mousedown", handleMouseDown);
     cleanupDocumentListeners();
+
+    if (previewFrameId !== null) {
+      window.cancelAnimationFrame(previewFrameId);
+      previewFrameId = null;
+    }
 
     if (wasMapDraggingEnabled) {
       map.dragging.enable();
@@ -678,7 +734,8 @@ function bindManualBodyDrag(map: L.Map, layer: L.Layer): () => void {
     previousLatLng = null;
     startPoint = null;
     hasMovedEnough = false;
-    hasCommittedHistory = false;
+    pendingPreviewLatDelta = 0;
+    pendingPreviewLngDelta = 0;
   };
 }
 
