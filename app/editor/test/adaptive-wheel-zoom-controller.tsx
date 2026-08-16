@@ -5,6 +5,7 @@ import L from "leaflet";
 import { useMap } from "react-leaflet";
 
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
+import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 
 const CONTINUOUS_WHEEL_ZOOM_DATASET_KEY = "dromapContinuousWheelZoom";
 const CONTINUOUS_WHEEL_ZOOM_END_EVENT =
@@ -13,12 +14,14 @@ const SMOOTH_WHEEL_ZOOM_MANAGED_DATASET_KEY =
   "dromapSmoothWheelZoomManaged";
 
 /**
- * Ce zoom continu n'est actif que pendant la sélection de la zone de travail.
- * Une fois la zone validée, DroMap rend immédiatement la main au zoom Leaflet
- * natif déjà utilisé par l'éditeur.
+ * Zoom continu DroMap. Il est actif :
+ * - pendant la sélection de la zone de travail ;
+ * - dans l'éditeur lorsque l'utilisateur active « Zoom précis ».
  *
- * Le zoom est ancré sous le curseur afin que le pointeur Geoman
- * "Click to place first vertex" reste cohérent avec la position visée.
+ * Le second cas reprend volontairement exactement la sensation de zoom du
+ * mode sans zone : zoom fractionnaire, inertie douce, ancrage sous le curseur
+ * et distinction molette / trackpad / pincement. La zone de travail reste
+ * toutefois la contrainte spatiale de l'éditeur.
  */
 
 const MOUSE_REFERENCE_DELTA_PX = 100;
@@ -80,7 +83,11 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
-function getPreWorkspaceMinZoom(map: L.Map) {
+function getManagedMinZoom(map: L.Map, workspaceNavigationUnlocked: boolean) {
+  if (workspaceNavigationUnlocked) {
+    return map.getMinZoom();
+  }
+
   return Math.max(PRE_WORKSPACE_MIN_ZOOM, map.getMinZoom());
 }
 
@@ -207,9 +214,16 @@ function getCenterForZoomAroundPoint(
 export function AdaptiveWheelZoomController() {
   const map = useMap();
   const currentMode = useEditorTestModeStore((state) => state.currentMode);
+  const workspaceNavigationUnlocked = useEditorTestWorkspaceStore(
+    (state) => state.workspaceNavigationUnlocked,
+  );
 
   useEffect(() => {
-    if (currentMode !== "workspace-select") {
+    const continuousZoomEnabled =
+      currentMode === "workspace-select" ||
+      (currentMode === "edit" && workspaceNavigationUnlocked);
+
+    if (!continuousZoomEnabled) {
       return;
     }
 
@@ -244,7 +258,7 @@ export function AdaptiveWheelZoomController() {
     map.scrollWheelZoom.disable();
 
     const enforcePreWorkspaceMinZoom = () => {
-      const minimumZoom = getPreWorkspaceMinZoom(map);
+      const minimumZoom = getManagedMinZoom(map, workspaceNavigationUnlocked);
 
       if (map.getZoom() < minimumZoom - 0.000001) {
         map.setZoom(minimumZoom, { animate: false });
@@ -262,7 +276,7 @@ export function AdaptiveWheelZoomController() {
     const applyZoomFrame = (nextZoom: number) => {
       const safeZoom = clamp(
         nextZoom,
-        getPreWorkspaceMinZoom(map),
+        getManagedMinZoom(map, workspaceNavigationUnlocked),
         map.getMaxZoom(),
       );
       const currentZoom = map.getZoom();
@@ -301,7 +315,7 @@ export function AdaptiveWheelZoomController() {
 
       targetZoom = clamp(
         targetZoom,
-        getPreWorkspaceMinZoom(map),
+        getManagedMinZoom(map, workspaceNavigationUnlocked),
         map.getMaxZoom(),
       );
       applyZoomFrame(targetZoom);
@@ -321,7 +335,7 @@ export function AdaptiveWheelZoomController() {
 
       targetZoom = clamp(
         targetZoom,
-        getPreWorkspaceMinZoom(map),
+        getManagedMinZoom(map, workspaceNavigationUnlocked),
         map.getMaxZoom(),
       );
 
@@ -432,7 +446,7 @@ export function AdaptiveWheelZoomController() {
       beginGestureIfNeeded();
       targetZoom = clamp(
         targetZoom + deltaZoom,
-        getPreWorkspaceMinZoom(map),
+        getManagedMinZoom(map, workspaceNavigationUnlocked),
         map.getMaxZoom(),
       );
 
@@ -579,7 +593,7 @@ export function AdaptiveWheelZoomController() {
         map.scrollWheelZoom.disable();
       }
     };
-  }, [currentMode, map]);
+  }, [currentMode, map, workspaceNavigationUnlocked]);
 
   return null;
 }

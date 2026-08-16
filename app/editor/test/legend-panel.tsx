@@ -18,7 +18,13 @@ import {
 } from "@/lib/dromap/feature";
 import {
   DROMAP_DASH_STYLES,
+  getFeatureDashGap,
+  getFeatureDashLength,
   getFeatureDashStyle,
+  MAX_DASH_GAP,
+  MAX_DASH_LENGTH,
+  MIN_DASH_GAP,
+  MIN_DASH_LENGTH,
   getFeatureMarkerSize,
   MAX_MARKER_SIZE,
   MIN_MARKER_SIZE,
@@ -619,21 +625,37 @@ function LegendSymbol({ feature }: { feature: LegendFeature }) {
   );
 }
 
-export function LegendPanel() {
+export type LegendPanelMode = "selected" | "all" | "labels";
+export type LegendPanelVariant = "floating" | "embedded";
+
+type LegendPanelProps = {
+  variant?: LegendPanelVariant;
+  mode?: LegendPanelMode;
+};
+
+export function LegendPanel({
+  variant = "floating",
+  mode,
+}: LegendPanelProps = {}) {
+  const embedded = variant === "embedded";
   const [isOpen, setIsOpen] = useState(false);
   const [panelZIndex, setPanelZIndex] = useState(
     getInitialFloatingPanelZIndex(),
   );
-  const [panelMode, setPanelMode] = useState<"selected" | "all" | "labels">("all");
+  const [panelMode, setPanelMode] = useState<LegendPanelMode>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
   const [editSameMarkerTypeInLayer, setEditSameMarkerTypeInLayer] =
     useState(false);
+  const [editSameLineTypeInLayer, setEditSameLineTypeInLayer] = useState(false);
+  const [editSameZoneTypeInLayer, setEditSameZoneTypeInLayer] = useState(false);
+  const [editSameTextTypeInLayer, setEditSameTextTypeInLayer] = useState(false);
   const [openMarkerLibraryFeatureId, setOpenMarkerLibraryFeatureId] =
     useState<string | null>(null);
   const [markerLibrarySearch, setMarkerLibrarySearch] = useState("");
   const [markerLibraryCategoryId, setMarkerLibraryCategoryId] =
     useState<DroMapMarkerSymbolCategoryId>("basic");
+  const effectivePanelMode = mode ?? panelMode;
 
   const fieldEditHistoryKeysRef = useRef(new Set<string>());
 
@@ -654,10 +676,10 @@ export function LegendPanel() {
     [rawFeatures, layers, workspaceBounds],
   );
 
-  const updateFeature = useEditorTestFeaturesStore(
+  const updateFeatureInStore = useEditorTestFeaturesStore(
     (state) => state.updateFeature,
   );
-  const updateFeatures = useEditorTestFeaturesStore(
+  const updateFeaturesInStore = useEditorTestFeaturesStore(
     (state) => state.updateFeatures,
   );
 
@@ -665,7 +687,7 @@ export function LegendPanel() {
     (state) => state.commitFeaturesHistory,
   );
 
-  const updateFeatureWithHistory = useEditorTestFeaturesStore(
+  const updateFeatureWithHistoryInStore = useEditorTestFeaturesStore(
     (state) => state.updateFeatureWithHistory,
   );
   const updateFeaturesWithHistory = useEditorTestFeaturesStore(
@@ -674,6 +696,9 @@ export function LegendPanel() {
 
   const removeFeatureWithHistory = useEditorTestFeaturesStore(
     (state) => state.removeFeatureWithHistory,
+  );
+  const reorderFeatureWithHistory = useEditorTestFeaturesStore(
+    (state) => state.reorderFeatureWithHistory,
   );
 
   const requestDeleteFeatureLayer = useEditorTestLayerCommandsStore(
@@ -800,9 +825,9 @@ export function LegendPanel() {
     (safePageIndex + 1) * OBJECTS_PANEL_PAGE_SIZE,
   );
   const displayedFeatures =
-    panelMode === "selected"
+    effectivePanelMode === "selected"
       ? selectedFeatures
-      : panelMode === "all"
+      : effectivePanelMode === "all"
         ? paginatedFeatures
         : [];
 
@@ -837,37 +862,219 @@ export function LegendPanel() {
     return `${symbol.type}:${symbol.id}`;
   }
 
-  function getScopedMarkerFeatureIds(feature: LegendFeature) {
-    if (!editSameMarkerTypeInLayer || !isMarker(feature)) {
+  function getLineTypeKey(feature: LegendFeature) {
+    return feature.properties.lineVariant ?? "straight";
+  }
+
+  function getZoneTypeKey(feature: LegendFeature) {
+    const variant = feature.properties.zoneVariant ?? "polygon";
+
+    if (variant === "shape") {
+      return `${variant}:${feature.properties.zoneShapeKind ?? "rectangle"}`;
+    }
+
+    return variant;
+  }
+
+  function isSameTypeEditingEnabled(feature: LegendFeature) {
+    if (isMarker(feature)) return editSameMarkerTypeInLayer;
+    if (isLine(feature)) return editSameLineTypeInLayer;
+    if (isZone(feature)) return editSameZoneTypeInLayer;
+    if (isText(feature)) return editSameTextTypeInLayer;
+    return false;
+  }
+
+  function getSameTypeKey(feature: LegendFeature) {
+    if (isMarker(feature)) return `marker:${getMarkerTypeKey(feature)}`;
+    if (isLine(feature)) return `line:${getLineTypeKey(feature)}`;
+    if (isZone(feature)) return `zone:${getZoneTypeKey(feature)}`;
+    if (isText(feature)) return "text";
+    return feature.properties.type;
+  }
+
+  function getScopedFeatureIds(feature: LegendFeature) {
+    if (!isSameTypeEditingEnabled(feature)) {
       return [feature.id];
     }
 
-    const markerTypeKey = getMarkerTypeKey(feature);
+    const typeKey = getSameTypeKey(feature);
     const layerId = feature.properties.layerId ?? null;
 
     return features
       .filter(
         (candidate) =>
-          isMarker(candidate) &&
           (candidate.properties.layerId ?? null) === layerId &&
-          getMarkerTypeKey(candidate) === markerTypeKey &&
+          getSameTypeKey(candidate) === typeKey &&
           !isFeatureEffectivelyLocked(candidate, layers),
       )
       .map((candidate) => candidate.id);
+  }
+
+  function getStylePatch(
+    beforeFeature: DroMapFeature,
+    afterFeature: DroMapFeature,
+  ) {
+    const beforeStyle = beforeFeature.properties.style ?? {};
+    const afterStyle = afterFeature.properties.style ?? {};
+    const setValues: Record<string, unknown> = {};
+    const removedKeys: string[] = [];
+    const keys = new Set([
+      ...Object.keys(beforeStyle),
+      ...Object.keys(afterStyle),
+    ]);
+
+    for (const key of keys) {
+      const beforeValue = (beforeStyle as Record<string, unknown>)[key];
+      const afterHasKey = Object.prototype.hasOwnProperty.call(afterStyle, key);
+      const afterValue = (afterStyle as Record<string, unknown>)[key];
+
+      if (Object.is(beforeValue, afterValue) && afterHasKey) {
+        continue;
+      }
+
+      if (!afterHasKey) {
+        removedKeys.push(key);
+      } else {
+        setValues[key] = afterValue;
+      }
+    }
+
+    return { setValues, removedKeys };
+  }
+
+  function isStyleOnlyChange(
+    beforeFeature: DroMapFeature,
+    afterFeature: DroMapFeature,
+  ) {
+    const { style: _beforeStyle, ...beforeProperties } = beforeFeature.properties;
+    const { style: _afterStyle, ...afterProperties } = afterFeature.properties;
+
+    return (
+      JSON.stringify(beforeFeature.geometry) === JSON.stringify(afterFeature.geometry) &&
+      JSON.stringify(beforeProperties) === JSON.stringify(afterProperties) &&
+      JSON.stringify(beforeFeature.properties.style ?? {}) !==
+        JSON.stringify(afterFeature.properties.style ?? {})
+    );
+  }
+
+  function applyStylePatch(
+    currentFeature: DroMapFeature,
+    patch: ReturnType<typeof getStylePatch>,
+  ) {
+    const nextStyle = {
+      ...(currentFeature.properties.style ?? {}),
+      ...patch.setValues,
+    } as Record<string, unknown>;
+
+    for (const key of patch.removedKeys) {
+      delete nextStyle[key];
+    }
+
+    return {
+      ...currentFeature,
+      properties: {
+        ...currentFeature.properties,
+        style: nextStyle as DroMapFeature["properties"]["style"],
+      },
+    };
+  }
+
+  function updateFeatureWithHistory(
+    featureId: string,
+    updater: (currentFeature: DroMapFeature) => DroMapFeature,
+  ) {
+    const sourceFeature = featuresById.get(featureId) as DroMapFeature | undefined;
+
+    if (!sourceFeature) {
+      updateFeatureWithHistoryInStore(featureId, updater);
+      return;
+    }
+
+    const nextSourceFeature = updater(sourceFeature);
+
+    if (!isStyleOnlyChange(sourceFeature, nextSourceFeature)) {
+      updateFeatureWithHistoryInStore(featureId, updater);
+      return;
+    }
+
+    const scopedIds = getScopedFeatureIds(sourceFeature);
+
+    if (scopedIds.length <= 1) {
+      updateFeatureWithHistoryInStore(featureId, updater);
+      return;
+    }
+
+    const patch = getStylePatch(sourceFeature, nextSourceFeature);
+    updateFeaturesWithHistory(scopedIds, (currentFeature) =>
+      applyStylePatch(currentFeature, patch),
+    );
+  }
+
+  function updateFeature(featureId: string, nextFeature: DroMapFeature) {
+    const sourceFeature = featuresById.get(featureId) as DroMapFeature | undefined;
+
+    if (!sourceFeature || !isStyleOnlyChange(sourceFeature, nextFeature)) {
+      updateFeatureInStore(featureId, nextFeature);
+      return;
+    }
+
+    const scopedIds = getScopedFeatureIds(sourceFeature);
+
+    if (scopedIds.length <= 1) {
+      updateFeatureInStore(featureId, nextFeature);
+      return;
+    }
+
+    const patch = getStylePatch(sourceFeature, nextFeature);
+    updateFeaturesInStore(scopedIds, (currentFeature) =>
+      applyStylePatch(currentFeature, patch),
+    );
+  }
+
+  function updateFeatures(
+    featureIds: string[],
+    updater: (currentFeature: DroMapFeature) => DroMapFeature,
+  ) {
+    if (featureIds.length !== 1) {
+      updateFeaturesInStore(featureIds, updater);
+      return;
+    }
+
+    const sourceFeature = featuresById.get(featureIds[0]) as
+      | DroMapFeature
+      | undefined;
+
+    if (!sourceFeature) {
+      updateFeaturesInStore(featureIds, updater);
+      return;
+    }
+
+    const nextSourceFeature = updater(sourceFeature);
+
+    if (!isStyleOnlyChange(sourceFeature, nextSourceFeature)) {
+      updateFeaturesInStore(featureIds, updater);
+      return;
+    }
+
+    const scopedIds = getScopedFeatureIds(sourceFeature);
+    const patch = getStylePatch(sourceFeature, nextSourceFeature);
+    updateFeaturesInStore(scopedIds, (currentFeature) =>
+      applyStylePatch(currentFeature, patch),
+    );
   }
 
   function updateFeatureStyleWithScope(
     feature: LegendFeature,
     updater: (currentFeature: DroMapFeature) => DroMapFeature,
   ) {
-    updateFeaturesWithHistory(getScopedMarkerFeatureIds(feature), updater);
+    updateFeaturesWithHistory(getScopedFeatureIds(feature), updater);
   }
 
   function updateFeatureStyleDuringDrag(
     feature: LegendFeature,
     updater: (currentFeature: DroMapFeature) => DroMapFeature,
   ) {
-    updateFeatures(getScopedMarkerFeatureIds(feature), updater);
+    updateFeaturesInStore(getScopedFeatureIds(feature), updater);
   }
 
   function commitHistoryOnceForField(editKey: string) {
@@ -1030,7 +1237,7 @@ export function LegendPanel() {
     setPageIndex(0);
   }, [searchQuery]);
 
-  if (!isOpen) {
+  if (!embedded && !isOpen) {
     return (
       <button
         type="button"
@@ -1051,41 +1258,53 @@ export function LegendPanel() {
 
   return (
     <aside
-      className="absolute bottom-4 right-4 top-[8.75rem] flex w-96 flex-col overflow-hidden rounded-xl border border-black/10 bg-white/95 text-sm shadow-lg backdrop-blur"
-      style={{ zIndex: panelZIndex }}
+      className={
+        embedded
+          ? "flex h-full min-h-0 w-full flex-col overflow-hidden bg-white text-sm"
+          : "absolute bottom-4 right-4 top-[8.75rem] flex w-96 flex-col overflow-hidden rounded-xl border border-black/10 bg-white/95 text-sm shadow-lg backdrop-blur"
+      }
+      style={embedded ? undefined : { zIndex: panelZIndex }}
       onMouseDown={(event) => {
         event.stopPropagation();
-        setPanelZIndex(bringFloatingPanelToFront());
+        if (!embedded) {
+          setPanelZIndex(bringFloatingPanelToFront());
+        }
       }}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
-      onFocusCapture={() => setPanelZIndex(bringFloatingPanelToFront())}
+      onFocusCapture={() => {
+        if (!embedded) {
+          setPanelZIndex(bringFloatingPanelToFront());
+        }
+      }}
     >
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h2 className="font-semibold text-slate-900">Objets</h2>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-            {features.length}
-          </span>
-        </div>
+      {!embedded ? (
+        <>
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-slate-900">Objets</h2>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                {features.length}
+              </span>
+            </div>
 
-        <button
-          type="button"
-          onClick={() => setIsOpen(false)}
-          className="rounded-md px-2 py-1 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
-        >
-          Replier
-        </button>
-      </div>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="rounded-md px-2 py-1 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+            >
+              Replier
+            </button>
+          </div>
 
-      <div className="shrink-0 border-b border-slate-100 px-4 py-3">
-        <div className="grid grid-cols-3 gap-2">
+          <div className="shrink-0 border-b border-slate-100 px-4 py-3">
+            <div className="grid grid-cols-3 gap-2">
           <button
             type="button"
             onClick={() => setPanelMode("selected")}
             className={[
               "rounded-lg border px-2 py-2 text-[11px] font-bold transition",
-              panelMode === "selected"
+              effectivePanelMode === "selected"
                 ? "border-blue-500 bg-blue-600 text-white"
                 : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
             ].join(" ")}
@@ -1097,7 +1316,7 @@ export function LegendPanel() {
             onClick={() => setPanelMode("all")}
             className={[
               "rounded-lg border px-2 py-2 text-[11px] font-bold transition",
-              panelMode === "all"
+              effectivePanelMode === "all"
                 ? "border-blue-500 bg-blue-600 text-white"
                 : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
             ].join(" ")}
@@ -1109,26 +1328,25 @@ export function LegendPanel() {
             onClick={() => setPanelMode("labels")}
             className={[
               "rounded-lg border px-2 py-2 text-[11px] font-bold transition",
-              panelMode === "labels"
+              effectivePanelMode === "labels"
                 ? "border-emerald-500 bg-emerald-600 text-white"
                 : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
             ].join(" ")}
           >
             Étiquettes
           </button>
-        </div>
-      </div>
+            </div>
+          </div>
+        </>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {panelMode === "labels" ? (
+        {effectivePanelMode === "labels" ? (
           <section className="space-y-3">
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
               <h3 className="text-sm font-extrabold text-emerald-950">
                 Réglages des étiquettes
               </h3>
-              <p className="mt-1 text-[10px] leading-snug text-emerald-800">
-                Ces réglages sont séparés des objets pour laisser toute la hauteur de l’onglet aux propriétés modifiables.
-              </p>
             </div>
 
             <label className="flex items-center justify-between gap-3 rounded-lg border border-violet-200 bg-violet-50 px-3 py-3 text-xs font-semibold text-violet-950">
@@ -1203,8 +1421,11 @@ export function LegendPanel() {
           </section>
         ) : (
           <>
-            {panelMode === "selected" ? (
-              <div className="mb-4 rounded-lg border border-violet-200 bg-violet-50 p-2.5">
+            {effectivePanelMode === "selected" ? (
+              <div
+                data-dromap-tour="multi-selection-control"
+                className="mb-4 rounded-lg border border-violet-200 bg-violet-50 p-2.5"
+              >
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="text-xs font-extrabold text-violet-950">
@@ -1242,7 +1463,7 @@ export function LegendPanel() {
               </div>
             ) : null}
 
-            {panelMode === "all" ? (
+            {effectivePanelMode === "all" ? (
               <input
                 type="search"
                 value={searchQuery}
@@ -1254,13 +1475,13 @@ export function LegendPanel() {
 
             {displayedFeatures.length === 0 ? (
               <p className="text-xs leading-relaxed text-slate-500">
-                {panelMode === "selected"
+                {effectivePanelMode === "selected"
                   ? "Aucun objet sélectionné. Active la sélection multiple ou clique sur un objet de la carte."
                   : "Aucun élément pour le moment. Passe en mode édition puis dessine un marqueur, une ligne, une zone ou un texte."}
               </p>
             ) : (
               <>
-            {panelMode === "selected" && selectedFeatures.length > 1 ? (
+            {effectivePanelMode === "selected" && selectedFeatures.length > 1 ? (
               <section className="mb-4 rounded-xl border-2 border-violet-300 bg-violet-50 p-3 shadow-sm">
                 <div className="mb-3">
                   <div className="text-sm font-extrabold text-violet-950">
@@ -1620,7 +1841,7 @@ export function LegendPanel() {
 
                   // Dans la fiche « Sélection », un clic dans la zone blanche
                   // ne doit jamais fermer la fiche ni désélectionner l'objet.
-                  if (panelMode === "selected") {
+                  if (effectivePanelMode === "selected") {
                     return;
                   }
 
@@ -1638,133 +1859,137 @@ export function LegendPanel() {
                     : "border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white",
                 ].join(" ")}
               >
-                <div className="mb-3 flex items-center gap-3">
-                  <span className="flex w-10 shrink-0 items-center justify-center">
+                <div className="mb-3 flex items-start gap-3">
+                  <span className="flex w-10 shrink-0 items-center justify-center pt-5">
                     <LegendSymbol feature={feature} />
                   </span>
 
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <label className="block">
-                      <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-slate-400">
-                        {isText(feature)
-                          ? "Texte affiché sur la carte"
-                          : "Nom sur l’étiquette"}
-                      </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="grid grid-cols-[minmax(0,1fr)_5.75rem] gap-2">
+                      <div className="min-w-0 space-y-2">
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                            {isText(feature)
+                              ? "Texte affiché sur la carte"
+                              : "Nom sur l’étiquette"}
+                          </span>
 
-                      {isText(feature) ? (
-                        <textarea
+                          {isText(feature) ? (
+                            <textarea
+                              disabled={isFeatureEffectivelyLocked(feature, layers)}
+                              className="min-h-24 w-full resize-y rounded-md border border-slate-200 bg-white px-2 py-2 text-xs font-medium leading-relaxed text-slate-800 outline-none transition disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                              value={feature.properties?.label ?? ""}
+                              onChange={(event) => {
+                                updateFeatureLabelDuringEdit(
+                                  feature,
+                                  event.target.value,
+                                );
+                              }}
+                              onBlur={() => {
+                                finishFieldEdit(getFeatureLabelEditKey(feature.id));
+                              }}
+                              placeholder={"Texte affiché\nsur plusieurs lignes"}
+                              rows={3}
+                            />
+                          ) : (
+                            <input
+                              disabled={isFeatureEffectivelyLocked(feature, layers)}
+                              className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-800 outline-none transition disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                              value={feature.properties?.label ?? ""}
+                              onChange={(event) => {
+                                updateFeatureLabelDuringEdit(
+                                  feature,
+                                  event.target.value,
+                                );
+                              }}
+                              onBlur={() => {
+                                finishFieldEdit(getFeatureLabelEditKey(feature.id));
+                              }}
+                              placeholder={getDefaultFeatureLabel(feature, index)}
+                            />
+                          )}
+                        </label>
+
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                            Nom dans la légende
+                          </span>
+                          <input
+                            disabled={isFeatureEffectivelyLocked(feature, layers)}
+                            className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                            value={getFeatureLegendLabelValue(feature)}
+                            onChange={(event) => {
+                              updateLegendLabelDuringEdit(
+                                feature,
+                                event.target.value,
+                              );
+                            }}
+                            onBlur={() => {
+                              finishFieldEdit(getLegendLabelEditKey(feature));
+                            }}
+                            placeholder={getFeatureLegendLabelFallback(feature)}
+                          />
+                        </label>
+
+                        <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                          <span>
+                            {getFeatureTypeLabel(feature)}
+                            {getFeatureLockStatusLabel(feature, layers)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              toggleFeatureLocked(feature);
+                            }}
+                            className={[
+                              "shrink-0 rounded-md border px-2 py-1 text-[10px] font-semibold transition",
+                              isFeatureEffectivelyLocked(feature, layers)
+                                ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100",
+                            ].join(" ")}
+                          >
+                            {getFeatureLockButtonLabel(feature)}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2 pt-[1.15rem]">
+                        <button
+                          type="button"
                           disabled={isFeatureEffectivelyLocked(feature, layers)}
-                          className="min-h-24 w-full resize-y rounded-md border border-slate-200 bg-white px-2 py-2 text-xs font-medium leading-relaxed text-slate-800 outline-none transition disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                          value={feature.properties?.label ?? ""}
-                          onChange={(event) => {
-                            updateFeatureLabelDuringEdit(
-                              feature,
-                              event.target.value,
-                            );
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            deleteFeatureFromObjectsPanel(feature);
                           }}
-                          onBlur={() => {
-                            finishFieldEdit(getFeatureLabelEditKey(feature.id));
+                          className="rounded-md border border-red-300 bg-red-50 px-2 py-2 text-[11px] font-bold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                        >
+                          Supprimer
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={
+                            isFeatureEffectivelyLocked(feature, layers) ||
+                            isFeatureGeometryLocked(feature)
+                          }
+                          title={
+                            isFeatureGeometryLocked(feature)
+                              ? "Un bâtiment importé conserve sa forme et sa position réelles."
+                              : "Dupliquer l’objet"
+                          }
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            duplicateFeatureFromObjectsPanel(feature);
                           }}
-                          placeholder={"Texte affiché\nsur plusieurs lignes"}
-                          rows={3}
-                        />
-                      ) : (
-                        <input
-                          disabled={isFeatureEffectivelyLocked(feature, layers)}
-                          className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-800 outline-none transition disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                          value={feature.properties?.label ?? ""}
-                          onChange={(event) => {
-                            updateFeatureLabelDuringEdit(
-                              feature,
-                              event.target.value,
-                            );
-                          }}
-                          onBlur={() => {
-                            finishFieldEdit(getFeatureLabelEditKey(feature.id));
-                          }}
-                          placeholder={getDefaultFeatureLabel(feature, index)}
-                        />
-                      )}
-                    </label>
-
-                    <label className="block">
-                      <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-slate-400">
-                        Nom dans la légende
-                      </span>
-                      <input
-                        disabled={isFeatureEffectivelyLocked(feature, layers)}
-                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                        value={getFeatureLegendLabelValue(feature)}
-                        onChange={(event) => {
-                          updateLegendLabelDuringEdit(
-                            feature,
-                            event.target.value,
-                          );
-                        }}
-                        onBlur={() => {
-                          finishFieldEdit(getLegendLabelEditKey(feature));
-                        }}
-                        placeholder={getFeatureLegendLabelFallback(feature)}
-                      />
-                    </label>
-
-                    <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
-                      <span>
-                        {getFeatureTypeLabel(feature)}
-                        {getFeatureLockStatusLabel(feature, layers)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          toggleFeatureLocked(feature);
-                        }}
-                        className={[
-                          "shrink-0 rounded-md border px-2 py-1 text-[10px] font-semibold transition",
-                          isFeatureEffectivelyLocked(feature, layers)
-                            ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
-                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100",
-                        ].join(" ")}
-                      >
-                        {getFeatureLockButtonLabel(feature)}
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <button
-                        type="button"
-                        disabled={
-                          isFeatureEffectivelyLocked(feature, layers) ||
-                          isFeatureGeometryLocked(feature)
-                        }
-                        title={
-                          isFeatureGeometryLocked(feature)
-                            ? "Un bâtiment importé conserve sa forme et sa position réelles."
-                            : "Dupliquer l’objet"
-                        }
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          duplicateFeatureFromObjectsPanel(feature);
-                        }}
-                        className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-800 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                      >
-                        Dupliquer
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={isFeatureEffectivelyLocked(feature, layers)}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          deleteFeatureFromObjectsPanel(feature);
-                        }}
-                        className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                      >
-                        Supprimer
-                      </button>
+                          className="rounded-md border border-blue-300 bg-blue-50 px-2 py-2 text-[11px] font-bold text-blue-800 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                        >
+                          Dupliquer
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1773,164 +1998,6 @@ export function LegendPanel() {
                   disabled={isFeatureEffectivelyLocked(feature, layers)}
                   className="grid grid-cols-2 gap-3 text-xs disabled:opacity-60"
                 >
-                  {!isText(feature) ? (
-                    <label className="col-span-2 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-2">
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <span className="font-semibold text-emerald-900">Étiquette du nom sur la carte</span>
-                        <span className="text-[10px] font-medium text-emerald-700">
-                          {shouldShowFeatureMapLabel(
-                            feature,
-                            showAllGeoJsonFeatureLabels,
-                            showAllFeatureLabels,
-                          )
-                            ? "visible"
-                            : "masquée"}
-                        </span>
-                      </div>
-                      <select
-                        value={getFeatureMapLabelVisibility(feature)}
-                        onChange={(event) => {
-                          const mapLabelVisibility = event.target
-                            .value as DroMapFeatureMapLabelVisibility;
-
-                          updateFeatureWithHistory(
-                            feature.id,
-                            (currentFeature) => ({
-                              ...currentFeature,
-                              properties: {
-                                ...currentFeature.properties,
-                                mapLabelVisibility,
-                              },
-                            }),
-                          );
-                        }}
-                        className="w-full rounded-md border border-emerald-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
-                      >
-                        <option value="inherit">Selon le réglage global</option>
-                        <option value="show">Toujours afficher</option>
-                        <option value="hide">Toujours masquer</option>
-                      </select>
-                    </label>
-                  ) : null}
-
-                  {!isText(feature) ? (
-                    <div className="col-span-2 rounded-md border border-sky-200 bg-sky-50 px-2 py-2 text-[11px] text-sky-900">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-semibold">Placement de l’étiquette</span>
-                        <span className="rounded-full border border-sky-200 bg-white px-2 py-0.5 text-[10px] font-bold text-sky-700">
-                          {feature.properties.mapLabelOffset
-                            ? "Manuel"
-                            : "Automatique"}
-                        </span>
-                      </div>
-                      <p className="mt-1 leading-snug text-sky-800">
-                        Sélectionne l’objet, puis glisse directement son étiquette sur la carte pour la placer librement.
-                      </p>
-                      {feature.properties.mapLabelOffset ? (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            updateFeatureWithHistory(
-                              feature.id,
-                              (currentFeature) => {
-                                const nextProperties = {
-                                  ...currentFeature.properties,
-                                };
-                                delete nextProperties.mapLabelOffset;
-
-                                return {
-                                  ...currentFeature,
-                                  properties: nextProperties,
-                                };
-                              },
-                            );
-                          }}
-                          className="mt-2 rounded-md border border-sky-300 bg-white px-2 py-1 text-[10px] font-bold text-sky-800 transition hover:bg-sky-100"
-                        >
-                          Revenir au placement automatique
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  {isMarker(feature) ? (
-                    <label className="col-span-2 flex items-start gap-2 rounded-md border border-violet-200 bg-violet-50 px-2 py-2 text-violet-900">
-                      <input
-                        type="checkbox"
-                        checked={editSameMarkerTypeInLayer}
-                        onChange={(event) =>
-                          setEditSameMarkerTypeInLayer(event.target.checked)
-                        }
-                        className="mt-0.5 h-4 w-4 cursor-pointer accent-violet-600"
-                      />
-                      <span>
-                        <span className="block font-semibold">
-                          Modifier tous les marqueurs du même type dans ce calque
-                        </span>
-                        <span className="mt-0.5 block text-[10px] leading-snug text-violet-700">
-                          {getScopedMarkerFeatureIds(feature).length} marqueur(s) modifiable(s) concerné(s).
-                        </span>
-                      </span>
-                    </label>
-                  ) : null}
-                  {isZone(feature) && (
-                    <div className="col-span-2 grid grid-cols-2 gap-2 rounded-md bg-white px-2 py-2">
-                      <label className="flex items-center justify-between gap-2">
-                        <span className="text-slate-600">Contour</span>
-                        <input
-                          type="checkbox"
-                          checked={getZoneStrokeEnabled(feature)}
-                          onChange={(event) => {
-                            const zoneStrokeEnabled = event.target.checked;
-
-                            updateFeatureWithHistory(
-                              feature.id,
-                              (currentFeature) => ({
-                                ...currentFeature,
-                                properties: {
-                                  ...currentFeature.properties,
-                                  style: {
-                                    ...(currentFeature.properties?.style ?? {}),
-                                    zoneStrokeEnabled,
-                                  },
-                                },
-                              }),
-                            );
-                          }}
-                          className="h-4 w-4 cursor-pointer rounded border-slate-300"
-                        />
-                      </label>
-
-                      <label className="flex items-center justify-between gap-2">
-                        <span className="text-slate-600">Fond</span>
-                        <input
-                          type="checkbox"
-                          checked={getZoneFillEnabled(feature)}
-                          onChange={(event) => {
-                            const zoneFillEnabled = event.target.checked;
-
-                            updateFeatureWithHistory(
-                              feature.id,
-                              (currentFeature) => ({
-                                ...currentFeature,
-                                properties: {
-                                  ...currentFeature.properties,
-                                  style: {
-                                    ...(currentFeature.properties?.style ?? {}),
-                                    zoneFillEnabled,
-                                  },
-                                },
-                              }),
-                            );
-                          }}
-                          className="h-4 w-4 cursor-pointer rounded border-slate-300"
-                        />
-                      </label>
-                    </div>
-                  )}
-
                   {isZone(feature) && isQuickShapeZoneFeature(feature) && (
                     <>
                       <label className="col-span-2 rounded-md bg-white px-2 py-2">
@@ -1967,7 +2034,132 @@ export function LegendPanel() {
                       </div>
                     </>
                   )}
+                  {isMarker(feature) || isLine(feature) || isZone(feature) || isText(feature) ? (
+                    <label
+                      data-dromap-tour="same-type-edit-control"
+                      className="col-span-2 flex items-start gap-2 rounded-md border border-violet-200 bg-violet-50 px-2 py-2 text-violet-900"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSameTypeEditingEnabled(feature)}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
 
+                          if (isMarker(feature)) {
+                            setEditSameMarkerTypeInLayer(checked);
+                          } else if (isLine(feature)) {
+                            setEditSameLineTypeInLayer(checked);
+                          } else if (isZone(feature)) {
+                            setEditSameZoneTypeInLayer(checked);
+                          } else if (isText(feature)) {
+                            setEditSameTextTypeInLayer(checked);
+                          }
+                        }}
+                        className="mt-0.5 h-4 w-4 cursor-pointer accent-violet-600"
+                      />
+                      <span>
+                        <span className="block font-semibold">
+                          {isMarker(feature)
+                            ? "Modifier tous les marqueurs du même type dans ce calque"
+                            : isLine(feature)
+                              ? "Modifier tous les traits du même type dans ce calque"
+                              : isZone(feature)
+                                ? "Modifier toutes les zones du même type dans ce calque"
+                                : "Modifier tous les textes du même type dans ce calque"}
+                        </span>
+                        <span className="mt-0.5 block text-[10px] leading-snug text-violet-700">
+                          {getScopedFeatureIds(feature).length} objet(s) modifiable(s) concerné(s).
+                          {isLine(feature)
+                            ? " Le type distingue trait classique, dessin libre et suivi de trait."
+                            : isZone(feature)
+                              ? " Le type distingue zone classique, zone libre, remplissage et chaque forme rapide."
+                              : isText(feature)
+                                ? " Tous les textes de ce calque sont considérés comme le même type."
+                                : ""}
+                        </span>
+                      </span>
+                    </label>
+                  ) : null}
+                  {isZone(feature) && (
+                    <div className="col-span-2 grid grid-cols-2 gap-2 rounded-md bg-white px-2 py-2">
+                      <label className="flex items-center justify-between gap-2">
+                        <span className="text-slate-600">Fond</span>
+                        <input
+                          type="checkbox"
+                          checked={getZoneFillEnabled(feature)}
+                          onChange={(event) => {
+                            const zoneFillEnabled = event.target.checked;
+
+                            updateFeatureWithHistory(
+                              feature.id,
+                              (currentFeature) => ({
+                                ...currentFeature,
+                                properties: {
+                                  ...currentFeature.properties,
+                                  style: {
+                                    ...(currentFeature.properties?.style ?? {}),
+                                    zoneFillEnabled,
+                                  },
+                                },
+                              }),
+                            );
+                          }}
+                          className="h-4 w-4 cursor-pointer rounded border-slate-300"
+                        />
+                      </label>
+
+                      <label className="flex items-center justify-between gap-2">
+                        <span className="text-slate-600">Contour</span>
+                        <input
+                          type="checkbox"
+                          checked={getZoneStrokeEnabled(feature)}
+                          onChange={(event) => {
+                            const zoneStrokeEnabled = event.target.checked;
+
+                            updateFeatureWithHistory(
+                              feature.id,
+                              (currentFeature) => ({
+                                ...currentFeature,
+                                properties: {
+                                  ...currentFeature.properties,
+                                  style: {
+                                    ...(currentFeature.properties?.style ?? {}),
+                                    zoneStrokeEnabled,
+                                  },
+                                },
+                              }),
+                            );
+                          }}
+                          className="h-4 w-4 cursor-pointer rounded border-slate-300"
+                        />
+                      </label>
+                    </div>
+                  )}
+                  {isZone(feature) && getZoneFillEnabled(feature) && (
+                    <div className="flex items-center justify-between gap-2 rounded-md bg-white px-2 py-2">
+                      <span className="text-slate-600">Fond</span>
+                      <ColorPicker
+                        value={getFeatureFillColor(feature)}
+                        onInteractionStart={commitFeaturesHistory}
+                        onChange={(nextFillColor) => {
+                          updateFeatures(
+                            [feature.id],
+                            (currentFeature) => ({
+                              ...currentFeature,
+                              properties: {
+                                ...currentFeature.properties,
+                                style: {
+                                  ...(currentFeature.properties?.style ?? {}),
+                                  fillColor: nextFillColor,
+                                },
+                              },
+                            }),
+                          );
+                        }}
+                        ariaLabel="Couleur du fond"
+                      />
+                    </div>
+                  )}
                   {(!isZone(feature) || getZoneStrokeEnabled(feature)) && (
                     <div className="flex items-center justify-between gap-2 rounded-md bg-white px-2 py-2">
                       <span className="text-slate-600">
@@ -1995,34 +2187,42 @@ export function LegendPanel() {
                       />
                     </div>
                   )}
-
                   {isZone(feature) && getZoneFillEnabled(feature) && (
-                    <div className="flex items-center justify-between gap-2 rounded-md bg-white px-2 py-2">
-                      <span className="text-slate-600">Fond</span>
-                      <ColorPicker
-                        value={getFeatureFillColor(feature)}
-                        onInteractionStart={commitFeaturesHistory}
-                        onChange={(nextFillColor) => {
-                          updateFeatures(
-                            [feature.id],
-                            (currentFeature) => ({
-                              ...currentFeature,
-                              properties: {
-                                ...currentFeature.properties,
-                                style: {
-                                  ...(currentFeature.properties?.style ?? {}),
-                                  fillColor: nextFillColor,
-                                },
-                              },
-                            }),
-                          );
+                    <label className="col-span-2 rounded-md bg-white px-2 py-2">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-slate-600">Opacité du fond</span>
+                        <span className="tabular-nums text-slate-500">
+                          {Math.round(getFeatureFillOpacity(feature) * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={getFeatureFillOpacity(feature)}
+                        onPointerDown={() => {
+                          commitFeaturesHistory();
                         }}
-                        ariaLabel="Couleur du fond"
-                      />
-                    </div>
-                  )}
+                        onChange={(event) => {
+                          const nextFillOpacity = Number(event.target.value);
 
-                  {(!isZone(feature) || getZoneStrokeEnabled(feature)) && (
+                          updateFeature(feature.id, {
+                            ...feature,
+                            properties: {
+                              ...feature.properties,
+                              style: {
+                                ...(feature.properties?.style ?? {}),
+                                fillOpacity: nextFillOpacity,
+                              },
+                            },
+                          });
+                        }}
+                        className="w-full"
+                      />
+                    </label>
+                  )}
+                  {!isLine(feature) && !isZone(feature) && (
                     <label className="col-span-2 rounded-md bg-white px-2 py-2">
                       <div className="mb-1 flex items-center justify-between gap-2">
                         <span className="text-slate-600">
@@ -2062,7 +2262,6 @@ export function LegendPanel() {
                       />
                     </label>
                   )}
-
                   {isText(feature) && (
                     <>
                       <div className="col-span-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-950">
@@ -2745,7 +2944,9 @@ export function LegendPanel() {
                     </label>
                   )}
 
-                  {isMarker(feature) && markerFeatureSupportsStrokeWeight(feature) && (
+                  {isMarker(feature) &&
+                    markerFeatureSupportsStrokeWeight(feature) &&
+                    !getMarkerFilled(feature) && (
                     <label className="col-span-2 rounded-md bg-white px-2 py-2">
                       <div className="mb-1 flex items-center justify-between gap-2">
                         <span className="text-slate-600">
@@ -2788,178 +2989,43 @@ export function LegendPanel() {
                       </p>
                     </label>
                   )}
-
-                  {(isLine(feature) ||
-                    (isZone(feature) && getZoneStrokeEnabled(feature))) && (
-                    <label className="col-span-2 rounded-md bg-white px-2 py-2">
-                      <div className="mb-1 text-slate-600">Trait</div>
-                      <select
-                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                        value={getFeatureDashStyle(feature)}
+                  {isZone(feature) && (
+                    <label className="col-span-2 flex items-center justify-between gap-3 rounded-md bg-white px-2 py-2">
+                      <span className="text-slate-600">Hachures</span>
+                      <input
+                        type="checkbox"
+                        checked={getZoneHatchingEnabled(feature)}
                         onChange={(event) => {
-                          const dashStyle = event.target
-                            .value as DroMapDashStyle;
+                          const enabled = event.target.checked;
 
                           updateFeatureWithHistory(
                             feature.id,
-                            (currentFeature) => ({
-                              ...currentFeature,
-                              properties: {
-                                ...currentFeature.properties,
-                                style: {
-                                  ...(currentFeature.properties?.style ?? {}),
-                                  dashStyle,
+                            (currentFeature) => {
+                              const currentStyle = getZoneHatchingStyle(currentFeature);
+                              return {
+                                ...currentFeature,
+                                properties: {
+                                  ...currentFeature.properties,
+                                  style: {
+                                    ...(currentFeature.properties?.style ?? {}),
+                                    zoneHatchingStyle: enabled
+                                      ? currentStyle === "none"
+                                        ? "diagonal-right"
+                                        : currentStyle
+                                      : "none",
+                                  },
                                 },
-                              },
-                            }),
+                              };
+                            },
                           );
                         }}
-                      >
-                        {DROMAP_DASH_STYLES.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-
-                  {isLine(feature) && (
-                    <div className="col-span-2 grid grid-cols-2 gap-2 rounded-md bg-white px-2 py-2">
-                      <label className="flex items-center justify-between gap-2">
-                        <span className="text-slate-600">Flèche début</span>
-                        <input
-                          type="checkbox"
-                          checked={
-                            feature.properties?.style?.arrowStart === true
-                          }
-                          onChange={(event) => {
-                            const arrowStart = event.target.checked;
-
-                            updateFeatureWithHistory(
-                              feature.id,
-                              (currentFeature) => ({
-                                ...currentFeature,
-                                properties: {
-                                  ...currentFeature.properties,
-                                  style: {
-                                    ...(currentFeature.properties?.style ?? {}),
-                                    arrowStart,
-                                  },
-                                },
-                              }),
-                            );
-                          }}
-                          className="h-4 w-4 cursor-pointer rounded border-slate-300"
-                        />
-                      </label>
-
-                      <label className="flex items-center justify-between gap-2">
-                        <span className="text-slate-600">Flèche fin</span>
-                        <input
-                          type="checkbox"
-                          checked={feature.properties?.style?.arrowEnd === true}
-                          onChange={(event) => {
-                            const arrowEnd = event.target.checked;
-
-                            updateFeatureWithHistory(
-                              feature.id,
-                              (currentFeature) => ({
-                                ...currentFeature,
-                                properties: {
-                                  ...currentFeature.properties,
-                                  style: {
-                                    ...(currentFeature.properties?.style ?? {}),
-                                    arrowEnd,
-                                  },
-                                },
-                              }),
-                            );
-                          }}
-                          className="h-4 w-4 cursor-pointer rounded border-slate-300"
-                        />
-                      </label>
-                    </div>
-                  )}
-
-                  {(isLine(feature) ||
-                    (isZone(feature) && getZoneStrokeEnabled(feature))) && (
-                    <label className="col-span-2 rounded-md bg-white px-2 py-2">
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <span className="text-slate-600">
-                          {isZone(feature) ? "Épaisseur contour" : "Épaisseur"}
-                        </span>
-                        <span className="tabular-nums text-slate-500">
-                          {getFeatureWeight(feature)} px
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min="1"
-                        max="12"
-                        step="0.5"
-                        value={getFeatureWeight(feature)}
-                        onPointerDown={() => {
-                          commitFeaturesHistory();
-                        }}
-                        onChange={(event) => {
-                          const nextWeight = Number(event.target.value);
-
-                          updateFeature(feature.id, {
-                            ...feature,
-                            properties: {
-                              ...feature.properties,
-                              style: {
-                                ...(feature.properties?.style ?? {}),
-                                weight: nextWeight,
-                              },
-                            },
-                          });
-                        }}
-                        className="w-full"
                       />
                     </label>
                   )}
 
-                  {isZone(feature) && getZoneFillEnabled(feature) && (
+                  {isZone(feature) && getZoneHatchingEnabled(feature) && (
                     <label className="col-span-2 rounded-md bg-white px-2 py-2">
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <span className="text-slate-600">Opacité du fond</span>
-                        <span className="tabular-nums text-slate-500">
-                          {Math.round(getFeatureFillOpacity(feature) * 100)}%
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.05"
-                        value={getFeatureFillOpacity(feature)}
-                        onPointerDown={() => {
-                          commitFeaturesHistory();
-                        }}
-                        onChange={(event) => {
-                          const nextFillOpacity = Number(event.target.value);
-
-                          updateFeature(feature.id, {
-                            ...feature,
-                            properties: {
-                              ...feature.properties,
-                              style: {
-                                ...(feature.properties?.style ?? {}),
-                                fillOpacity: nextFillOpacity,
-                              },
-                            },
-                          });
-                        }}
-                        className="w-full"
-                      />
-                    </label>
-                  )}
-
-                  {isZone(feature) && (
-                    <label className="col-span-2 rounded-md bg-white px-2 py-2">
-                      <div className="mb-1 text-slate-600">Hachures</div>
+                      <div className="mb-1 text-slate-600">Type de hachures</div>
                       <select
                         className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                         value={getZoneHatchingStyle(feature)}
@@ -2982,7 +3048,9 @@ export function LegendPanel() {
                           );
                         }}
                       >
-                        {DROMAP_ZONE_HATCHING_STYLES.map((option) => (
+                        {DROMAP_ZONE_HATCHING_STYLES.filter(
+                          (option) => option.value !== "none",
+                        ).map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>
@@ -3092,7 +3160,6 @@ export function LegendPanel() {
                       </label>
                     </>
                   )}
-
                   {isZone(feature) && (
                     <label className="col-span-2 rounded-md bg-white px-2 py-2">
                       <div className="flex items-center justify-between gap-2">
@@ -3217,12 +3284,387 @@ export function LegendPanel() {
                       </label>
                     </>
                   )}
+                  {(isLine(feature) ||
+                    (isZone(feature) && getZoneStrokeEnabled(feature))) && (
+                    <label className="col-span-2 rounded-md bg-white px-2 py-2">
+                      <div className="mb-1 text-slate-600">Type de trait</div>
+                      <select
+                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                        value={getFeatureDashStyle(feature)}
+                        onChange={(event) => {
+                          const dashStyle = event.target
+                            .value as DroMapDashStyle;
+
+                          updateFeatureWithHistory(
+                            feature.id,
+                            (currentFeature) => ({
+                              ...currentFeature,
+                              properties: {
+                                ...currentFeature.properties,
+                                style: {
+                                  ...(currentFeature.properties?.style ?? {}),
+                                  dashStyle,
+                                },
+                              },
+                            }),
+                          );
+                        }}
+                      >
+                        {DROMAP_DASH_STYLES.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {(isLine(feature) ||
+                    (isZone(feature) && getZoneStrokeEnabled(feature))) &&
+                    getFeatureDashStyle(feature) === "dashed" && (
+                      <label className="col-span-2 rounded-md bg-white px-2 py-2">
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <span className="text-slate-600">Longueur des tirets</span>
+                          <span className="tabular-nums text-slate-500">
+                            {Math.round(getFeatureDashLength(feature))} px
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={MIN_DASH_LENGTH}
+                          max={MAX_DASH_LENGTH}
+                          step="1"
+                          value={getFeatureDashLength(feature)}
+                          onPointerDown={() => commitFeaturesHistory()}
+                          onChange={(event) => {
+                            const dashLength = Number(event.target.value);
+                            updateFeature(feature.id, {
+                              ...feature,
+                              properties: {
+                                ...feature.properties,
+                                style: {
+                                  ...(feature.properties?.style ?? {}),
+                                  dashLength,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full"
+                        />
+                      </label>
+                    )}
+                  {(isLine(feature) ||
+                    (isZone(feature) && getZoneStrokeEnabled(feature))) &&
+                    (getFeatureDashStyle(feature) === "dashed" ||
+                      getFeatureDashStyle(feature) === "dotted") && (
+                      <label className="col-span-2 rounded-md bg-white px-2 py-2">
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <span className="text-slate-600">
+                            {getFeatureDashStyle(feature) === "dotted"
+                              ? "Espacement des pointillés"
+                              : "Espacement des tirets"}
+                          </span>
+                          <span className="tabular-nums text-slate-500">
+                            {Math.round(getFeatureDashGap(feature))} px
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={MIN_DASH_GAP}
+                          max={MAX_DASH_GAP}
+                          step="1"
+                          value={getFeatureDashGap(feature)}
+                          onPointerDown={() => commitFeaturesHistory()}
+                          onChange={(event) => {
+                            const dashGap = Number(event.target.value);
+                            updateFeature(feature.id, {
+                              ...feature,
+                              properties: {
+                                ...feature.properties,
+                                style: {
+                                  ...(feature.properties?.style ?? {}),
+                                  dashGap,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full"
+                        />
+                      </label>
+                    )}
+                  {(isLine(feature) ||
+                    (isZone(feature) && getZoneStrokeEnabled(feature))) && (
+                    <label className="col-span-2 rounded-md bg-white px-2 py-2">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-slate-600">
+                          {isZone(feature) ? "Épaisseur contour" : "Épaisseur"}
+                        </span>
+                        <span className="tabular-nums text-slate-500">
+                          {getFeatureWeight(feature)} px
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1"
+                        max="12"
+                        step="0.5"
+                        value={getFeatureWeight(feature)}
+                        onPointerDown={() => {
+                          commitFeaturesHistory();
+                        }}
+                        onChange={(event) => {
+                          const nextWeight = Number(event.target.value);
+
+                          updateFeature(feature.id, {
+                            ...feature,
+                            properties: {
+                              ...feature.properties,
+                              style: {
+                                ...(feature.properties?.style ?? {}),
+                                weight: nextWeight,
+                              },
+                            },
+                          });
+                        }}
+                        className="w-full"
+                      />
+                    </label>
+                  )}
+                  {(isLine(feature) ||
+                    (isZone(feature) && getZoneStrokeEnabled(feature))) && (
+                    <label className="col-span-2 rounded-md bg-white px-2 py-2">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-slate-600">
+                          {isZone(feature) ? "Opacité du contour" : "Opacité"}
+                        </span>
+                        <span className="tabular-nums text-slate-500">
+                          {Math.round(getFeatureOpacity(feature) * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={isZone(feature) ? "0" : "0.1"}
+                        max="1"
+                        step="0.05"
+                        value={getFeatureOpacity(feature)}
+                        onPointerDown={() => {
+                          commitFeaturesHistory();
+                        }}
+                        onChange={(event) => {
+                          const nextOpacity = Number(event.target.value);
+
+                          updateFeatureStyleDuringDrag(
+                            feature,
+                            (currentFeature) => ({
+                              ...currentFeature,
+                              properties: {
+                                ...currentFeature.properties,
+                                style: {
+                                  ...(currentFeature.properties?.style ?? {}),
+                                  opacity: nextOpacity,
+                                },
+                              },
+                            }),
+                          );
+                        }}
+                        className="w-full"
+                      />
+                    </label>
+                  )}
+                  {isLine(feature) && (
+                    <div className="col-span-2 grid grid-cols-2 gap-2 rounded-md bg-white px-2 py-2">
+                      <label className="flex items-center justify-between gap-2">
+                        <span className="text-slate-600">Flèche début</span>
+                        <input
+                          type="checkbox"
+                          checked={
+                            feature.properties?.style?.arrowStart === true
+                          }
+                          onChange={(event) => {
+                            const arrowStart = event.target.checked;
+
+                            updateFeatureWithHistory(
+                              feature.id,
+                              (currentFeature) => ({
+                                ...currentFeature,
+                                properties: {
+                                  ...currentFeature.properties,
+                                  style: {
+                                    ...(currentFeature.properties?.style ?? {}),
+                                    arrowStart,
+                                  },
+                                },
+                              }),
+                            );
+                          }}
+                          className="h-4 w-4 cursor-pointer rounded border-slate-300"
+                        />
+                      </label>
+
+                      <label className="flex items-center justify-between gap-2">
+                        <span className="text-slate-600">Flèche fin</span>
+                        <input
+                          type="checkbox"
+                          checked={feature.properties?.style?.arrowEnd === true}
+                          onChange={(event) => {
+                            const arrowEnd = event.target.checked;
+
+                            updateFeatureWithHistory(
+                              feature.id,
+                              (currentFeature) => ({
+                                ...currentFeature,
+                                properties: {
+                                  ...currentFeature.properties,
+                                  style: {
+                                    ...(currentFeature.properties?.style ?? {}),
+                                    arrowEnd,
+                                  },
+                                },
+                              }),
+                            );
+                          }}
+                          className="h-4 w-4 cursor-pointer rounded border-slate-300"
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  {!isText(feature) ? (
+                    <label className="col-span-2 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-2">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="font-semibold text-emerald-900">Étiquette du nom sur la carte</span>
+                        <span className="text-[10px] font-medium text-emerald-700">
+                          {shouldShowFeatureMapLabel(
+                            feature,
+                            showAllGeoJsonFeatureLabels,
+                            showAllFeatureLabels,
+                          )
+                            ? "visible"
+                            : "masquée"}
+                        </span>
+                      </div>
+                      <select
+                        value={getFeatureMapLabelVisibility(feature)}
+                        onChange={(event) => {
+                          const mapLabelVisibility = event.target
+                            .value as DroMapFeatureMapLabelVisibility;
+
+                          updateFeatureWithHistory(
+                            feature.id,
+                            (currentFeature) => ({
+                              ...currentFeature,
+                              properties: {
+                                ...currentFeature.properties,
+                                mapLabelVisibility,
+                              },
+                            }),
+                          );
+                        }}
+                        className="w-full rounded-md border border-emerald-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                      >
+                        <option value="inherit">Selon le réglage global</option>
+                        <option value="show">Toujours afficher</option>
+                        <option value="hide">Toujours masquer</option>
+                      </select>
+                    </label>
+                  ) : null}
+
+                  {!isText(feature) ? (
+                    <div className="col-span-2 rounded-md border border-sky-200 bg-sky-50 px-2 py-2 text-[11px] text-sky-900">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold">Placement de l’étiquette</span>
+                        <span className="rounded-full border border-sky-200 bg-white px-2 py-0.5 text-[10px] font-bold text-sky-700">
+                          {feature.properties.mapLabelOffset
+                            ? "Manuel"
+                            : "Automatique"}
+                        </span>
+                      </div>
+                      <p className="mt-1 leading-snug text-sky-800">
+                        Sélectionne l’objet, puis glisse directement son étiquette sur la carte pour la placer librement.
+                      </p>
+                      {feature.properties.mapLabelOffset ? (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            updateFeatureWithHistory(
+                              feature.id,
+                              (currentFeature) => {
+                                const nextProperties = {
+                                  ...currentFeature.properties,
+                                };
+                                delete nextProperties.mapLabelOffset;
+
+                                return {
+                                  ...currentFeature,
+                                  properties: nextProperties,
+                                };
+                              },
+                            );
+                          }}
+                          className="mt-2 rounded-md border border-sky-300 bg-white px-2 py-1 text-[10px] font-bold text-sky-800 transition hover:bg-sky-100"
+                        >
+                          Revenir au placement automatique
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <div className="col-span-2 mt-1 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-extrabold text-slate-800">
+                          Plan de l’objet
+                        </div>
+                        <div className="mt-0.5 text-[10px] leading-snug text-slate-500">
+                          Définit si l’objet doit être affiché devant ou derrière les autres objets.
+                        </div>
+                      </div>
+                      {feature.properties?.type === "zone" ? (
+                        <span className="shrink-0 rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-600">
+                          Arrière-plan fixe
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {feature.properties?.type !== "zone" ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          disabled={isFeatureEffectivelyLocked(feature, layers)}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            reorderFeatureWithHistory(feature.id, "send-to-back");
+                          }}
+                          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-[11px] font-bold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                        >
+                          Mettre à l’arrière-plan
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isFeatureEffectivelyLocked(feature, layers)}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            reorderFeatureWithHistory(feature.id, "bring-to-front");
+                          }}
+                          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-[11px] font-bold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                        >
+                          Mettre au premier plan
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="text-[10px] leading-snug text-slate-500">
+                        Les zones restent volontairement derrière les autres types d’objets pour préserver le rendu cartographique.
+                      </div>
+                    )}
+                  </div>
                 </fieldset>
               </li>
             ))}
             </ul>
 
-            {panelMode === "all" && filteredFeatures.length > OBJECTS_PANEL_PAGE_SIZE ? (
+            {effectivePanelMode === "all" && filteredFeatures.length > OBJECTS_PANEL_PAGE_SIZE ? (
               <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-[11px] text-slate-600">
                 <button
                   type="button"

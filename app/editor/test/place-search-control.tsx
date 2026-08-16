@@ -6,6 +6,7 @@ import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
+import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
 import {
   bringFloatingPanelToFront,
   getInitialFloatingPanelZIndex,
@@ -147,6 +148,7 @@ export function PlaceSearchControl() {
   const requestIdRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  const { enabled: productRuntimeEnabled } = useDromapProductRuntime();
   const currentMode = useEditorTestModeStore((state) => state.currentMode);
   const workspaceBounds = useEditorTestWorkspaceStore(
     (state) => state.workspaceBounds,
@@ -343,7 +345,14 @@ export function PlaceSearchControl() {
 
   return (
     <section
-      className="pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 lg:left-[53rem] lg:translate-x-0"
+      className={[
+        "pointer-events-none absolute top-4",
+        productRuntimeEnabled
+          ? isOpen
+            ? "left-1/2 -translate-x-1/2 lg:left-[33rem] lg:-translate-x-48"
+            : "left-1/2 -translate-x-1/2 lg:left-[33rem] lg:translate-x-0"
+          : "left-1/2 -translate-x-1/2 lg:left-[53rem] lg:translate-x-0",
+      ].join(" ")}
       style={{ zIndex: panelZIndex }}
       onMouseDownCapture={bringToFront}
       onFocusCapture={bringToFront}

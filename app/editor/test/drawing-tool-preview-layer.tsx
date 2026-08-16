@@ -5,8 +5,10 @@ import { createPortal } from "react-dom";
 import { useMap } from "react-leaflet";
 
 import type { DroMapFeature, DroMapMarkerSymbol } from "@/lib/dromap/feature";
+import { getVisualZoomScale } from "@/lib/dromap/feature-visual-scale";
 import { useEditorTestDrawingOptionsStore } from "@/stores/editor-test-drawing-options";
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
+import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 import type { EditorTestActiveTool } from "@/stores/editor-test-tool";
 import { useEditorTestToolStore } from "@/stores/editor-test-tool";
 import { getMarkerSymbolHtml } from "./marker-symbol";
@@ -96,13 +98,18 @@ function shouldShowPlacementPreview(
 function getSvgDashArray(
   dashStyle: "solid" | "dashed" | "dotted",
   weight: number,
+  dashLength?: number,
+  dashGap?: number,
 ) {
+  const gap = Number.isFinite(dashGap) ? Math.max(2, Number(dashGap)) : Math.max(8, weight * 2.8);
+
   if (dashStyle === "dashed") {
-    return `${Math.max(8, weight * 4)} ${Math.max(6, weight * 2.2)}`;
+    const length = Number.isFinite(dashLength) ? Math.max(2, Number(dashLength)) : Math.max(12, weight * 4);
+    return `${length} ${gap}`;
   }
 
   if (dashStyle === "dotted") {
-    return `0.001 ${Math.max(6, weight * 2.8)}`;
+    return `0.001 ${gap}`;
   }
 
   return undefined;
@@ -115,6 +122,8 @@ function AlignedZoneSvgOutline({
   opacity,
   weight,
   dashStyle,
+  dashLength,
+  dashGap,
   alignCorners = true,
 }: {
   points: PointerPosition[];
@@ -123,6 +132,8 @@ function AlignedZoneSvgOutline({
   opacity: number;
   weight: number;
   dashStyle: "solid" | "dashed" | "dotted";
+  dashLength?: number;
+  dashGap?: number;
   alignCorners?: boolean;
 }) {
   if (points.length < 2 || opacity <= 0 || weight <= 0) {
@@ -137,7 +148,7 @@ function AlignedZoneSvgOutline({
         stroke={color}
         strokeWidth={weight}
         strokeOpacity={opacity}
-        strokeDasharray={getSvgDashArray(dashStyle, weight)}
+        strokeDasharray={getSvgDashArray(dashStyle, weight, dashLength, dashGap)}
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -147,7 +158,7 @@ function AlignedZoneSvgOutline({
   if (dashStyle === "dotted") {
     const dots = createAlignedDottedZoneOutlinePoints(
       points,
-      getAlignedZoneOutlineDotSpacing(weight),
+      Math.max(2, Number(dashGap ?? getAlignedZoneOutlineDotSpacing(weight))),
     );
 
     return (
@@ -166,8 +177,8 @@ function AlignedZoneSvgOutline({
 
   const segments = createAlignedDashedZoneOutlineSegments(
     points,
-    getAlignedZoneOutlineDashLength(weight),
-    getAlignedZoneOutlineDashGap(weight),
+    Math.max(2, Number(dashLength ?? getAlignedZoneOutlineDashLength(weight))),
+    Math.max(2, Number(dashGap ?? getAlignedZoneOutlineDashGap(weight))),
   );
 
   return (
@@ -439,7 +450,7 @@ function ArrowHead({
   );
 }
 
-function MarkerPlacementPreview() {
+function MarkerPlacementPreview({ visualScale }: { visualScale: number }) {
   const markerStyle = useEditorTestDrawingOptionsStore(
     (state) => state.markerStyle,
   );
@@ -455,8 +466,13 @@ function MarkerPlacementPreview() {
       },
     };
 
-    return getMarkerSymbolHtml(feature, { size: markerStyle.markerSize });
-  }, [markerStyle, markerSymbol]);
+    const scaledSize = Math.min(
+      4096,
+      Math.max(0.5, markerStyle.markerSize * visualScale),
+    );
+
+    return getMarkerSymbolHtml(feature, { size: scaledSize });
+  }, [markerStyle, markerSymbol, visualScale]);
 
   return (
     <div
@@ -472,17 +488,18 @@ function MarkerPlacementPreview() {
   );
 }
 
-function TextPlacementPreview() {
+function TextPlacementPreview({ visualScale }: { visualScale: number }) {
   const textStyle = useEditorTestDrawingOptionsStore(
     (state) => state.textStyle,
   );
 
   const html = useMemo(() => {
     return createTextDivIconRender(createPreviewTextFeature(textStyle), {
+      scale: visualScale,
       minWidth: 56,
       maxWidth: 520,
     }).html;
-  }, [textStyle]);
+  }, [textStyle, visualScale]);
 
   return (
     <div
@@ -750,15 +767,17 @@ function PointPlacementPreview({ type }: { type: "line" | "zone" }) {
 
 function CursorPlacementPreview({
   activeTool,
+  visualScale,
 }: {
   activeTool: EditorTestActiveTool;
+  visualScale: number;
 }) {
   if (activeTool === "marker") {
-    return <MarkerPlacementPreview />;
+    return <MarkerPlacementPreview visualScale={visualScale} />;
   }
 
   if (activeTool === "text") {
-    return <TextPlacementPreview />;
+    return <TextPlacementPreview visualScale={visualScale} />;
   }
 
   if (activeTool === "freehand") {
@@ -784,7 +803,7 @@ function CursorPlacementPreview({
   return null;
 }
 
-function LineGeometryPreview({ points }: { points: PointerPosition[] }) {
+function LineGeometryPreview({ points, visualScale }: { points: PointerPosition[]; visualScale: number }) {
   const lineStyle = useEditorTestDrawingOptionsStore(
     (state) => state.lineStyle,
   );
@@ -793,11 +812,17 @@ function LineGeometryPreview({ points }: { points: PointerPosition[] }) {
     return null;
   }
 
-  const weight = clamp(lineStyle.weight, 1, 20);
+  const baseWeight = clamp(lineStyle.weight, 1, 20);
+  const weight = clamp(baseWeight * visualScale, 0.25, 512);
   const color = lineStyle.color;
   const opacity = clamp(lineStyle.opacity, 0, 1);
-  const dashArray = getSvgDashArray(lineStyle.dashStyle, weight);
-  const arrowSize = clamp(13 + weight * 2.8, MIN_ARROW_SIZE, MAX_ARROW_SIZE);
+  const dashArray = getSvgDashArray(lineStyle.dashStyle, weight, lineStyle.dashLength * visualScale, lineStyle.dashGap * visualScale);
+  const baseArrowSize = clamp(
+    13 + baseWeight * 2.8,
+    MIN_ARROW_SIZE,
+    MAX_ARROW_SIZE,
+  );
+  const arrowSize = clamp(baseArrowSize * visualScale, 0.5, 4096);
   const bodyPoints = trimLinePreviewBodyForArrows(points, {
     arrowStart: lineStyle.arrowStart,
     arrowEnd: lineStyle.arrowEnd,
@@ -839,7 +864,7 @@ function LineGeometryPreview({ points }: { points: PointerPosition[] }) {
   );
 }
 
-function ZoneGeometryPreview({ points }: { points: PointerPosition[] }) {
+function ZoneGeometryPreview({ points, visualScale }: { points: PointerPosition[]; visualScale: number }) {
   const zoneStyle = useEditorTestDrawingOptionsStore(
     (state) => state.zoneStyle,
   );
@@ -848,7 +873,7 @@ function ZoneGeometryPreview({ points }: { points: PointerPosition[] }) {
     return null;
   }
 
-  const weight = clamp(zoneStyle.weight, 1, 20);
+  const weight = clamp(zoneStyle.weight * visualScale, 0.25, 512);
   const strokeOpacity = zoneStyle.zoneStrokeEnabled
     ? clamp(zoneStyle.opacity, 0, 1)
     : 0;
@@ -861,15 +886,15 @@ function ZoneGeometryPreview({ points }: { points: PointerPosition[] }) {
     isClosedShape && zoneStyle.zoneHatchingStyle !== "none"
       ? createHatchSegmentsForRing(points, {
           style: zoneStyle.zoneHatchingStyle,
-          spacing: zoneStyle.zoneHatchingSpacing,
+          spacing: zoneStyle.zoneHatchingSpacing * visualScale,
         })
       : [];
   const hatchDots =
     isClosedShape && zoneStyle.zoneDotsEnabled
       ? createHatchDotsForRing(points, {
-          spacing: zoneStyle.zoneDotsSpacing,
-          radius: zoneStyle.zoneDotsRadius,
-          margin: zoneStyle.zoneDotsRadius,
+          spacing: zoneStyle.zoneDotsSpacing * visualScale,
+          radius: zoneStyle.zoneDotsRadius * visualScale,
+          margin: zoneStyle.zoneDotsRadius * visualScale,
         })
       : [];
 
@@ -902,6 +927,8 @@ function ZoneGeometryPreview({ points }: { points: PointerPosition[] }) {
           opacity={strokeOpacity}
           weight={weight}
           dashStyle={zoneStyle.dashStyle}
+          dashLength={zoneStyle.dashLength * visualScale}
+          dashGap={zoneStyle.dashGap * visualScale}
         />
       ) : null}
 
@@ -909,7 +936,7 @@ function ZoneGeometryPreview({ points }: { points: PointerPosition[] }) {
         <g
           clipPath={`url(#${clipId})`}
           stroke={zoneStyle.zoneHatchingColor}
-          strokeWidth={zoneStyle.zoneHatchingWeight}
+          strokeWidth={zoneStyle.zoneHatchingWeight * visualScale}
           strokeLinecap="butt"
         >
           {hatchSegments.map(([start, end], index) => (
@@ -931,7 +958,7 @@ function ZoneGeometryPreview({ points }: { points: PointerPosition[] }) {
               key={`${index}-${point.x}-${point.y}`}
               cx={point.x}
               cy={point.y}
-              r={zoneStyle.zoneDotsRadius}
+              r={zoneStyle.zoneDotsRadius * visualScale}
             />
           ))}
         </g>
@@ -981,7 +1008,7 @@ function getQuickShapePreviewPoints(
   }));
 }
 
-function QuickShapeGeometryPreview({ points }: { points: PointerPosition[] }) {
+function QuickShapeGeometryPreview({ points, visualScale }: { points: PointerPosition[]; visualScale: number }) {
   const zoneStyle = useEditorTestDrawingOptionsStore(
     (state) => state.zoneStyle,
   );
@@ -992,7 +1019,7 @@ function QuickShapeGeometryPreview({ points }: { points: PointerPosition[] }) {
 
   const kind = getQuickShapeKind(zoneStyle);
   const shapePoints = getQuickShapePreviewPoints(kind, points[0], points[1]);
-  const weight = clamp(zoneStyle.weight, 1, 20);
+  const weight = clamp(zoneStyle.weight * visualScale, 0.25, 512);
   const strokeOpacity = zoneStyle.zoneStrokeEnabled
     ? clamp(zoneStyle.opacity, 0, 1)
     : 0;
@@ -1004,14 +1031,14 @@ function QuickShapeGeometryPreview({ points }: { points: PointerPosition[] }) {
     zoneStyle.zoneHatchingStyle !== "none"
       ? createHatchSegmentsForRing(shapePoints, {
           style: zoneStyle.zoneHatchingStyle,
-          spacing: zoneStyle.zoneHatchingSpacing,
+          spacing: zoneStyle.zoneHatchingSpacing * visualScale,
         })
       : [];
   const hatchDots = zoneStyle.zoneDotsEnabled
     ? createHatchDotsForRing(shapePoints, {
-        spacing: zoneStyle.zoneDotsSpacing,
-        radius: zoneStyle.zoneDotsRadius,
-        margin: zoneStyle.zoneDotsRadius,
+        spacing: zoneStyle.zoneDotsSpacing * visualScale,
+        radius: zoneStyle.zoneDotsRadius * visualScale,
+        margin: zoneStyle.zoneDotsRadius * visualScale,
       })
     : [];
 
@@ -1046,7 +1073,7 @@ function QuickShapeGeometryPreview({ points }: { points: PointerPosition[] }) {
         <g
           clipPath={`url(#${clipId})`}
           stroke={zoneStyle.zoneHatchingColor}
-          strokeWidth={zoneStyle.zoneHatchingWeight}
+          strokeWidth={zoneStyle.zoneHatchingWeight * visualScale}
           strokeLinecap="butt"
         >
           {hatchSegments.map(([start, end], index) => (
@@ -1068,7 +1095,7 @@ function QuickShapeGeometryPreview({ points }: { points: PointerPosition[] }) {
               key={`${index}-${point.x}-${point.y}`}
               cx={point.x}
               cy={point.y}
-              r={zoneStyle.zoneDotsRadius}
+              r={zoneStyle.zoneDotsRadius * visualScale}
             />
           ))}
         </g>
@@ -1082,11 +1109,13 @@ function DrawingGeometryOverlay({
   drawingPoints,
   pointerPosition,
   mapRevision,
+  visualScale,
 }: {
   activeTool: EditorTestActiveTool;
   drawingPoints: LatLngValue[];
   pointerPosition: PointerPosition | null;
   mapRevision: number;
+  visualScale: number;
 }) {
   const map = useMap();
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -1144,10 +1173,10 @@ function DrawingGeometryOverlay({
         pointerEvents: "none",
       }}
     >
-      {activeTool === "line" ? <LineGeometryPreview points={points} /> : null}
-      {activeTool === "zone" ? <ZoneGeometryPreview points={points} /> : null}
+      {activeTool === "line" ? <LineGeometryPreview points={points} visualScale={visualScale} /> : null}
+      {activeTool === "zone" ? <ZoneGeometryPreview points={points} visualScale={visualScale} /> : null}
       {activeTool === "shape" ? (
-        <QuickShapeGeometryPreview points={points} />
+        <QuickShapeGeometryPreview points={points} visualScale={visualScale} />
       ) : null}
     </svg>,
     map.getContainer(),
@@ -1243,6 +1272,9 @@ export function DrawingToolPreviewLayer() {
   const map = useMap();
   const currentMode = useEditorTestModeStore((state) => state.currentMode);
   const activeTool = useEditorTestToolStore((state) => state.activeTool);
+  const workspaceBasemapBaseZoom = useEditorTestWorkspaceStore(
+    (state) => state.workspaceBasemapBaseZoom,
+  );
   const [pointerPosition, setPointerPosition] =
     useState<PointerPosition | null>(null);
   const [drawingPoints, setDrawingPoints] = useState<LatLngValue[]>([]);
@@ -1250,6 +1282,18 @@ export function DrawingToolPreviewLayer() {
   const geometryPointCandidateRef = useRef<GeometryPointCandidate | null>(null);
 
   const showPreview = shouldShowPlacementPreview(currentMode, activeTool);
+  // mapRevision force aussi le recalcul de l’échelle du fantôme pendant un zoom.
+  void mapRevision;
+  const currentZoom = map.getZoom();
+  const referenceZoom =
+    typeof workspaceBasemapBaseZoom === "number" &&
+    Number.isFinite(workspaceBasemapBaseZoom)
+      ? workspaceBasemapBaseZoom
+      : currentZoom;
+  const placementVisualScale = getVisualZoomScale(
+    currentZoom,
+    referenceZoom,
+  );
 
   useEffect(() => {
     const container = map.getContainer();
@@ -1273,6 +1317,19 @@ export function DrawingToolPreviewLayer() {
     setDrawingPoints([]);
     setPointerPosition(null);
   }, [activeTool, currentMode]);
+
+  useEffect(() => {
+    if (!showPreview) return;
+
+    const refreshVisualScale = () => {
+      setMapRevision((value) => value + 1);
+    };
+
+    map.on("zoom move resize", refreshVisualScale);
+    return () => {
+      map.off("zoom move resize", refreshVisualScale);
+    };
+  }, [map, showPreview]);
 
   useEffect(() => {
     const container = map.getContainer();
@@ -1471,10 +1528,6 @@ export function DrawingToolPreviewLayer() {
       }, 0);
     };
 
-    const forceMapRevision = () => {
-      setMapRevision((value) => value + 1);
-    };
-
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setDrawingPoints([]);
@@ -1498,7 +1551,6 @@ export function DrawingToolPreviewLayer() {
       true,
     );
     map.on("pm:create pm:drawend pm:drawstart", resetDrawingPreview);
-    map.on("move zoom resize", forceMapRevision);
     window.addEventListener("keydown", handleEscape, true);
 
     return () => {
@@ -1524,7 +1576,6 @@ export function DrawingToolPreviewLayer() {
       );
       geometryPointCandidateRef.current = null;
       map.off("pm:create pm:drawend pm:drawstart", resetDrawingPreview);
-      map.off("move zoom resize", forceMapRevision);
       window.removeEventListener("keydown", handleEscape, true);
     };
   }, [activeTool, map, showPreview]);
@@ -1542,6 +1593,7 @@ export function DrawingToolPreviewLayer() {
         drawingPoints={drawingPoints}
         pointerPosition={pointerPosition}
         mapRevision={mapRevision}
+        visualScale={placementVisualScale}
       />
 
       {pointerPosition ? (
@@ -1558,7 +1610,10 @@ export function DrawingToolPreviewLayer() {
             willChange: "left, top",
           }}
         >
-          <CursorPlacementPreview activeTool={activeTool} />
+          <CursorPlacementPreview
+            activeTool={activeTool}
+            visualScale={placementVisualScale}
+          />
         </div>
       ) : null}
     </>,

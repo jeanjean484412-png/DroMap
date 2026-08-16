@@ -1,7 +1,7 @@
 import L from "leaflet";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
-import { getFeatureDashStyle } from "./feature-style";
+import { getFeatureDashGap, getFeatureDashLength, getFeatureDashStyle } from "./feature-style";
 import {
   getZoneStrokeEnabled,
   getZoneVisibleStrokeOpacity,
@@ -126,6 +126,19 @@ export function getAlignedZoneOutlineDashGap(lineWidth: number) {
   );
 }
 
+function getConfiguredDashScale(feature: DroMapFeature, lineWidth: number) {
+  const baseWeight = Math.max(0.25, Number(feature.properties?.style?.weight ?? lineWidth));
+  return Math.max(0.05, lineWidth / baseWeight);
+}
+
+function getConfiguredDashLength(feature: DroMapFeature, lineWidth: number) {
+  return getFeatureDashLength(feature) * getConfiguredDashScale(feature, lineWidth);
+}
+
+function getConfiguredDashGap(feature: DroMapFeature, lineWidth: number) {
+  return getFeatureDashGap(feature) * getConfiguredDashScale(feature, lineWidth);
+}
+
 export function createAlignedDottedZoneOutlinePoints(
   ring: ZoneOutlinePoint[],
   spacing: number,
@@ -224,7 +237,7 @@ export function createAlignedZoneOutlineSvgParts(
     return {
       dots: createAlignedDottedZoneOutlinePoints(
         ring,
-        getAlignedZoneOutlineDotSpacing(lineWidth),
+        getConfiguredDashGap(feature, lineWidth),
       ),
       segments: [] as ZoneOutlineSegment[],
     };
@@ -235,8 +248,8 @@ export function createAlignedZoneOutlineSvgParts(
       dots: [] as ZoneOutlinePoint[],
       segments: createAlignedDashedZoneOutlineSegments(
         ring,
-        getAlignedZoneOutlineDashLength(lineWidth),
-        getAlignedZoneOutlineDashGap(lineWidth),
+        getConfiguredDashLength(feature, lineWidth),
+        getConfiguredDashGap(feature, lineWidth),
       ),
     };
   }
@@ -281,7 +294,7 @@ export function drawAlignedZoneOutlineOnCanvas(
       const radius = Math.max(1.2, options.lineWidth / 2);
       const dots = createAlignedDottedZoneOutlinePoints(
         ring,
-        getAlignedZoneOutlineDotSpacing(options.lineWidth),
+        getConfiguredDashGap(feature, options.lineWidth),
       );
 
       for (const dot of dots) {
@@ -295,8 +308,8 @@ export function drawAlignedZoneOutlineOnCanvas(
 
     const segments = createAlignedDashedZoneOutlineSegments(
       ring,
-      getAlignedZoneOutlineDashLength(options.lineWidth),
-      getAlignedZoneOutlineDashGap(options.lineWidth),
+      getConfiguredDashLength(feature, options.lineWidth),
+      getConfiguredDashGap(feature, options.lineWidth),
     );
 
     for (const [start, end] of segments) {
@@ -371,7 +384,7 @@ export function createAlignedZoneOutlineLeafletLayer(
       const radius = Math.max(1.2, lineWidth / 2);
       const dots = createAlignedDottedZoneOutlinePoints(
         layerRing,
-        getAlignedZoneOutlineDotSpacing(lineWidth),
+        getConfiguredDashGap(feature, lineWidth),
       );
 
       for (const dot of dots) {
@@ -395,8 +408,8 @@ export function createAlignedZoneOutlineLeafletLayer(
 
     const segments = createAlignedDashedZoneOutlineSegments(
       layerRing,
-      getAlignedZoneOutlineDashLength(lineWidth),
-      getAlignedZoneOutlineDashGap(lineWidth),
+      getConfiguredDashLength(feature, lineWidth),
+      getConfiguredDashGap(feature, lineWidth),
     );
 
     for (const segment of segments) {

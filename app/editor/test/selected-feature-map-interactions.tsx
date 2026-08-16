@@ -25,6 +25,13 @@ type PointerDownState = {
   y: number;
 };
 
+type LayerHandlers = {
+  clickHandler: L.LeafletEventHandlerFn;
+  doubleClickHandler: L.LeafletEventHandlerFn;
+  mouseDownHandler: L.LeafletEventHandlerFn;
+  mouseUpHandler: L.LeafletEventHandlerFn;
+};
+
 const CLICK_DRAG_DISTANCE_THRESHOLD = 5;
 
 function shouldSuppressGlobalMapClick() {
@@ -40,41 +47,26 @@ function shouldSuppressGlobalMapClick() {
 
 function getLayerFeatureId(layer: L.Layer): string | undefined {
   const dromapLayer = layer as DroMapLeafletLayer;
-
   return dromapLayer.dromapFeatureId ?? dromapLayer.dromapHitboxOwnerId;
 }
 
-function shouldSuppressLayerClick(
-  layer: L.Layer,
+function pointerMoved(
   pointerDownState: PointerDownState | undefined,
   event: L.LeafletMouseEvent,
 ) {
-  const dromapLayer = layer as DroMapLeafletLayer;
-
-  if (dromapLayer.dromapSuppressNextClick) {
-    dromapLayer.dromapSuppressNextClick = false;
-    return true;
-  }
-
-  if (!pointerDownState) {
+  if (!pointerDownState || !event.originalEvent) {
     return false;
   }
 
-  const mouseEvent = event.originalEvent;
-  const deltaX = mouseEvent.clientX - pointerDownState.x;
-  const deltaY = mouseEvent.clientY - pointerDownState.y;
-  const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-
-  return distance >= CLICK_DRAG_DISTANCE_THRESHOLD;
+  const deltaX = event.originalEvent.clientX - pointerDownState.x;
+  const deltaY = event.originalEvent.clientY - pointerDownState.y;
+  return Math.hypot(deltaX, deltaY) >= CLICK_DRAG_DISTANCE_THRESHOLD;
 }
 
 export function SelectedFeatureMapInteractions() {
   const map = useMap();
-
   const currentMode = useEditorTestModeStore((state) => state.currentMode);
   const activeTool = useEditorTestToolStore((state) => state.activeTool);
-
-  const features = useEditorTestFeaturesStore((state) => state.features);
   const layersSignature = useEditorTestLayersStore((state) =>
     state.layers
       .map(
@@ -82,10 +74,6 @@ export function SelectedFeatureMapInteractions() {
           `${layer.id}:${layer.visible ? "visible" : "hidden"}:${layer.order}`,
       )
       .join("|"),
-  );
-
-  const selectedFeatureId = useEditorTestSelectionStore(
-    (state) => state.selectedFeatureId,
   );
   const multiSelectionEnabled = useEditorTestSelectionStore(
     (state) => state.multiSelectionEnabled,
@@ -108,21 +96,37 @@ export function SelectedFeatureMapInteractions() {
       currentMode === "edit" &&
       (activeTool === "select" || activeTool === "edit");
 
-    if (!canSelectFromMap) return;
+    if (!canSelectFromMap) {
+      return;
+    }
 
     let ignoreNextMapClick = false;
-
+    let mapIsDragging = false;
     const pointerDownByFeatureId = new Map<string, PointerDownState>();
-    const featuresById = new Map(
-      features.map((feature) => [feature.id, feature]),
-    );
+    const boundLayers = new Map<L.Layer, LayerHandlers>();
+    const pendingFrames = new Set<number>();
+    const pendingTimers = new Set<number>();
 
-    const layerHandlers: Array<{
-      layer: L.Layer;
-      clickHandler: L.LeafletEventHandlerFn;
-      doubleClickHandler: L.LeafletEventHandlerFn;
-      mouseDownHandler: L.LeafletEventHandlerFn;
-    }> = [];
+    const resetPointerState = () => {
+      pointerDownByFeatureId.clear();
+      // Une navigation ne doit jamais laisser un drapeau de clic bloqué qui
+      // rendrait une hitbox de trait inerte jusqu'à la sélection suivante.
+      ignoreNextMapClick = false;
+      (window as Window & { dromapSuppressNextClick?: boolean }).dromapSuppressNextClick = false;
+      boundLayers.forEach((_handlers, layer) => {
+        (layer as DroMapLeafletLayer).dromapSuppressNextClick = false;
+      });
+    };
+
+    const handleMapDragStart = () => {
+      mapIsDragging = true;
+      resetPointerState();
+    };
+
+    const handleMapDragEnd = () => {
+      mapIsDragging = false;
+      resetPointerState();
+    };
 
     const handleMapClick = () => {
       if (ignoreNextMapClick) {
@@ -134,19 +138,20 @@ export function SelectedFeatureMapInteractions() {
         return;
       }
 
-      // En sélection multiple, un clic dans le vide sert à continuer à viser
-      // d'autres objets : la sélection reste volontairement intacte.
-      if (!multiSelectionEnabled) {
+      if (!useEditorTestSelectionStore.getState().multiSelectionEnabled) {
         clearSelectedFeatureId();
       }
     };
 
-    map.on("click", handleMapClick);
+    const bindLayer = (layer: L.Layer) => {
+      if (boundLayers.has(layer)) {
+        return;
+      }
 
-    map.eachLayer((layer) => {
       const featureId = getLayerFeatureId(layer);
-
-      if (!featureId) return;
+      if (!featureId) {
+        return;
+      }
 
       if (layer instanceof L.Path) {
         layer.options.interactive = true;
@@ -155,7 +160,6 @@ export function SelectedFeatureMapInteractions() {
 
       const handleLayerMouseDown: L.LeafletEventHandlerFn = (event) => {
         const mouseEvent = event as L.LeafletMouseEvent;
-
         if (!mouseEvent.originalEvent) {
           return;
         }
@@ -166,24 +170,38 @@ export function SelectedFeatureMapInteractions() {
         });
       };
 
-      const handleLayerClick: L.LeafletEventHandlerFn = (event) => {
-        ignoreNextMapClick = true;
-
+      const handleLayerMouseUp: L.LeafletEventHandlerFn = (event) => {
         const mouseEvent = event as L.LeafletMouseEvent;
+        const down = pointerDownByFeatureId.get(featureId);
+        if (down && pointerMoved(down, mouseEvent)) {
+          pointerDownByFeatureId.delete(featureId);
+        }
+      };
+
+      const handleLayerClick: L.LeafletEventHandlerFn = (event) => {
+        const mouseEvent = event as L.LeafletMouseEvent;
+        const dromapLayer = layer as DroMapLeafletLayer;
+        const down = pointerDownByFeatureId.get(featureId);
+        pointerDownByFeatureId.delete(featureId);
 
         if (mouseEvent.originalEvent) {
           L.DomEvent.stop(mouseEvent.originalEvent);
         }
 
-        const pointerDownState = pointerDownByFeatureId.get(featureId);
-        pointerDownByFeatureId.delete(featureId);
-
-        if (shouldSuppressLayerClick(layer, pointerDownState, mouseEvent)) {
+        // Un clic généré à la fin d'un vrai déplacement ne sélectionne pas,
+        // mais l'état est immédiatement nettoyé : le clic suivant fonctionne.
+        if (
+          mapIsDragging ||
+          pointerMoved(down, mouseEvent) ||
+          dromapLayer.dromapSuppressNextClick
+        ) {
+          dromapLayer.dromapSuppressNextClick = false;
+          ignoreNextMapClick = false;
           return;
         }
 
-        // Le second clic d'un double-clic ne doit pas modifier la sélection
-        // juste avant l'ouverture de l'éditeur direct du texte.
+        ignoreNextMapClick = true;
+
         if (
           mouseEvent.originalEvent?.detail &&
           mouseEvent.originalEvent.detail >= 2
@@ -191,21 +209,22 @@ export function SelectedFeatureMapInteractions() {
           return;
         }
 
-        if (multiSelectionEnabled) {
-          toggleFeatureSelection(featureId);
+        const selectionState = useEditorTestSelectionStore.getState();
+        if (selectionState.multiSelectionEnabled) {
+          selectionState.toggleFeatureSelection(featureId);
           return;
         }
 
-        // Un second clic sur le même objet le garde sélectionné. Pour
-        // désélectionner en mode simple, il suffit de cliquer sur la carte.
-        if (selectedFeatureId !== featureId) {
-          setSelectedFeatureId(featureId);
-        }
+        // Réémettre explicitement la sélection même si l'objet était déjà
+        // sélectionné : l'inspecteur peut ainsi revenir sur « Sélection ».
+        selectionState.setSelectedFeatureId(featureId);
       };
 
       const handleLayerDoubleClick: L.LeafletEventHandlerFn = (event) => {
         const mouseEvent = event as L.LeafletMouseEvent;
-        const feature = featuresById.get(featureId);
+        const feature = useEditorTestFeaturesStore
+          .getState()
+          .features.find((candidate) => candidate.id === featureId);
 
         if (mouseEvent.originalEvent) {
           L.DomEvent.stop(mouseEvent.originalEvent);
@@ -233,41 +252,95 @@ export function SelectedFeatureMapInteractions() {
       };
 
       layer.on("mousedown", handleLayerMouseDown);
+      layer.on("mouseup", handleLayerMouseUp);
       layer.on("click", handleLayerClick);
       layer.on("dblclick", handleLayerDoubleClick);
-
-      layerHandlers.push({
-        layer,
+      boundLayers.set(layer, {
         clickHandler: handleLayerClick,
         doubleClickHandler: handleLayerDoubleClick,
         mouseDownHandler: handleLayerMouseDown,
+        mouseUpHandler: handleLayerMouseUp,
       });
-    });
+    };
+
+    const bindAllLayers = () => {
+      map.eachLayer(bindLayer);
+    };
+
+    const scheduleLayerBinding = (layer: L.Layer, remainingFrames = 8) => {
+      bindLayer(layer);
+      if (boundLayers.has(layer) || remainingFrames <= 0) return;
+      const frame = window.requestAnimationFrame(() => {
+        pendingFrames.delete(frame);
+        scheduleLayerBinding(layer, remainingFrames - 1);
+      });
+      pendingFrames.add(frame);
+    };
+
+    const handleLayerAdd = (event: L.LayerEvent) => {
+      // Après restauration, certaines hitboxes ne reçoivent leur identifiant
+      // DroMap qu'après leur ajout à Leaflet. Plusieurs frames sont donc
+      // volontairement retentées au lieu de dépendre d'un unique timing.
+      scheduleLayerBinding(event.layer);
+    };
+
+    map.on("click", handleMapClick);
+    map.on("dragstart", handleMapDragStart);
+    map.on("dragend", handleMapDragEnd);
+    map.on("moveend", resetPointerState);
+    map.on("layeradd", handleLayerAdd);
+
+    bindAllLayers();
+    const initialFrame = window.requestAnimationFrame(bindAllLayers);
+    pendingFrames.add(initialFrame);
+    // Filet de sécurité pour les couches restaurées/recréées de manière
+    // asynchrone (notamment les hitboxes transparentes des traits).
+    for (const delay of [40, 120, 350, 800]) {
+      const timer = window.setTimeout(() => {
+        pendingTimers.delete(timer);
+        bindAllLayers();
+      }, delay);
+      pendingTimers.add(timer);
+    }
 
     return () => {
+      pendingFrames.forEach((frame) => window.cancelAnimationFrame(frame));
+      pendingTimers.forEach((timer) => window.clearTimeout(timer));
       map.off("click", handleMapClick);
-      pointerDownByFeatureId.clear();
+      map.off("dragstart", handleMapDragStart);
+      map.off("dragend", handleMapDragEnd);
+      map.off("moveend", resetPointerState);
+      map.off("layeradd", handleLayerAdd);
+      resetPointerState();
 
-      layerHandlers.forEach(
-        ({ layer, clickHandler, doubleClickHandler, mouseDownHandler }) => {
+      boundLayers.forEach(
+        (
+          {
+            clickHandler,
+            doubleClickHandler,
+            mouseDownHandler,
+            mouseUpHandler,
+          },
+          layer,
+        ) => {
           layer.off("click", clickHandler);
           layer.off("dblclick", doubleClickHandler);
           layer.off("mousedown", mouseDownHandler);
+          layer.off("mouseup", mouseUpHandler);
         },
       );
+      boundLayers.clear();
     };
   }, [
     map,
     currentMode,
     activeTool,
-    features,
     layersSignature,
-    selectedFeatureId,
     multiSelectionEnabled,
     setSelectedFeatureId,
-    toggleFeatureSelection,
     setMultiSelectionEnabled,
     clearSelectedFeatureId,
+    toggleFeatureSelection,
   ]);
 
   return null;

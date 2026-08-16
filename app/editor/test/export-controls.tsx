@@ -16,6 +16,7 @@ import {
   bringFloatingPanelToFront,
   getInitialFloatingPanelZIndex,
 } from "./floating-panel-z-index";
+import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
 import { convertGeoJsonLayerToDromapFeatures } from "./geojson-layer-conversion";
 import type { BuildingSelectionFeature } from "./building-selection-modal";
 import {
@@ -379,7 +380,16 @@ function getStatusClassName(status: ImportStatus) {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
-export function ExportControls() {
+type ExportControlsProps = {
+  showExportButton?: boolean;
+  showImportButton?: boolean;
+};
+
+export function ExportControls({
+  showExportButton = true,
+  showImportButton = true,
+}: ExportControlsProps = {}) {
+  const { enabled: productRuntimeEnabled, capabilities, requestRestriction } = useDromapProductRuntime();
   const [hasMounted, setHasMounted] = useState(false);
   const [isBuildingsPanelOpen, setIsBuildingsPanelOpen] = useState(false);
   const [isBuildingsChoiceOpen, setIsBuildingsChoiceOpen] = useState(false);
@@ -460,7 +470,10 @@ export function ExportControls() {
   );
 
   const canExport = workspaceBounds !== null && currentMode === "edit";
-  const canImportBuildings = normalizedBounds !== null && currentMode === "edit";
+  const hasImportableWorkspace =
+    normalizedBounds !== null && currentMode === "edit";
+  const canImportBuildings =
+    hasImportableWorkspace && capabilities.canImportBuildings;
 
   useEffect(() => {
     setHasMounted(true);
@@ -522,7 +535,16 @@ export function ExportControls() {
   }
 
   const openBuildingsPanel = () => {
-    if (!canImportBuildings) {
+    if (!hasImportableWorkspace) {
+      return;
+    }
+
+    if (!capabilities.canImportBuildings) {
+      requestRestriction({
+        title: "Import de bâtiments réservé aux utilisateurs connectés",
+        description:
+          "L’import de bâtiments nécessite un compte. La carte actuelle ne sera pas modifiée.",
+      });
       return;
     }
 
@@ -836,56 +858,69 @@ export function ExportControls() {
 
   return (
     <>
-      <section className="absolute left-[8.5rem] top-4 z-[1000] flex items-center gap-2 rounded-xl border border-slate-200 bg-white/95 px-2 py-2 text-sm shadow-lg backdrop-blur">
+      <section
+        className={[
+          "absolute top-4 z-[1000] flex items-center gap-2 rounded-xl border border-slate-200 bg-white/95 px-2 py-2 text-sm shadow-lg backdrop-blur",
+          productRuntimeEnabled ? "left-4" : "left-[8.5rem]",
+        ].join(" ")}
+      >
         <div className="hidden min-w-0 sm:block">
           <div className="text-xs font-semibold leading-none text-slate-900">
-            Fichiers
+            {showExportButton || showImportButton ? "Fichiers" : "Données"}
           </div>
           <div className="mt-0.5 max-w-40 truncate text-[10px] leading-none text-slate-500">
-            {canExport
-              ? "Export et bâtiments disponibles"
-              : workspaceBounds
-                ? "Valide la zone pour continuer"
-                : "Import disponible"}
+            {showExportButton || showImportButton
+              ? canExport
+                ? "Export et bâtiments disponibles"
+                : workspaceBounds
+                  ? "Valide la zone pour continuer"
+                  : "Import disponible"
+              : "Importer les bâtiments de la zone"}
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={openExportPanel}
-          disabled={!canExport}
-          title={
-            canExport
-              ? "Exporter la carte"
-              : "Sélectionne et valide d’abord une zone de travail."
-          }
-          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
-        >
-          Exporter
-        </button>
+        {showExportButton ? (
+          <button
+            type="button"
+            onClick={openExportPanel}
+            disabled={!canExport}
+            title={
+              canExport
+                ? "Exporter la carte"
+                : "Sélectionne et valide d’abord une zone de travail."
+            }
+            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            Exporter
+          </button>
+        ) : null}
 
-        <button
-          type="button"
-          onClick={openImportPanel}
-          title="Importer un projet DroMap JSON ou un calque GeoJSON"
-          className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 shadow-sm transition hover:bg-emerald-100"
-        >
-          Importer
-        </button>
+        {showImportButton ? (
+          <button
+            type="button"
+            onClick={openImportPanel}
+            title="Importer un projet DroMap JSON ou un calque GeoJSON"
+            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 shadow-sm transition hover:bg-emerald-100"
+          >
+            Importer
+          </button>
+        ) : null}
 
         <button
           type="button"
           onClick={openBuildingsPanel}
-          disabled={!canImportBuildings}
+          disabled={!hasImportableWorkspace}
           title={
-            canImportBuildings
-              ? "Importer les bâtiments de la zone : IGN en France, Overture Maps ailleurs"
-              : "Valide d’abord la zone de travail pour importer ses bâtiments."
+            !hasImportableWorkspace
+              ? "Valide d’abord la zone de travail pour importer ses bâtiments."
+              : capabilities.canImportBuildings
+                ? "Importer les bâtiments de la zone : IGN en France, Overture Maps ailleurs"
+                : "Importer des bâtiments — compte requis"
           }
           className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-900 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
         >
           <BuildingsIcon />
-          Bâtiments
+          Bâtiments{capabilities.canImportBuildings ? "" : " 🔒"}
         </button>
       </section>
 

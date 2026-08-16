@@ -32,19 +32,19 @@ function isPrivateIpv6(address: string) {
 async function assertPublicHost(url: URL) {
   const hostname = url.hostname.toLowerCase();
   if (hostname === "localhost" || hostname.endsWith(".local") || hostname.endsWith(".internal")) {
-    throw new Error("Hôte local interdit.");
+    throw new Error("Cette adresse ne peut pas être importée.");
   }
   if (isIP(hostname)) {
     if ((isIP(hostname) === 4 && isPrivateIpv4(hostname)) || (isIP(hostname) === 6 && isPrivateIpv6(hostname))) {
-      throw new Error("Adresse privée interdite.");
+      throw new Error("Cette adresse ne peut pas être importée.");
     }
     return;
   }
   const addresses = await lookup(hostname, { all: true, verbatim: true });
-  if (!addresses.length) throw new Error("Hôte introuvable.");
+  if (!addresses.length) throw new Error("Cette adresse est introuvable.");
   for (const entry of addresses) {
     if ((entry.family === 4 && isPrivateIpv4(entry.address)) || (entry.family === 6 && isPrivateIpv6(entry.address))) {
-      throw new Error("L'hôte résout vers une adresse privée interdite.");
+      throw new Error("Cette adresse ne peut pas être importée.");
     }
   }
 }
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
         cache: "no-store",
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`La source a renvoyé ${response.status}.`);
+      if (!response.ok) throw new Error("La source GeoJSON est momentanément indisponible.");
       const contentLength = Number(response.headers.get("content-length") ?? 0);
       if (contentLength > MAX_BYTES) throw new Error("Le fichier dépasse la limite de 25 Mo.");
       const buffer = await response.arrayBuffer();

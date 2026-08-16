@@ -5,6 +5,7 @@ import {
   ensureFeatureVisualReferenceZoom,
   getCurrentEditorMapZoom,
 } from "@/lib/dromap/feature-visual-scale";
+import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 import type { DroMapFeatureDrawOrderAction } from "@/lib/dromap/feature-order";
 import {
   normalizeFeatureDrawOrdersForPersistence,
@@ -89,12 +90,21 @@ function cloneHistorySnapshot(
   };
 }
 
+function getFeatureCreationReferenceZoom() {
+  const baseZoom =
+    useEditorTestWorkspaceStore.getState().workspaceBasemapBaseZoom;
+
+  return typeof baseZoom === "number" && Number.isFinite(baseZoom)
+    ? baseZoom
+    : getCurrentEditorMapZoom();
+}
+
 function normalizeFeaturesForStore(features: DroMapFeature[]) {
   const normalizedFeatures = normalizeFeatureDrawOrdersForPersistence(
     features,
   ).map((feature) =>
     ensureFeatureHasLayerId(
-      ensureFeatureVisualReferenceZoom(feature, getCurrentEditorMapZoom()),
+      ensureFeatureVisualReferenceZoom(feature, getFeatureCreationReferenceZoom()),
     ),
   );
 
@@ -106,7 +116,7 @@ function normalizeFeaturesForStore(features: DroMapFeature[]) {
 function normalizeNewFeatureForStore(feature: DroMapFeature) {
   const referencedFeature = ensureFeatureVisualReferenceZoom(
     feature,
-    getCurrentEditorMapZoom(),
+    getFeatureCreationReferenceZoom(),
   );
   const nextFeature =
     typeof referencedFeature.properties.layerId === "string" &&

@@ -17,6 +17,7 @@ import {
   getGeoJsonLayerLoadedFeatureCount,
   getRenderableGeoJsonLayers,
   parseGeoJsonTextToDromapGeoJsonLayer,
+  type DromapGeoJsonLayer,
   type DromapGeoJsonPrecisionMode,
   useEditorTestGeoJsonLayersStore,
 } from "@/stores/editor-test-geojson-layers";
@@ -37,8 +38,13 @@ import {
   downloadFeaturesAsGeoJson,
   downloadProjectAsJson,
   parseDromapProjectJson,
+  type ImportedDromapProject,
 } from "./export-download";
 import { ExportPreviewScene } from "./export-preview-scene";
+import {
+  convertGeoJsonLayerToDromapFeatures,
+  GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD,
+} from "./geojson-layer-conversion";
 import { ColorPicker } from "./color-picker";
 import {
   bringFloatingPanelToFront,
@@ -49,6 +55,8 @@ import {
   getDromapBasemapExportQualityMode,
   supportsDromapHighQualityExport,
 } from "@/lib/dromap/basemap";
+import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
+import { useDromapProjectSave } from "@/components/dromap-product/project-autosave";
 import {
   MAX_LEGEND_ITEM_FONT_SIZE,
   MAX_LEGEND_TITLE_FONT_SIZE,
@@ -58,6 +66,9 @@ import {
   MIN_LEGEND_SECTION_TITLE_FONT_SIZE,
   clampExportNumber,
 } from "./export-layout";
+import { getExportLegendGlobalSymbolScale } from "./export-legend-layout";
+import { RenderKeyboardHistory } from "./render-keyboard-history";
+import { getFeatureIdsOutsideWorkspace } from "./workspace-feature-intersection";
 
 const GeoJsonLibraryBrowser = dynamic(
   () =>
@@ -207,7 +218,84 @@ function getVisualExportFormatLabel(format: VisualExportFormat) {
   }
 }
 
+
+type PendingDromapProjectImport = {
+  fileName: string;
+  fileSizeBytes: number;
+  warnings: string[];
+  project: ImportedDromapProject;
+};
+
+function formatImportFileSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 o";
+  const units = ["o", "Ko", "Mo", "Go"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: value >= 10 ? 1 : 2 }).format(value)} ${units[unit]}`;
+}
+
+function buildProjectImportWarnings(project: ImportedDromapProject, fileSizeBytes: number) {
+  const warnings: string[] = [];
+  const geoJsonFeatureCount = project.geoJsonLayers.reduce((sum, layer) => sum + Math.max(0, layer.featureCount ?? 0), 0);
+  if (fileSizeBytes >= 25 * 1024 * 1024) {
+    warnings.push("Ce Projet DroMap est volumineux. L’ajout peut prendre quelques secondes.");
+  }
+  if (project.features.length >= 5_000) {
+    warnings.push(`${project.features.length.toLocaleString("fr-FR")} objets DroMap vont être ajoutés. La carte peut être plus lourde à manipuler.`);
+  }
+  if (geoJsonFeatureCount >= 50_000) {
+    warnings.push(`Les calques GeoJSON contiennent environ ${geoJsonFeatureCount.toLocaleString("fr-FR")} entités. Ils resteront regroupés pour préserver les performances.`);
+  }
+  return warnings;
+}
+
+function createImportId(prefix: string, originalId: string, usedIds: Set<string>) {
+  if (originalId && !usedIds.has(originalId)) {
+    usedIds.add(originalId);
+    return originalId;
+  }
+  const suffix =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let candidate = `${prefix}-${suffix}`;
+  while (usedIds.has(candidate)) candidate = `${prefix}-${suffix}-${Math.random().toString(36).slice(2, 7)}`;
+  usedIds.add(candidate);
+  return candidate;
+}
+
+function createImportName(name: string, usedNames: Set<string>) {
+  const base = name.trim() || "Élément importé";
+  if (!usedNames.has(base.toLocaleLowerCase("fr-FR"))) {
+    usedNames.add(base.toLocaleLowerCase("fr-FR"));
+    return base;
+  }
+  let index = 2;
+  let candidate = `${base} (${index})`;
+  while (usedNames.has(candidate.toLocaleLowerCase("fr-FR"))) {
+    index += 1;
+    candidate = `${base} (${index})`;
+  }
+  usedNames.add(candidate.toLocaleLowerCase("fr-FR"));
+  return candidate;
+}
+
+function customMarkerDefinitionsMatch(a: { kind: string; dataUrl: string; elements?: unknown }, b: { kind: string; dataUrl: string; elements?: unknown }) {
+  return a.kind === b.kind && a.dataUrl === b.dataUrl && JSON.stringify(a.elements ?? null) === JSON.stringify(b.elements ?? null);
+}
+
 export function ExportSetupPanel() {
+  const {
+    enabled: productRuntimeEnabled,
+    projectId: productProjectId,
+    capabilities,
+    requestRestriction,
+  } = useDromapProductRuntime();
+  const { saveNow } = useDromapProjectSave();
   const [isDownloadingPng, setIsDownloadingPng] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isDownloadingJpeg, setIsDownloadingJpeg] = useState(false);
@@ -218,6 +306,12 @@ export function ExportSetupPanel() {
   const [isDownloadingGeoJson, setIsDownloadingGeoJson] = useState(false);
   const [isImportingProject, setIsImportingProject] = useState(false);
   const [isImportingGeoJson, setIsImportingGeoJson] = useState(false);
+  const [pendingGeoJsonImport, setPendingGeoJsonImport] =
+    useState<DromapGeoJsonLayer | null>(null);
+  const [pendingProjectImport, setPendingProjectImport] =
+    useState<PendingDromapProjectImport | null>(null);
+  const [useImportedBasemap, setUseImportedBasemap] = useState(false);
+  const [useImportedWorkspace, setUseImportedWorkspace] = useState(false);
   const [geoJsonImportPrecision, setGeoJsonImportPrecision] =
     useState<DromapGeoJsonPrecisionMode>("original");
   const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
@@ -258,6 +352,16 @@ export function ExportSetupPanel() {
   const exportFormat = useEditorTestExportStore((state) => state.exportFormat);
   const showBasemapLabels = useEditorTestExportStore(
     (state) => state.showBasemapLabels,
+  );
+  const mapTitle = useEditorTestExportStore((state) => state.mapTitle);
+  const mapTitlePosition = useEditorTestExportStore(
+    (state) => state.mapTitlePosition,
+  );
+  const mapTitleFontSize = useEditorTestExportStore(
+    (state) => state.mapTitleFontSize,
+  );
+  const mapTitleColor = useEditorTestExportStore(
+    (state) => state.mapTitleColor,
   );
   const setExportFormat = useEditorTestExportStore(
     (state) => state.setExportFormat,
@@ -300,6 +404,12 @@ export function ExportSetupPanel() {
   const legendSymbolSize = useEditorTestExportStore(
     (state) => state.legendSymbolSize,
   );
+  const requestOpenAdvancedLegendEditor = useEditorTestExportStore(
+    (state) => state.requestOpenAdvancedLegendEditor,
+  );
+  const setLegendSymbolSize = useEditorTestExportStore(
+    (state) => state.setLegendSymbolSize,
+  );
   const legendItemGap = useEditorTestExportStore(
     (state) => state.legendItemGap,
   );
@@ -340,6 +450,33 @@ export function ExportSetupPanel() {
   const closeImportPanel = useEditorTestExportStore(
     (state) => state.closeImportPanel,
   );
+
+  const handleCloseExportPanel = () => {
+    // Dans le produit, « Légende & Rendu final » est un écran plein écran
+    // superposé à l'éditeur déjà monté. Le fermer doit donc seulement retirer
+    // cet écran : aucune navigation Next.js, aucun remontage Leaflet/MapLibre
+    // et aucun recalcul de zone.
+    closeExportPanel();
+
+    if (productRuntimeEnabled && productProjectId) {
+      // Sauvegarder les réglages de rendu en arrière-plan sans bloquer le
+      // retour visuel et sans générer la miniature lourde d'une navigation.
+      void saveNow("automatic");
+
+      // Compatibilité avec les anciens favoris/liens directs vers /render :
+      // on corrige simplement l'URL sans déclencher une navigation React.
+      if (typeof window !== "undefined") {
+        const legacyRenderPath = `/projects/${productProjectId}/render`;
+        if (window.location.pathname === legacyRenderPath) {
+          window.history.replaceState(
+            window.history.state,
+            "",
+            `/projects/${productProjectId}/editor`,
+          );
+        }
+      }
+    }
+  };
 
   const hiddenLegendFeatureIds = useEditorTestExportStore(
     (state) => state.hiddenLegendFeatureIds,
@@ -391,14 +528,18 @@ export function ExportSetupPanel() {
   );
 
   const features = useEditorTestFeaturesStore((state) => state.features);
-  const replaceFeatures = useEditorTestFeaturesStore(
-    (state) => state.replaceFeatures,
+  const addFeaturesWithHistory = useEditorTestFeaturesStore(
+    (state) => state.addFeaturesWithHistory,
   );
+  const customMarkers = useEditorTestCustomMarkersStore((state) => state.customMarkers);
   const mergeCustomMarkers = useEditorTestCustomMarkersStore(
     (state) => state.mergeCustomMarkers,
   );
   const layers = useEditorTestLayersStore((state) => state.layers);
+  const activeLayerId = useEditorTestLayersStore((state) => state.activeLayerId);
   const setLayers = useEditorTestLayersStore((state) => state.setLayers);
+  const createLayer = useEditorTestLayersStore((state) => state.createLayer);
+  const deleteLayer = useEditorTestLayersStore((state) => state.deleteLayer);
   const workspaceBounds = useEditorTestWorkspaceStore(
     (state) => state.workspaceBounds,
   );
@@ -426,10 +567,6 @@ export function ExportSetupPanel() {
   const clearSelectedFeatureId = useEditorTestSelectionStore(
     (state) => state.clearSelectedFeatureId,
   );
-  const requestMapFitToBounds = useEditorTestSelectionStore(
-    (state) => state.requestMapFitToBounds,
-  );
-
   useEffect(() => {
     if (isExportPanelOpen || isImportPanelOpen) {
       setPanelZIndex(bringFloatingPanelToFront());
@@ -444,9 +581,6 @@ export function ExportSetupPanel() {
 
   const setWorkspaceBounds = useEditorTestWorkspaceStore(
     (state) => state.setWorkspaceBounds,
-  );
-  const clearWorkspaceBounds = useEditorTestWorkspaceStore(
-    (state) => state.clearWorkspaceBounds,
   );
   const validateWorkspaceZone = useEditorTestWorkspaceStore(
     (state) => state.validateWorkspaceZone,
@@ -474,23 +608,14 @@ export function ExportSetupPanel() {
   const showAllFeatureLabels = useEditorTestMapLabelsStore(
     (state) => state.showAllFeatureLabels,
   );
-  const setShowAllFeatureLabels = useEditorTestMapLabelsStore(
-    (state) => state.setShowAllFeatureLabels,
-  );
   const showAllGeoJsonFeatureLabels = useEditorTestMapLabelsStore(
     (state) => state.showAllGeoJsonFeatureLabels,
-  );
-  const setShowAllGeoJsonFeatureLabels = useEditorTestMapLabelsStore(
-    (state) => state.setShowAllGeoJsonFeatureLabels,
   );
   const featureMapLabelScale = useEditorTestMapLabelsStore(
     (state) => state.featureMapLabelScale,
   );
   const featureMapLabelOutlineWidth = useEditorTestMapLabelsStore(
     (state) => state.featureMapLabelOutlineWidth,
-  );
-  const setFeatureMapLabelOutlineWidth = useEditorTestMapLabelsStore(
-    (state) => state.setFeatureMapLabelOutlineWidth,
   );
   const editorFeatureMapLabelRenderScale = useEditorTestMapLabelsStore(
     (state) => state.editorFeatureMapLabelRenderScale,
@@ -500,9 +625,6 @@ export function ExportSetupPanel() {
   );
   const editorFeatureMapLabelOffsets = useEditorTestMapLabelsStore(
     (state) => state.editorFeatureMapLabelOffsets,
-  );
-  const setFeatureMapLabelScale = useEditorTestMapLabelsStore(
-    (state) => state.setFeatureMapLabelScale,
   );
   const basemap = getDromapBasemapConfig(basemapId);
   const basemapExportQualityMode = getDromapBasemapExportQualityMode(basemap);
@@ -536,11 +658,16 @@ export function ExportSetupPanel() {
       geoJsonLayers: options.includeHiddenLayers
         ? geoJsonLayers
         : renderableGeoJsonLayers,
+      customMarkers,
       workspaceBounds,
       workspaceBasemapZoom,
       workspaceBasemapBaseZoom,
       basemapId,
       showBasemapLabels,
+      mapTitle,
+      mapTitlePosition,
+      mapTitleFontSize,
+      mapTitleColor,
       showCountryNeighborContext,
       showAllFeatureLabels,
       showAllGeoJsonFeatureLabels,
@@ -596,6 +723,15 @@ export function ExportSetupPanel() {
       return;
     }
 
+    if (format !== "png" && !capabilities.canExportOtherVisualFormats) {
+      requestRestriction({
+        title: `Export ${getVisualExportFormatLabel(format)} réservé aux utilisateurs connectés`,
+        description:
+          "En mode invité, DroMap permet uniquement le téléchargement PNG en qualité standard. Le projet actuel sera conservé.",
+      });
+      return;
+    }
+
     setPendingVisualExportFormat(format);
   }
 
@@ -603,6 +739,15 @@ export function ExportSetupPanel() {
     quality: ExportVisualQuality,
   ) {
     if (!pendingVisualExportFormat || isVisualExportBusy) {
+      return;
+    }
+
+    if (quality !== "standard" && !capabilities.canExportHighQuality) {
+      requestRestriction({
+        title: "Qualité supérieure réservée aux utilisateurs connectés",
+        description:
+          "Le mode invité exporte uniquement un PNG en qualité standard. La qualité modifie la définition, jamais les proportions de la carte.",
+      });
       return;
     }
 
@@ -763,6 +908,14 @@ export function ExportSetupPanel() {
   }
 
   function handleDownloadCsv() {
+    if (!capabilities.canExportProjectData) {
+      requestRestriction({
+        title: "Export de données réservé aux utilisateurs connectés",
+        description:
+          "Les exports Projet DroMap, GeoJSON et CSV nécessitent un compte. Le projet courant reste enregistré sur cet appareil.",
+      });
+      return;
+    }
     if (isDownloadingCsv) {
       return;
     }
@@ -785,6 +938,14 @@ export function ExportSetupPanel() {
   }
 
   function handleDownloadJson() {
+    if (!capabilities.canExportProjectData) {
+      requestRestriction({
+        title: "Export de données réservé aux utilisateurs connectés",
+        description:
+          "Les exports Projet DroMap, GeoJSON et CSV nécessitent un compte. Le projet courant reste enregistré sur cet appareil.",
+      });
+      return;
+    }
     const exportInput = createExportInput({ includeHiddenLayers: true });
 
     if (!exportInput || isDownloadingJson) {
@@ -809,6 +970,14 @@ export function ExportSetupPanel() {
   }
 
   function handleDownloadGeoJson() {
+    if (!capabilities.canExportProjectData) {
+      requestRestriction({
+        title: "Export de données réservé aux utilisateurs connectés",
+        description:
+          "Les exports Projet DroMap, GeoJSON et CSV nécessitent un compte. Le projet courant reste enregistré sur cet appareil.",
+      });
+      return;
+    }
     const exportInput = createExportInput();
 
     if (!exportInput || isDownloadingGeoJson) {
@@ -844,98 +1013,181 @@ export function ExportSetupPanel() {
     const file = event.currentTarget.files?.[0] ?? null;
     event.currentTarget.value = "";
 
-    if (!file || isImportingProject) {
-      return;
-    }
+    if (!file || isImportingProject) return;
 
     try {
       setIsImportingProject(true);
-      setDownloadStatus("Lecture du projet DroMap...");
-
-      const text = await file.text();
-      const importedProject = parseDromapProjectJson(text);
-
-      clearSelectedFeatureId();
-      setRenderPreviewUrl(null);
-      setBasemapId(importedProject.basemapId, { fit: false });
-      setShowCountryNeighborContext(importedProject.showCountryNeighborContext);
-      setShowAllFeatureLabels(importedProject.showAllFeatureLabels);
-      setShowAllGeoJsonFeatureLabels(
-        importedProject.showAllGeoJsonFeatureLabels,
-      );
-      setFeatureMapLabelScale(importedProject.featureMapLabelScale);
-      setFeatureMapLabelOutlineWidth(
-        importedProject.featureMapLabelOutlineWidth,
-      );
-      setLayers(importedProject.layers, importedProject.layers[0]?.id ?? null);
-      setGeoJsonLayers(importedProject.geoJsonLayers);
-      mergeCustomMarkers(importedProject.customMarkers);
-      replaceFeatures(importedProject.features);
-      setWorkspaceBounds(importedProject.workspaceBounds);
-      validateWorkspaceZone();
-      setWorkspaceBasemapBaseZoom(
-        importedProject.workspaceBasemapBaseZoom ??
-          importedProject.workspaceBasemapZoom,
-      );
-      setWorkspaceBasemapZoom(importedProject.workspaceBasemapZoom);
-
-      useEditorTestExportStore.setState({
-        legendTitle: importedProject.legendTitle,
-        legendPosition: importedProject.legendPosition,
-        legendMapPosition: importedProject.legendMapPosition,
-        legendMapTitlePosition: importedProject.legendMapTitlePosition,
-        exportFormat: importedProject.exportFormat,
-        showBasemapLabels: importedProject.showBasemapLabels,
-        legendBackgroundColor: importedProject.legendBackgroundColor,
-        legendSideWidth: importedProject.legendSideWidth,
-        legendBottomHeight: importedProject.legendBottomHeight,
-        legendTitleFontSize: importedProject.legendTitleFontSize,
-        legendItemFontSize: importedProject.legendItemFontSize,
-        legendSectionTitleFontSize: importedProject.legendSectionTitleFontSize,
-        legendSymbolSize: importedProject.legendSymbolSize,
-        legendItemGap: importedProject.legendItemGap,
-        legendLabelGap: importedProject.legendLabelGap,
-        legendLabelLineHeight: importedProject.legendLabelLineHeight,
-        legendSectionGap: importedProject.legendSectionGap,
-        legendMapBorderEnabled: importedProject.legendMapBorderEnabled,
-        legendMapBorderColor: importedProject.legendMapBorderColor,
-        legendMapBorderWidth: importedProject.legendMapBorderWidth,
-        legendMapBorderRadius: importedProject.legendMapBorderRadius,
-        legendMapPadding: importedProject.legendMapPadding,
-        customLegendEntries: importedProject.customLegendEntries,
-        legendSymbolOverrides: importedProject.legendSymbolOverrides,
-        scaleBarEnabled: importedProject.scaleBarEnabled,
-        scaleBarStyle: importedProject.scaleBarStyle,
-        scaleBarPosition: importedProject.scaleBarPosition,
-        scaleBarMapPosition: importedProject.scaleBarMapPosition,
-        northArrowEnabled: importedProject.northArrowEnabled,
-        northArrowStyle: importedProject.northArrowStyle,
-        northArrowPosition: importedProject.northArrowPosition,
-        northArrowMapPosition: importedProject.northArrowMapPosition,
-        hiddenLegendFeatureIds: importedProject.hiddenLegendFeatureIds,
-        hiddenLegendGroupKeys: importedProject.hiddenLegendGroupKeys,
-        legendFeatureOrder: importedProject.legendFeatureOrder,
-        legendGroupOrder: importedProject.legendGroupOrder,
-        legendSectionOrder: importedProject.legendSectionOrder,
-        legendGroupLabels: importedProject.legendGroupLabels,
-        legendGroupSections: importedProject.legendGroupSections,
+      setDownloadStatus("Analyse du Projet DroMap…");
+      const importedProject = parseDromapProjectJson(await file.text());
+      setPendingProjectImport({
+        fileName: file.name,
+        fileSizeBytes: file.size,
+        warnings: buildProjectImportWarnings(importedProject, file.size),
+        project: importedProject,
       });
-
+      setUseImportedBasemap(false);
+      setUseImportedWorkspace(false);
       setDownloadStatus(
-        `Projet DroMap importé : ${importedProject.features.length} objet${
-          importedProject.features.length > 1 ? "s" : ""
-        }.`,
+        `Projet analysé (${formatImportFileSize(file.size)}) : ${importedProject.features.length.toLocaleString("fr-FR")} objet${importedProject.features.length > 1 ? "s" : ""}, ${importedProject.layers.length.toLocaleString("fr-FR")} calque${importedProject.layers.length > 1 ? "s" : ""} DroMap et ${importedProject.geoJsonLayers.length.toLocaleString("fr-FR")} calque${importedProject.geoJsonLayers.length > 1 ? "s" : ""} GeoJSON.`,
       );
     } catch (error) {
       console.error(error);
       setDownloadStatus(
         error instanceof Error
           ? error.message
-          : "Import impossible : le fichier ne correspond pas à un projet DroMap JSON valide.",
+          : "Import impossible : le fichier ne correspond pas à un Projet DroMap valide.",
       );
     } finally {
       setIsImportingProject(false);
     }
+  }
+
+  function confirmPendingProjectImport() {
+    const pending = pendingProjectImport;
+    if (!pending) return;
+    const importedProject = pending.project;
+    const now = new Date().toISOString();
+
+    clearSelectedFeatureId();
+    setRenderPreviewUrl(null);
+
+    const usedLayerIds = new Set(layers.map((layer) => layer.id));
+    const usedLayerNames = new Set(layers.map((layer) => layer.name.toLocaleLowerCase("fr-FR")));
+    const layerIdMap = new Map<string, string>();
+    const maxLayerOrder = layers.reduce((max, layer) => Math.max(max, layer.order), 0);
+    const importedLayers = importedProject.layers.map((layer, index) => {
+      const id = createImportId("dromap-layer-import", layer.id, usedLayerIds);
+      layerIdMap.set(layer.id, id);
+      return {
+        ...layer,
+        id,
+        name: createImportName(layer.name, usedLayerNames),
+        order: maxLayerOrder + (index + 1) * 1000,
+        createdAt: now,
+        updatedAt: now,
+        sourceSavedLayerId: undefined,
+      };
+    });
+
+    const usedMarkerIds = new Set(customMarkers.map((marker) => marker.id));
+    const existingMarkerMap = new Map(customMarkers.map((marker) => [marker.id, marker] as const));
+    const markerIdMap = new Map<string, string>();
+    const markersToMerge = importedProject.customMarkers.flatMap((marker) => {
+      const existing = existingMarkerMap.get(marker.id);
+      if (existing && customMarkerDefinitionsMatch(existing, marker)) {
+        markerIdMap.set(marker.id, existing.id);
+        return [];
+      }
+      const id = createImportId("custom-marker-import", marker.id, usedMarkerIds);
+      markerIdMap.set(marker.id, id);
+      return [{ ...marker, id, updatedAt: now }];
+    });
+
+    const usedFeatureIds = new Set(features.map((feature) => feature.id));
+    const featureIdMap = new Map<string, string>();
+    const importedFeatures = importedProject.features.map((feature) => {
+      const id = createImportId("feature-import", feature.id, usedFeatureIds);
+      featureIdMap.set(feature.id, id);
+      const symbol = feature.properties.symbol;
+      const mappedSymbol = symbol && symbol.type !== "builtin" && markerIdMap.has(symbol.id)
+        ? { ...symbol, id: markerIdMap.get(symbol.id)! }
+        : symbol;
+      return {
+        ...feature,
+        id,
+        properties: {
+          ...feature.properties,
+          layerId: feature.properties.layerId
+            ? layerIdMap.get(feature.properties.layerId) ?? feature.properties.layerId
+            : undefined,
+          symbol: mappedSymbol,
+        },
+      };
+    });
+
+    const usedGeoJsonIds = new Set(geoJsonLayers.map((layer) => layer.id));
+    const usedGeoJsonNames = new Set(geoJsonLayers.map((layer) => layer.name.toLocaleLowerCase("fr-FR")));
+    const maxGeoJsonOrder = geoJsonLayers.reduce((max, layer) => Math.max(max, layer.order), 0);
+    const importedGeoJsonLayers = importedProject.geoJsonLayers.map((layer, index) => ({
+      ...layer,
+      id: createImportId("geojson-layer-import", layer.id, usedGeoJsonIds),
+      name: createImportName(layer.name, usedGeoJsonNames),
+      order: maxGeoJsonOrder + (index + 1) * 1000,
+      createdAt: now,
+      updatedAt: now,
+      sourceSavedLayerId: undefined,
+    }));
+
+    if (markersToMerge.length) mergeCustomMarkers(markersToMerge);
+    if (importedLayers.length) setLayers([...layers, ...importedLayers], activeLayerId);
+    if (importedGeoJsonLayers.length) setGeoJsonLayers([...geoJsonLayers, ...importedGeoJsonLayers]);
+    if (importedFeatures.length) addFeaturesWithHistory(importedFeatures);
+
+    const exportState = useEditorTestExportStore.getState();
+    const customEntryIds = new Set(exportState.customLegendEntries.map((entry) => entry.id));
+    const importedCustomEntries = importedProject.customLegendEntries.map((entry) => ({
+      ...entry,
+      id: createImportId("legend-entry-import", entry.id, customEntryIds),
+    }));
+    const uniqueStrings = (values: string[]) => Array.from(new Set(values));
+    useEditorTestExportStore.setState({
+      customLegendEntries: [...exportState.customLegendEntries, ...importedCustomEntries],
+      hiddenLegendFeatureIds: uniqueStrings([
+        ...exportState.hiddenLegendFeatureIds,
+        ...importedProject.hiddenLegendFeatureIds.map((id) => featureIdMap.get(id) ?? id),
+      ]),
+      hiddenLegendGroupKeys: uniqueStrings([
+        ...exportState.hiddenLegendGroupKeys,
+        ...importedProject.hiddenLegendGroupKeys,
+      ]),
+      legendFeatureOrder: uniqueStrings([
+        ...exportState.legendFeatureOrder,
+        ...importedProject.legendFeatureOrder.map((id) => featureIdMap.get(id) ?? id),
+      ]),
+      legendGroupOrder: uniqueStrings([
+        ...exportState.legendGroupOrder,
+        ...importedProject.legendGroupOrder,
+      ]),
+      legendSectionOrder: uniqueStrings([
+        ...exportState.legendSectionOrder,
+        ...importedProject.legendSectionOrder,
+      ]),
+      // En cas de groupe déjà présent dans la carte courante, sa personnalisation
+      // actuelle reste prioritaire. Les nouveaux groupes récupèrent celle du fichier.
+      legendGroupLabels: {
+        ...importedProject.legendGroupLabels,
+        ...exportState.legendGroupLabels,
+      },
+      legendGroupSections: {
+        ...importedProject.legendGroupSections,
+        ...exportState.legendGroupSections,
+      },
+      legendSymbolOverrides: {
+        ...importedProject.legendSymbolOverrides,
+        ...exportState.legendSymbolOverrides,
+      },
+    });
+
+    if (useImportedBasemap) {
+      setBasemapId(importedProject.basemapId, { fit: false });
+      setShowCountryNeighborContext(importedProject.showCountryNeighborContext);
+    }
+    if (useImportedWorkspace) {
+      setWorkspaceBounds(importedProject.workspaceBounds);
+      validateWorkspaceZone();
+      setWorkspaceBasemapBaseZoom(
+        importedProject.workspaceBasemapBaseZoom ?? importedProject.workspaceBasemapZoom,
+      );
+      setWorkspaceBasemapZoom(importedProject.workspaceBasemapZoom);
+    }
+
+    const outsideCount = !useImportedWorkspace && workspaceBounds
+      ? getFeatureIdsOutsideWorkspace(importedFeatures, workspaceBounds).length
+      : 0;
+    setPendingProjectImport(null);
+    setDownloadStatus(
+      `${importedFeatures.length.toLocaleString("fr-FR")} objet${importedFeatures.length > 1 ? "s" : ""}, ${importedLayers.length.toLocaleString("fr-FR")} calque${importedLayers.length > 1 ? "s" : ""} DroMap et ${importedGeoJsonLayers.length.toLocaleString("fr-FR")} calque${importedGeoJsonLayers.length > 1 ? "s" : ""} GeoJSON ajoutés au projet courant.${outsideCount > 0 ? ` ${outsideCount.toLocaleString("fr-FR")} objet${outsideCount > 1 ? "s sont" : " est"} hors de la zone actuelle et reste${outsideCount > 1 ? "nt" : ""} conservé${outsideCount > 1 ? "s" : ""}.` : ""}`,
+    );
   }
 
   function handleImportGeoJsonClick() {
@@ -965,32 +1217,13 @@ export function ExportSetupPanel() {
         precisionMode: geoJsonImportPrecision,
       });
 
-      clearSelectedFeatureId();
-      setRenderPreviewUrl(null);
-      addGeoJsonLayer(importedLayer);
-      clearWorkspaceBounds();
-
-      if (importedLayer.bounds) {
-        requestMapFitToBounds(importedLayer.bounds);
-      }
-
-      const skippedMessage =
-        importedLayer.skippedGeometries > 0
-          ? ` ${importedLayer.skippedGeometries} géométrie${
-              importedLayer.skippedGeometries > 1 ? "s" : ""
-            } ignorée${importedLayer.skippedGeometries > 1 ? "s" : ""}.`
-          : "";
-
-      const fitMessage = importedLayer.bounds
-        ? " Zone de travail supprimée ; vue recentrée sur le calque GeoJSON."
-        : " Zone de travail supprimée ; aucun recadrage automatique disponible.";
-
+      setPendingGeoJsonImport(importedLayer);
       setDownloadStatus(
-        `GeoJSON importé comme calque léger (${GEOJSON_PRECISION_IMPORT_OPTIONS.find((option) => option.value === importedLayer.precisionMode)?.label ?? "Originale"}) : ${importedLayer.featureCount} entité${
+        `GeoJSON analysé (${formatImportFileSize(file.size)}) : ${importedLayer.featureCount.toLocaleString("fr-FR")} entité${
           importedLayer.featureCount > 1 ? "s" : ""
-        }, ${importedLayer.coordinateCount.toLocaleString()} coordonnée${
+        } et ${importedLayer.coordinateCount.toLocaleString("fr-FR")} coordonnée${
           importedLayer.coordinateCount > 1 ? "s" : ""
-        }.${skippedMessage}${fitMessage}`,
+        }. Choisis maintenant le mode d’import.`,
       );
     } catch (error) {
       console.error(error);
@@ -1001,6 +1234,86 @@ export function ExportSetupPanel() {
       );
     } finally {
       setIsImportingGeoJson(false);
+    }
+  }
+
+  function confirmPendingGeoJsonImport(
+    mode: "geojson" | "dromap",
+  ) {
+    const importedLayer = pendingGeoJsonImport;
+    if (!importedLayer) return;
+
+    clearSelectedFeatureId();
+    setRenderPreviewUrl(null);
+
+    if (mode === "geojson") {
+      addGeoJsonLayer(importedLayer);
+
+      setDownloadStatus(
+        `GeoJSON ajouté comme calque léger (${GEOJSON_PRECISION_IMPORT_OPTIONS.find(
+          (option) => option.value === importedLayer.precisionMode,
+        )?.label ?? "Originale"}) : ${importedLayer.featureCount.toLocaleString(
+          "fr-FR",
+        )} entité${importedLayer.featureCount > 1 ? "s" : ""}.`,
+      );
+      setPendingGeoJsonImport(null);
+      return;
+    }
+
+    const layerId = createLayer(importedLayer.name);
+    try {
+      const convertedFeatures = convertGeoJsonLayerToDromapFeatures(
+        importedLayer,
+        layerId,
+      ).map((feature) => {
+        const { lockOverride: _lockOverride, ...nextProperties } =
+          feature.properties;
+
+        return {
+          ...feature,
+          properties: {
+            ...nextProperties,
+            locked: false,
+          },
+        };
+      });
+
+      useEditorTestLayersStore.setState((state) => ({
+        layers: state.layers.map((layer) =>
+          layer.id === layerId
+            ? {
+                ...layer,
+                name: importedLayer.name,
+                visible: importedLayer.visible,
+                opacity: importedLayer.opacity,
+                locked: false,
+                sourceGeoJsonLayerId: importedLayer.id,
+                sourceGeoJsonLayerName: importedLayer.name,
+                sourceGeoJsonSourceName: importedLayer.sourceName ?? null,
+                updatedAt: new Date().toISOString(),
+              }
+            : layer,
+        ),
+        activeLayerId: layerId,
+      }));
+
+      addFeaturesWithHistory(convertedFeatures);
+
+      setDownloadStatus(
+        `${convertedFeatures.length.toLocaleString(
+          "fr-FR",
+        )} objet${convertedFeatures.length > 1 ? "s" : ""} DroMap créé${
+          convertedFeatures.length > 1 ? "s" : ""
+        } à partir du GeoJSON.`,
+      );
+      setPendingGeoJsonImport(null);
+    } catch (error) {
+      deleteLayer(layerId);
+      setDownloadStatus(
+        error instanceof Error
+          ? error.message
+          : "La transformation en objets DroMap a échoué.",
+      );
     }
   }
 
@@ -1040,12 +1353,10 @@ export function ExportSetupPanel() {
         <section className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
           <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
             <div>
-              <h2 className="text-lg font-semibold text-slate-950">Importer</h2>
+              <h2 className="text-lg font-semibold text-slate-950">Ajouter / Importer</h2>
 
               <p className="mt-1 max-w-2xl text-sm text-slate-600">
-                Importe un Projet JSON DroMap complet ou ajoute un calque
-                GeoJSON léger. L’import est séparé de l’export pour éviter de
-                mélanger deux actions différentes.
+                Ajoute des données au projet courant sans modifier silencieusement son fond ni sa zone de travail. Choisis la source, vérifie le contenu, puis confirme l’ajout.
               </p>
             </div>
 
@@ -1076,16 +1387,31 @@ export function ExportSetupPanel() {
 
           <div className="min-h-0 flex-1 overflow-y-auto bg-slate-100 p-5">
             <div className="grid gap-4">
+              <div className="grid grid-cols-3 gap-2 rounded-2xl border border-slate-200 bg-white p-3 text-center shadow-sm">
+                {[
+                  ["1", "Choisir la source"],
+                  ["2", "Vérifier le contenu"],
+                  ["3", "Ajouter à la carte"],
+                ].map(([number, label]) => (
+                  <div key={number} className="rounded-xl bg-slate-50 px-2 py-2">
+                    <div className="mx-auto grid h-6 w-6 place-items-center rounded-full bg-indigo-600 text-[11px] font-black text-white">
+                      {number}
+                    </div>
+                    <div className="mt-1 text-[11px] font-bold text-slate-700">
+                      {label}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               <div className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <h3 className="text-sm font-semibold text-slate-950">
-                      Projet JSON DroMap
+                      Ajouter un Projet DroMap
                     </h3>
                     <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                      Remplace la carte actuelle par un projet complet : fond,
-                      zone de travail, objets, calques, GeoJSON, export, légende
-                      et échelle.
+                      Analyse un fichier DroMap puis ajoute ses objets, calques, GeoJSON, marqueurs et éléments de légende. Le fond et la zone actuels sont conservés par défaut.
                     </p>
                   </div>
 
@@ -1096,7 +1422,7 @@ export function ExportSetupPanel() {
                     className="shrink-0 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
                     title="Importer un fichier JSON généré par DroMap"
                   >
-                    {isImportingProject ? "Import..." : "Importer projet"}
+                    {isImportingProject ? "Analyse…" : "Choisir un Projet DroMap"}
                   </button>
                 </div>
               </div>
@@ -1108,8 +1434,9 @@ export function ExportSetupPanel() {
                       Calque GeoJSON
                     </h3>
                     <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                      Ajoute un GeoJSON comme calque léger : points, lignes,
-                      routes, frontières, polygones ou zones.
+                      Sélectionne un fichier, vérifie son volume, puis choisis
+                      entre un calque GeoJSON léger ou des objets DroMap
+                      modifiables individuellement.
                     </p>
 
                     <label className="mt-3 block text-xs font-semibold text-sky-900">
@@ -1152,6 +1479,27 @@ export function ExportSetupPanel() {
                 </div>
               </div>
 
+              <div className="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-950">Mes calques enregistrés</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                      Réutilise un calque DroMap ou GeoJSON de ta bibliothèque personnelle sans quitter l’éditeur.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeImportPanel();
+                      window.dispatchEvent(new CustomEvent("dromap:open-saved-layers-library"));
+                    }}
+                    className="shrink-0 rounded-xl border border-indigo-300 bg-indigo-50 px-4 py-2.5 text-sm font-bold text-indigo-800 transition hover:bg-indigo-100"
+                  >
+                    Ouvrir mes calques
+                  </button>
+                </div>
+              </div>
+
               <GeoJsonLibraryBrowser
                 precisionMode={geoJsonImportPrecision}
                 onPrecisionModeChange={setGeoJsonImportPrecision}
@@ -1165,6 +1513,153 @@ export function ExportSetupPanel() {
             </div>
           </div>
         </section>
+
+        {pendingProjectImport ? (
+          <div className="absolute inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+            <section role="dialog" aria-modal="true" aria-labelledby="dromap-project-import-title" className="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+              <header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-wide text-emerald-700">Projet DroMap analysé</div>
+                  <h3 id="dromap-project-import-title" className="mt-1 text-lg font-black text-slate-950">Ajouter ce contenu au projet courant ?</h3>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">Le projet actuel reste la base. Aucun fond ni aucune zone n’est remplacé sans ton choix explicite.</p>
+                </div>
+                <button type="button" onClick={() => setPendingProjectImport(null)} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-lg text-slate-500 hover:bg-slate-100" aria-label="Annuler l’import">×</button>
+              </header>
+              <div className="p-5">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Fichier</div><div className="mt-1 text-lg font-black text-slate-950">{formatImportFileSize(pendingProjectImport.fileSizeBytes)}</div></div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Objets</div><div className="mt-1 text-lg font-black text-slate-950">{pendingProjectImport.project.features.length.toLocaleString("fr-FR")}</div></div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Calques DroMap</div><div className="mt-1 text-lg font-black text-slate-950">{pendingProjectImport.project.layers.length.toLocaleString("fr-FR")}</div></div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Calques GeoJSON</div><div className="mt-1 text-lg font-black text-slate-950">{pendingProjectImport.project.geoJsonLayers.length.toLocaleString("fr-FR")}</div></div>
+                </div>
+                {pendingProjectImport.warnings.length > 0 ? (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    <div className="font-black">À savoir avant l’ajout</div>
+                    <ul className="mt-2 list-disc space-y-1 pl-5">
+                      {pendingProjectImport.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
+                <div className="mt-4 rounded-xl border border-slate-200 p-4">
+                  <div className="text-sm font-black text-slate-950">Conserver ou reprendre le contexte du fichier</div>
+                  <label className="mt-3 flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" checked={useImportedBasemap} onChange={(event) => setUseImportedBasemap(event.target.checked)} className="mt-0.5 h-4 w-4" /><span><strong>Utiliser le fond du projet importé</strong><br/><span className="text-xs text-slate-500">Sinon le fond actuel est conservé.</span></span></label>
+                  <label className="mt-3 flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" checked={useImportedWorkspace} onChange={(event) => setUseImportedWorkspace(event.target.checked)} className="mt-0.5 h-4 w-4" /><span><strong>Utiliser la zone de travail du projet importé</strong><br/><span className="text-xs text-slate-500">Sinon les éléments hors de la zone actuelle sont conservés mais peuvent rester masqués.</span></span></label>
+                </div>
+              </div>
+              <footer className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
+                <button type="button" onClick={() => setPendingProjectImport(null)} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100">Annuler</button>
+                <button type="button" onClick={confirmPendingProjectImport} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white hover:bg-emerald-500">Ajouter au projet</button>
+              </footer>
+            </section>
+          </div>
+        ) : null}
+
+        {pendingGeoJsonImport ? (
+          <div className="absolute inset-0 z-[50] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="dromap-geojson-import-choice-title"
+              className="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            >
+              <header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-wide text-sky-700">
+                    GeoJSON analysé
+                  </div>
+                  <h3
+                    id="dromap-geojson-import-choice-title"
+                    className="mt-1 text-lg font-black text-slate-950"
+                  >
+                    Comment veux-tu l’ajouter ?
+                  </h3>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    Le choix pourra être modifié plus tard depuis l’onglet
+                    Calques lorsque le calque provient d’un GeoJSON.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPendingGeoJsonImport(null)}
+                  className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+                  aria-label="Annuler l’import"
+                >
+                  ×
+                </button>
+              </header>
+
+              <div className="p-5">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Entités</div>
+                    <div className="mt-1 text-lg font-black text-slate-950">{pendingGeoJsonImport.featureCount.toLocaleString("fr-FR")}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Coordonnées</div>
+                    <div className="mt-1 text-lg font-black text-slate-950">{pendingGeoJsonImport.coordinateCount.toLocaleString("fr-FR")}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Précision</div>
+                    <div className="mt-1 text-sm font-black text-slate-950">{GEOJSON_PRECISION_IMPORT_OPTIONS.find((option) => option.value === pendingGeoJsonImport.precisionMode)?.label ?? "Originale"}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">Ignorées</div>
+                    <div className="mt-1 text-lg font-black text-slate-950">{pendingGeoJsonImport.skippedGeometries.toLocaleString("fr-FR")}</div>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => confirmPendingGeoJsonImport("geojson")}
+                    className="rounded-2xl border-2 border-sky-300 bg-sky-50 p-4 text-left transition hover:border-sky-500 hover:bg-sky-100"
+                  >
+                    <div className="text-sm font-black text-sky-950">
+                      Conserver comme calque GeoJSON
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-sky-800">
+                      Recommandé pour les fichiers volumineux. Les données
+                      restent regroupées, rapides, stylisables et exportables.
+                    </p>
+                    <span className="mt-3 inline-flex rounded-lg bg-sky-700 px-3 py-1.5 text-xs font-black text-white">
+                      Ajouter le calque léger
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => confirmPendingGeoJsonImport("dromap")}
+                    className={[
+                      "rounded-2xl border-2 p-4 text-left transition",
+                      pendingGeoJsonImport.featureCount >=
+                      GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD
+                        ? "border-amber-300 bg-amber-50 hover:border-amber-500 hover:bg-amber-100"
+                        : "border-indigo-300 bg-indigo-50 hover:border-indigo-500 hover:bg-indigo-100",
+                    ].join(" ")}
+                  >
+                    <div className="text-sm font-black text-slate-950">
+                      Transformer en objets DroMap
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-700">
+                      Chaque entité devient modifiable individuellement. Ce
+                      mode est plus puissant, mais plus lourd.
+                    </p>
+                    {pendingGeoJsonImport.featureCount >=
+                    GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD ? (
+                      <div className="mt-2 rounded-lg bg-amber-100 px-2 py-1.5 text-[11px] font-bold text-amber-900">
+                        Fichier lourd : cette conversion peut ralentir le
+                        navigateur.
+                      </div>
+                    ) : null}
+                    <span className="mt-3 inline-flex rounded-lg bg-indigo-700 px-3 py-1.5 text-xs font-black text-white">
+                      Créer les objets
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -1177,18 +1672,19 @@ export function ExportSetupPanel() {
       role="dialog"
       aria-modal="true"
     >
+      <RenderKeyboardHistory />
       <section className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white">
         <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-950">
-            Préparer l’export
+            Légende &amp; Rendu final
           </h2>
 
           <button
             type="button"
-            onClick={closeExportPanel}
+            onClick={handleCloseExportPanel}
             className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 hover:bg-slate-100"
           >
-            Fermer
+            {productRuntimeEnabled ? "Retour à l’éditeur" : "Fermer"}
           </button>
         </header>
 
@@ -1274,13 +1770,21 @@ export function ExportSetupPanel() {
                             {option.value !== "standard" &&
                             !supportsHighQualityBasemapExport
                               ? " Bloqué pour ce fond."
-                              : ""}
+                              : option.value !== "standard" &&
+                                  !capabilities.canExportHighQuality
+                                ? " Compte requis."
+                                : ""}
                           </div>
                         </div>
                         {option.value !== "standard" &&
                         !supportsHighQualityBasemapExport ? (
                           <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
                             Indisponible
+                          </span>
+                        ) : option.value !== "standard" &&
+                          !capabilities.canExportHighQuality ? (
+                          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                            Compte requis
                           </span>
                         ) : null}
                       </div>
@@ -1379,7 +1883,7 @@ export function ExportSetupPanel() {
                           disabled={isVisualExportBusy}
                           className="rounded-lg bg-indigo-600 px-2 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:bg-slate-300"
                         >
-                          {isDownloadingJpeg ? "JPEG..." : "JPEG"}
+                          {isDownloadingJpeg ? "JPEG..." : `JPEG${capabilities.canExportOtherVisualFormats ? "" : " 🔒"}`}
                         </button>
                         <button
                           type="button"
@@ -1387,7 +1891,7 @@ export function ExportSetupPanel() {
                           disabled={isVisualExportBusy}
                           className="rounded-lg bg-indigo-600 px-2 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:bg-slate-300"
                         >
-                          {isDownloadingWebp ? "WebP..." : "WebP"}
+                          {isDownloadingWebp ? "WebP..." : `WebP${capabilities.canExportOtherVisualFormats ? "" : " 🔒"}`}
                         </button>
                       </div>
                       <div className="mt-2 grid grid-cols-2 gap-2">
@@ -1397,7 +1901,7 @@ export function ExportSetupPanel() {
                           disabled={isVisualExportBusy}
                           className="rounded-lg border border-indigo-200 bg-white px-2 py-2 text-xs font-semibold text-indigo-800 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400"
                         >
-                          {isDownloadingPdf ? "PDF..." : "PDF"}
+                          {isDownloadingPdf ? "PDF..." : `PDF${capabilities.canExportOtherVisualFormats ? "" : " 🔒"}`}
                         </button>
                         <button
                           type="button"
@@ -1405,7 +1909,7 @@ export function ExportSetupPanel() {
                           disabled={isVisualExportBusy}
                           className="rounded-lg border border-indigo-200 bg-white px-2 py-2 text-xs font-semibold text-indigo-800 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400"
                         >
-                          {isDownloadingSvg ? "SVG..." : "SVG"}
+                          {isDownloadingSvg ? "SVG..." : `SVG${capabilities.canExportOtherVisualFormats ? "" : " 🔒"}`}
                         </button>
                       </div>
                     </div>
@@ -1436,7 +1940,7 @@ export function ExportSetupPanel() {
                         disabled={!workspaceBounds || isDownloadingJson}
                         className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100 disabled:bg-slate-100 disabled:text-slate-400"
                       >
-                        {isDownloadingJson ? "Projet..." : "Projet JSON"}
+                        {isDownloadingJson ? "Projet..." : `Projet JSON${capabilities.canExportProjectData ? "" : " 🔒"}`}
                       </button>
                       <button
                         type="button"
@@ -1446,7 +1950,7 @@ export function ExportSetupPanel() {
                         }
                         className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100 disabled:bg-slate-100 disabled:text-slate-400"
                       >
-                        {isDownloadingCsv ? "CSV..." : "CSV"}
+                        {isDownloadingCsv ? "CSV..." : `CSV${capabilities.canExportProjectData ? "" : " 🔒"}`}
                       </button>
                       <button
                         type="button"
@@ -1459,7 +1963,7 @@ export function ExportSetupPanel() {
                         }
                         className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100 disabled:bg-slate-100 disabled:text-slate-400"
                       >
-                        {isDownloadingGeoJson ? "GeoJSON..." : "GeoJSON"}
+                        {isDownloadingGeoJson ? "GeoJSON..." : `GeoJSON${capabilities.canExportProjectData ? "" : " 🔒"}`}
                       </button>
                     </div>
                   ) : null}
@@ -1519,6 +2023,33 @@ export function ExportSetupPanel() {
                   Apparence de la légende
                 </div>
 
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!capabilities.canUseAdvancedLegend) {
+                      requestRestriction({
+                        title: "Édition avancée de la légende réservée",
+                        description:
+                          "Créez un compte pour modifier chaque figuré, régler les espacements et organiser des sous-titres avancés. Votre projet actuel sera conservé.",
+                      });
+                      return;
+                    }
+
+                    requestOpenAdvancedLegendEditor();
+                  }}
+                  className="mb-4 flex w-full items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2.5 text-left text-sm font-bold text-indigo-800 transition hover:bg-indigo-100"
+                  title={
+                    capabilities.canUseAdvancedLegend
+                      ? "Ouvrir l’édition avancée de la légende"
+                      : "Compte requis pour l’édition avancée de la légende"
+                  }
+                >
+                  <span>Édition avancée</span>
+                  <span aria-hidden="true">
+                    {capabilities.canUseAdvancedLegend ? "→" : "🔒"}
+                  </span>
+                </button>
+
                 <div className="space-y-4">
                   {legendPosition !== "map" ? (
                     <>
@@ -1560,6 +2091,37 @@ export function ExportSetupPanel() {
                       manuels.
                     </div>
                   )}
+
+                  <div>
+                    <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+                      <label
+                        htmlFor="export-legend-symbol-size"
+                        className="font-medium text-slate-700"
+                      >
+                        Taille des figurés
+                      </label>
+
+                      <span className="font-semibold tabular-nums text-slate-500">
+                        {Math.round(
+                          getExportLegendGlobalSymbolScale(legendSymbolSize) * 100,
+                        )}
+                        %
+                      </span>
+                    </div>
+
+                    <input
+                      id="export-legend-symbol-size"
+                      type="range"
+                      min={24}
+                      max={144}
+                      step={2}
+                      value={legendSymbolSize}
+                      onChange={(event) =>
+                        setLegendSymbolSize(Number(event.currentTarget.value))
+                      }
+                      className="w-full accent-indigo-600"
+                    />
+                  </div>
 
                   <div>
                     <div className="mb-1 flex items-center justify-between gap-2 text-xs">
@@ -1635,7 +2197,7 @@ export function ExportSetupPanel() {
                         htmlFor="export-legend-section-title-font-size"
                         className="font-medium text-slate-700"
                       >
-                        Taille des titres de sous-légendes
+                        Taille des sous-titres
                       </label>
 
                       <span className="text-slate-500">
@@ -1667,7 +2229,7 @@ export function ExportSetupPanel() {
 
               <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-xs leading-relaxed text-indigo-900 shadow-sm">
                 <div>
-                  Organisation de la légende : ajoute les sous-légendes, renomme
+                  Organisation de la légende : ajoute les sous-titres, renomme
                   les groupes, masque des entrées et glisse les éléments
                   directement dans la prévisualisation.
                 </div>

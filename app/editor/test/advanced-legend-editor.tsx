@@ -1702,7 +1702,7 @@ export function AdvancedLegendEditor({
                   <div className="grid min-w-0 flex-1 grid-cols-2 gap-3">
                     <label className="col-span-2 block">
                       <span className="mb-1 block text-xs font-semibold text-slate-700">
-                        Label
+                        Libellé
                       </span>
                       <textarea
                         value={selectedEntry.label}
@@ -1812,7 +1812,7 @@ export function AdvancedLegendEditor({
                           </strong>
                           <p className="mt-1 text-xs leading-relaxed text-violet-800">
                             Le marqueur dessiné ou importé reste affiché tel
-                            quel dans l’édition avancée, la preview et les
+                            quel dans l’édition avancée, l’aperçu et les
                             exports.
                           </p>
                         </div>

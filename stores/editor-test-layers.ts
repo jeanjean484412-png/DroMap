@@ -38,6 +38,8 @@ export type DroMapSavedLayer = {
   id: string;
   name: string;
   savedAt: string;
+  /** Dernière modification de l’élément dans la bibliothèque personnelle. */
+  updatedAt?: string;
   features: DroMapFeature[];
   legend?: DroMapSavedLayerLegendConfig;
 };
@@ -60,6 +62,7 @@ type EditorTestLayersState = {
   moveLayer: (layerId: string, direction: "up" | "down") => void;
 
   loadSavedLayersFromStorage: () => void;
+  replaceSavedLayers: (savedLayers: DroMapSavedLayer[]) => void;
   saveLayerToLibrary: (savedLayer: DroMapSavedLayer) => void;
   renameSavedLayer: (savedLayerId: string, name: string) => void;
   deleteSavedLayer: (savedLayerId: string) => void;
@@ -402,6 +405,7 @@ function parseSavedLayers(value: unknown): DroMapSavedLayer[] {
       id: item.id,
       name: item.name,
       savedAt: item.savedAt,
+      updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : item.savedAt,
       features: cloneJsonValue(item.features),
       ...(item.legend ? { legend: cloneJsonValue(item.legend) } : {}),
     }));
@@ -618,9 +622,22 @@ export const useEditorTestLayersStore = create<EditorTestLayersState>((set, get)
   loadSavedLayersFromStorage: () =>
     set({ savedLayers: loadSavedLayersFromStorageValue() }),
 
+  replaceSavedLayers: (savedLayers) => {
+    const normalized = savedLayers.map((savedLayer) => ({
+      ...savedLayer,
+      updatedAt: savedLayer.updatedAt ?? savedLayer.savedAt ?? nowIso(),
+    }));
+    persistSavedLayers(normalized);
+    set({ savedLayers: normalized });
+  },
+
   saveLayerToLibrary: (savedLayer) =>
     set((state) => {
-      const nextSavedLayers = [savedLayer, ...state.savedLayers];
+      const normalizedSavedLayer = {
+        ...savedLayer,
+        updatedAt: savedLayer.updatedAt ?? savedLayer.savedAt ?? nowIso(),
+      };
+      const nextSavedLayers = [normalizedSavedLayer, ...state.savedLayers.filter((item) => item.id !== normalizedSavedLayer.id)];
       persistSavedLayers(nextSavedLayers);
       return { savedLayers: nextSavedLayers };
     }),
@@ -629,7 +646,7 @@ export const useEditorTestLayersStore = create<EditorTestLayersState>((set, get)
     set((state) => {
       const nextSavedLayers = state.savedLayers.map((savedLayer) =>
         savedLayer.id === savedLayerId
-          ? { ...savedLayer, name: name.trim() || savedLayer.name }
+          ? { ...savedLayer, name: name.trim() || savedLayer.name, updatedAt: nowIso() }
           : savedLayer,
       );
       persistSavedLayers(nextSavedLayers);

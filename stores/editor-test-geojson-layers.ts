@@ -100,6 +100,8 @@ export type DromapSavedGeoJsonLayer = {
   id: string;
   name: string;
   savedAt: string;
+  /** Dernière modification de l’élément dans la bibliothèque personnelle. */
+  updatedAt?: string;
   layer: DromapGeoJsonLayer;
 };
 
@@ -134,6 +136,7 @@ type EditorTestGeoJsonLayersState = {
 
   savedGeoJsonLayers: DromapSavedGeoJsonLayer[];
   loadSavedGeoJsonLayersFromStorage: () => void;
+  replaceSavedGeoJsonLayers: (savedLayers: DromapSavedGeoJsonLayer[]) => void;
   saveGeoJsonLayerToLibrary: (savedLayer: DromapSavedGeoJsonLayer) => void;
   renameSavedGeoJsonLayer: (savedLayerId: string, name: string) => void;
   deleteSavedGeoJsonLayer: (savedLayerId: string) => void;
@@ -1541,9 +1544,22 @@ export const useEditorTestGeoJsonLayersStore = create<EditorTestGeoJsonLayersSta
   loadSavedGeoJsonLayersFromStorage: () =>
     set({ savedGeoJsonLayers: loadSavedGeoJsonLayersFromStorageValue() }),
 
+  replaceSavedGeoJsonLayers: (savedLayers) => {
+    const normalized = savedLayers.map((savedLayer) => ({
+      ...savedLayer,
+      updatedAt: savedLayer.updatedAt ?? savedLayer.savedAt ?? new Date().toISOString(),
+    }));
+    persistSavedGeoJsonLayers(normalized);
+    set({ savedGeoJsonLayers: normalized });
+  },
+
   saveGeoJsonLayerToLibrary: (savedLayer) =>
     set((state) => {
-      const nextSavedLayers = [savedLayer, ...state.savedGeoJsonLayers];
+      const normalizedSavedLayer = {
+        ...savedLayer,
+        updatedAt: savedLayer.updatedAt ?? savedLayer.savedAt ?? new Date().toISOString(),
+      };
+      const nextSavedLayers = [normalizedSavedLayer, ...state.savedGeoJsonLayers.filter((item) => item.id !== normalizedSavedLayer.id)];
       persistSavedGeoJsonLayers(nextSavedLayers);
       return { savedGeoJsonLayers: nextSavedLayers };
     }),
@@ -1552,7 +1568,7 @@ export const useEditorTestGeoJsonLayersStore = create<EditorTestGeoJsonLayersSta
     set((state) => {
       const nextSavedLayers = state.savedGeoJsonLayers.map((savedLayer) =>
         savedLayer.id === savedLayerId
-          ? { ...savedLayer, name: name.trim() || savedLayer.name }
+          ? { ...savedLayer, name: name.trim() || savedLayer.name, updatedAt: new Date().toISOString() }
           : savedLayer,
       );
       persistSavedGeoJsonLayers(nextSavedLayers);

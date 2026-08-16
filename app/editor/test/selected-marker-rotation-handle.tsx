@@ -57,7 +57,11 @@ function suppressNextMapClick() {
   }, 350);
 }
 
-export function SelectedMarkerRotationHandle() {
+export function SelectedMarkerRotationHandle({
+  featureId,
+}: {
+  featureId?: string;
+} = {}) {
   const map = useMap();
   const [, setViewportVersion] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -72,11 +76,12 @@ export function SelectedMarkerRotationHandle() {
   const workspaceBasemapZoom = useEditorTestWorkspaceStore(
     (state) => state.workspaceBasemapZoom,
   );
-  const selectedFeatureId = useEditorTestSelectionStore(
+  const storeSelectedFeatureId = useEditorTestSelectionStore(
     (state) => state.selectedFeatureId,
   );
+  const effectiveFeatureId = featureId ?? storeSelectedFeatureId;
   const selectedFeature = useEditorTestFeaturesStore((state) =>
-    state.features.find((feature) => feature.id === selectedFeatureId),
+    state.features.find((feature) => feature.id === effectiveFeatureId),
   );
   const updateFeature = useEditorTestFeaturesStore(
     (state) => state.updateFeature,

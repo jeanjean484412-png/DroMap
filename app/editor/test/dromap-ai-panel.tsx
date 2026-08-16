@@ -11,6 +11,8 @@ import {
 
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
+import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
+import { bringFloatingPanelToFront, getInitialFloatingPanelZIndex } from "./floating-panel-z-index";
 
 import { buildDroMapAiProjectContext } from "./dromap-ai-context";
 import {
@@ -212,6 +214,7 @@ function writeConversation(messages: DroMapAiChatMessage[]) {
 }
 
 export function DroMapAiPanel() {
+  const { enabled: productRuntimeEnabled } = useDromapProductRuntime();
   const currentMode = useEditorTestModeStore((state) => state.currentMode);
   const workspaceBounds = useEditorTestWorkspaceStore(
     (state) => state.workspaceBounds,
@@ -231,12 +234,12 @@ export function DroMapAiPanel() {
     hasMounted && currentMode === "edit" && workspaceBounds !== null;
 
   const [isOpen, setIsOpen] = useState(false);
+  const [panelZIndex, setPanelZIndex] = useState(getInitialFloatingPanelZIndex());
   const [workspaceMode, setWorkspaceMode] =
     useState<DroMapAiWorkspaceMode | null>(null);
   const [pendingManualWorkspace, setPendingManualWorkspace] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [plan, setPlan] = useState<DroMapAiPlan | null>(null);
-  const [model, setModel] = useState<string | null>(null);
   const [grounded, setGrounded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -347,6 +350,7 @@ export function DroMapAiPanel() {
 
   function openAssistant() {
     if (!hasMounted) return;
+    setPanelZIndex(bringFloatingPanelToFront());
     setIsOpen(true);
     setError(null);
   }
@@ -378,7 +382,6 @@ export function DroMapAiPanel() {
     setWorkspaceMode(null);
     setPrompt("");
     setPlan(null);
-    setModel(null);
     setGrounded(false);
     setError(null);
     setExecutionResult(null);
@@ -481,7 +484,6 @@ export function DroMapAiPanel() {
       }
 
       setPlan(payload.plan);
-      setModel(payload.model);
       setGrounded(payload.grounded);
       appendMessage(
         "assistant",
@@ -497,8 +499,7 @@ export function DroMapAiPanel() {
           ? caughtError.message
           : "Erreur inconnue pendant la préparation.";
       setPlan(null);
-      setModel(null);
-      setGrounded(false);
+        setGrounded(false);
       setError(message);
       appendMessage("error", message);
     } finally {
@@ -532,7 +533,7 @@ export function DroMapAiPanel() {
         : "";
       appendMessage(
         "assistant",
-        `Plan appliqué : ${result.appliedCommandCount} action${result.appliedCommandCount > 1 ? "s" : ""}, ${result.createdFeatureIds.length} objet${result.createdFeatureIds.length > 1 ? "s" : ""} et ${result.createdGeoJsonLayerIds.length} calque${result.createdGeoJsonLayerIds.length > 1 ? "s" : ""} GeoJSON créés.${warningText}`,
+        `Les modifications ont été appliquées à la carte.${warningText}`,
       );
       return true;
     } catch (caughtError) {
@@ -612,7 +613,7 @@ export function DroMapAiPanel() {
       : "";
     appendMessage(
       "assistant",
-      `Rendu validé : ${result.appliedCommandCount} action${result.appliedCommandCount > 1 ? "s" : ""}, ${result.createdFeatureIds.length} objet${result.createdFeatureIds.length > 1 ? "s" : ""} et ${result.createdGeoJsonLayerIds.length} calque${result.createdGeoJsonLayerIds.length > 1 ? "s" : ""} GeoJSON créés.${warningText}`,
+      `Les modifications de l’aperçu ont été conservées.${warningText}`,
     );
   }
 
@@ -672,7 +673,6 @@ export function DroMapAiPanel() {
       }
 
       setPlan(payload.plan);
-      setModel(payload.model);
       setGrounded(payload.grounded);
       setEditingCommandId(null);
       setStepInstruction("");
@@ -708,20 +708,26 @@ export function DroMapAiPanel() {
     setPlan(null);
     setExecutionResult(null);
     setError(null);
-    setModel(null);
     setGrounded(false);
     setEditingCommandId(null);
     setStepInstruction("");
   }
 
-  const closedPositionClass =
-    "fixed left-4 top-[4.5rem] z-[1300] md:left-[8.5rem] lg:left-[43rem] lg:top-4";
-  const openedPositionClass = "fixed right-4 top-4 z-[15000]";
+  const closedPositionClass = productRuntimeEnabled
+    ? "fixed left-4 top-[4.5rem] z-[1300] md:left-[32rem] lg:left-[44rem]"
+    : "fixed left-4 top-[4.5rem] z-[1300] md:left-[8.5rem] lg:left-[43rem] lg:top-4";
+  const openedPositionClass = productRuntimeEnabled
+    ? "fixed right-4 top-[4.5rem]"
+    : "fixed right-4 top-4";
 
   return (
     <>
       {previewResult ? (
-        <div className="pointer-events-none fixed inset-x-0 top-3 z-[25000] flex justify-center px-3">
+        <div
+          className={`pointer-events-none fixed inset-x-0 z-[94000] flex justify-center px-3 ${
+            productRuntimeEnabled ? "top-[4.5rem]" : "top-3"
+          }`}
+        >
           <div className="pointer-events-auto flex max-w-[calc(100vw-1.5rem)] flex-wrap items-center gap-2 rounded-2xl border border-violet-300 bg-white/97 px-4 py-3 shadow-2xl backdrop-blur">
             <div className="mr-2 min-w-[14rem] flex-1">
               <p className="text-xs font-black uppercase tracking-wide text-violet-700">
@@ -758,6 +764,10 @@ export function DroMapAiPanel() {
 
       <div
         className={`pointer-events-none text-sm ${isOpen ? openedPositionClass : closedPositionClass}`}
+        style={isOpen ? { zIndex: panelZIndex } : undefined}
+        onMouseDown={() => {
+          if (isOpen) setPanelZIndex(bringFloatingPanelToFront());
+        }}
       >
       {!isOpen ? (
         previewResult ? null : (
@@ -773,7 +783,13 @@ export function DroMapAiPanel() {
         </button>
         )
       ) : (
-        <section className="pointer-events-auto flex h-[calc(100vh-2rem)] w-[64rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-violet-200 bg-white/98 shadow-2xl backdrop-blur">
+        <section
+          className={`pointer-events-auto flex w-[64rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-violet-200 bg-white/98 shadow-2xl backdrop-blur ${
+            productRuntimeEnabled
+              ? "h-[calc(100vh-5.5rem)]"
+              : "h-[calc(100vh-2rem)]"
+          }`}
+        >
           <header className="flex items-start justify-between gap-3 border-b border-violet-100 bg-gradient-to-r from-violet-50 to-indigo-50 px-5 py-3.5">
             <div>
               <div className="flex items-center gap-2 font-black text-slate-900">
@@ -1000,11 +1016,6 @@ export function DroMapAiPanel() {
                             {grounded ? (
                               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
                                 Données recherchées
-                              </span>
-                            ) : null}
-                            {model ? (
-                              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
-                                {model}
                               </span>
                             ) : null}
                           </div>

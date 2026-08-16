@@ -161,13 +161,18 @@ function getShapeForLayer(
 function getDashArray(
   dashStyle: "solid" | "dashed" | "dotted",
   weight: number,
+  dashLength?: number,
+  dashGap?: number,
 ) {
+  const gap = Number.isFinite(dashGap) ? Math.max(2, Number(dashGap)) : Math.max(8, weight * 2.2);
+
   if (dashStyle === "dashed") {
-    return `${weight * 3} ${weight * 2}`;
+    const length = Number.isFinite(dashLength) ? Math.max(2, Number(dashLength)) : Math.max(12, weight * 4);
+    return `${length} ${gap}`;
   }
 
   if (dashStyle === "dotted") {
-    return `0.001 ${weight * 2.2}`;
+    return `0.001 ${gap}`;
   }
 
   return undefined;
@@ -343,7 +348,7 @@ function enableDrawForCurrentTool(map: L.Map, tool: EditorTestActiveTool) {
         color: style.color,
         opacity: style.opacity,
         weight: style.weight,
-        dashArray: getDashArray(style.dashStyle, style.weight),
+        dashArray: getDashArray(style.dashStyle, style.weight, style.dashLength, style.dashGap),
         lineCap: "round",
         lineJoin: "round",
       },
@@ -378,7 +383,7 @@ function enableDrawForCurrentTool(map: L.Map, tool: EditorTestActiveTool) {
         fill: true,
         fillColor: style.fillColor,
         fillOpacity: style.zoneFillEnabled ? style.fillOpacity : 0,
-        dashArray: getDashArray(style.dashStyle, style.weight),
+        dashArray: getDashArray(style.dashStyle, style.weight, style.dashLength, style.dashGap),
         lineCap: "round",
         lineJoin: "round",
       },
@@ -502,6 +507,11 @@ function toggleLayerSelection(layer: L.Layer) {
   }
 
   const selectionStore = useEditorTestSelectionStore.getState();
+
+  if (selectionStore.multiSelectionEnabled) {
+    selectionStore.toggleFeatureSelection(featureId);
+    return;
+  }
 
   if (selectionStore.selectedFeatureId === featureId) {
     selectionStore.clearSelectedFeatureId();
@@ -686,13 +696,29 @@ function bindManualBodyDragToAllLayers(map: L.Map): (() => void)[] {
   return cleanups;
 }
 
-function enableSelectedLayerEdit(map: L.Map, selectedFeatureId: string | null) {
-  if (!selectedFeatureId) {
+function getEffectiveSelectedFeatureIds(
+  selectedFeatureId: string | null,
+  selectedFeatureIds: string[],
+  multiSelectionEnabled: boolean,
+) {
+  if (multiSelectionEnabled && selectedFeatureIds.length > 0) {
+    return selectedFeatureIds;
+  }
+
+  return selectedFeatureId ? [selectedFeatureId] : [];
+}
+
+function enableSelectedLayersEdit(map: L.Map, selectedFeatureIds: string[]) {
+  if (selectedFeatureIds.length === 0) {
     return;
   }
 
+  const selectedIds = new Set(selectedFeatureIds);
+
   map.eachLayer((layer) => {
-    if (getLayerFeatureId(layer) !== selectedFeatureId) {
+    const featureId = getLayerFeatureId(layer);
+
+    if (!featureId || !selectedIds.has(featureId)) {
       return;
     }
 
@@ -700,18 +726,21 @@ function enableSelectedLayerEdit(map: L.Map, selectedFeatureId: string | null) {
   });
 }
 
-function bindManualBodyDragToSelectedLayer(
+function bindManualBodyDragToSelectedLayers(
   map: L.Map,
-  selectedFeatureId: string | null,
+  selectedFeatureIds: string[],
 ): (() => void)[] {
-  if (!selectedFeatureId) {
+  if (selectedFeatureIds.length === 0) {
     return [];
   }
 
+  const selectedIds = new Set(selectedFeatureIds);
   const cleanups: (() => void)[] = [];
 
   map.eachLayer((layer) => {
-    if (getEditableFeatureId(layer) !== selectedFeatureId) {
+    const featureId = getEditableFeatureId(layer);
+
+    if (!featureId || !selectedIds.has(featureId)) {
       return;
     }
 
@@ -729,6 +758,18 @@ export function DrawingToolController() {
   const activeTool = useEditorTestToolStore((state) => state.activeTool);
   const selectedFeatureId = useEditorTestSelectionStore(
     (state) => state.selectedFeatureId,
+  );
+  const selectedFeatureIds = useEditorTestSelectionStore(
+    (state) => state.selectedFeatureIds,
+  );
+  const multiSelectionEnabled = useEditorTestSelectionStore(
+    (state) => state.multiSelectionEnabled,
+  );
+  const selectedFeatureIdsSignature = selectedFeatureIds.join("|");
+  const effectiveSelectedFeatureIds = getEffectiveSelectedFeatureIds(
+    selectedFeatureId,
+    selectedFeatureIds,
+    multiSelectionEnabled,
   );
 
   const markerStyle = useEditorTestDrawingOptionsStore(
@@ -800,29 +841,36 @@ export function DrawingToolController() {
       const previousCursor = container.style.cursor;
       container.style.cursor = "default";
 
-      enableSelectedLayerEdit(map, selectedFeatureId);
-      const cleanups = bindManualBodyDragToSelectedLayer(
+      enableSelectedLayersEdit(map, effectiveSelectedFeatureIds);
+      const cleanups = bindManualBodyDragToSelectedLayers(
         map,
-        selectedFeatureId,
+        effectiveSelectedFeatureIds,
       );
 
       const handleLayerAdd = (event: L.LayerEvent) => {
         window.setTimeout(() => {
           const latestMode = useEditorTestModeStore.getState().currentMode;
           const latestTool = useEditorTestToolStore.getState().activeTool;
-          const latestSelectedFeatureId =
-            useEditorTestSelectionStore.getState().selectedFeatureId;
+          const latestSelection = useEditorTestSelectionStore.getState();
+          const latestSelectedFeatureIds = getEffectiveSelectedFeatureIds(
+            latestSelection.selectedFeatureId,
+            latestSelection.selectedFeatureIds,
+            latestSelection.multiSelectionEnabled,
+          );
+          const latestSelectedIds = new Set(latestSelectedFeatureIds);
+          const editableFeatureId = getEditableFeatureId(event.layer);
 
           if (
             latestMode !== "edit" ||
             latestTool !== "select" ||
-            !latestSelectedFeatureId ||
-            getEditableFeatureId(event.layer) !== latestSelectedFeatureId
+            !editableFeatureId ||
+            !latestSelectedIds.has(editableFeatureId)
           ) {
             return;
           }
 
-          if (getLayerFeatureId(event.layer) === latestSelectedFeatureId) {
+          const layerFeatureId = getLayerFeatureId(event.layer);
+          if (layerFeatureId && latestSelectedIds.has(layerFeatureId)) {
             enableLayerEdit(event.layer);
           }
 
@@ -1043,31 +1091,41 @@ export function DrawingToolController() {
     if (activeTool === "edit") {
       deactivateGeomanModes(map);
       disableAllLayerEdit(map);
-      enableSelectedLayerEdit(map, selectedFeatureId);
+      enableSelectedLayersEdit(map, effectiveSelectedFeatureIds);
 
       const container = map.getContainer();
       const previousCursor = container.style.cursor;
       container.style.cursor = "default";
 
-      const cleanups = bindManualBodyDragToSelectedLayer(map, selectedFeatureId);
+      const cleanups = bindManualBodyDragToSelectedLayers(
+        map,
+        effectiveSelectedFeatureIds,
+      );
 
       const handleLayerAdd = (event: L.LayerEvent) => {
         window.setTimeout(() => {
           const latestMode = useEditorTestModeStore.getState().currentMode;
           const latestTool = useEditorTestToolStore.getState().activeTool;
-          const latestSelectedFeatureId =
-            useEditorTestSelectionStore.getState().selectedFeatureId;
+          const latestSelection = useEditorTestSelectionStore.getState();
+          const latestSelectedFeatureIds = getEffectiveSelectedFeatureIds(
+            latestSelection.selectedFeatureId,
+            latestSelection.selectedFeatureIds,
+            latestSelection.multiSelectionEnabled,
+          );
+          const latestSelectedIds = new Set(latestSelectedFeatureIds);
+          const editableFeatureId = getEditableFeatureId(event.layer);
 
           if (
             latestMode !== "edit" ||
             latestTool !== "edit" ||
-            !latestSelectedFeatureId ||
-            getEditableFeatureId(event.layer) !== latestSelectedFeatureId
+            !editableFeatureId ||
+            !latestSelectedIds.has(editableFeatureId)
           ) {
             return;
           }
 
-          if (getLayerFeatureId(event.layer) === latestSelectedFeatureId) {
+          const layerFeatureId = getLayerFeatureId(event.layer);
+          if (layerFeatureId && latestSelectedIds.has(layerFeatureId)) {
             enableLayerEdit(event.layer);
           }
 
@@ -1166,6 +1224,8 @@ export function DrawingToolController() {
     currentMode,
     activeTool,
     selectedFeatureId,
+    selectedFeatureIdsSignature,
+    multiSelectionEnabled,
     markerStyle,
     markerSymbol,
     lineStyle,

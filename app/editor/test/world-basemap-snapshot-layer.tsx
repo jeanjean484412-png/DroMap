@@ -40,6 +40,16 @@ export function WorldBasemapSnapshotLayer({
   );
 
   useEffect(() => {
+    if (basemap.kind === "solid") {
+      setSnapshot(null);
+      setHasError(false);
+      setWorldSnapshotStatus({
+        basemapId: basemap.id,
+        status: "ready",
+      });
+      return;
+    }
+
     let isCancelled = false;
     const worldBounds = L.latLngBounds(worldBoundsExpression);
     const automaticDetailZoom = map.getBoundsZoom(
@@ -104,7 +114,7 @@ export function WorldBasemapSnapshotLayer({
     worldBoundsExpression,
   ]);
 
-  if (hasError) {
+  if (basemap.kind === "solid" || hasError) {
     return null;
   }
 

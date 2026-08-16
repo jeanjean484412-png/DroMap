@@ -11,6 +11,7 @@ import {
 import { CustomMarkerDesignerModal } from "./custom-marker-designer-modal";
 import { normalizeImportedMarkerImage } from "./custom-marker-rendering";
 import { getMarkerSymbolHtml } from "./marker-symbol";
+import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
 
 type CustomMarkerLibraryProps = {
   selectedSymbol?: DroMapMarkerSymbol | null;
@@ -54,6 +55,10 @@ export function CustomMarkerLibrary({
   onSelect,
   className = "",
 }: CustomMarkerLibraryProps) {
+  const runtime = useDromapProductRuntime();
+  const keepsPersonalLibrary =
+    !runtime.enabled ||
+    runtime.capabilities.canSaveCustomMarkersToLibrary;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const customMarkers = useEditorTestCustomMarkersStore(
     (state) => state.customMarkers,
@@ -91,7 +96,8 @@ export function CustomMarkerLibrary({
       setIsImporting(true);
       setImportStatus("Préparation de l’image…");
       const dataUrl = await normalizeImportedMarkerImage(file);
-      const name = file.name.replace(/\.[^.]+$/, "").trim() || "Marqueur importé";
+      const name =
+        file.name.replace(/\.[^.]+$/, "").trim() || "Marqueur importé";
       const marker = addCustomMarker({
         id: createCustomMarkerId("image"),
         name,
@@ -99,7 +105,11 @@ export function CustomMarkerLibrary({
         dataUrl,
       });
       onSelect({ type: "custom-image", id: marker.id });
-      setImportStatus(`« ${marker.name} » ajouté à Mes marqueurs.`);
+      setImportStatus(
+        keepsPersonalLibrary
+          ? `« ${marker.name} » ajouté à Mes marqueurs.`
+          : `« ${marker.name} » ajouté au projet temporaire.`,
+      );
     } catch (error) {
       setImportStatus(
         error instanceof Error
@@ -113,63 +123,14 @@ export function CustomMarkerLibrary({
 
   return (
     <div className={className}>
-      <section className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-blue-50 p-3">
-        <div className="mb-2">
-          <strong className="block text-xs text-slate-900">
-            Créer mes propres marqueurs
-          </strong>
-          <span className="text-[10px] leading-relaxed text-slate-500">
-            Dessine un symbole avec des formes, lignes et flèches, ou importe une image détourée.
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => setDesignerMarker(null)}
-            className="flex min-h-20 flex-col items-center justify-center gap-1 rounded-xl border border-violet-300 bg-white px-2 py-3 text-center text-violet-800 shadow-sm transition hover:-translate-y-0.5 hover:border-violet-500 hover:shadow-md"
-          >
-            <span className="text-2xl">✎</span>
-            <strong className="text-[11px]">Dessiner un marqueur</strong>
-          </button>
-          <button
-            type="button"
-            disabled={isImporting}
-            onClick={() => fileInputRef.current?.click()}
-            className="flex min-h-20 flex-col items-center justify-center gap-1 rounded-xl border border-blue-300 bg-white px-2 py-3 text-center text-blue-800 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-500 hover:shadow-md disabled:cursor-wait disabled:opacity-60"
-          >
-            <span className="text-2xl">⇧</span>
-            <strong className="text-[11px]">
-              {isImporting ? "Import en cours…" : "Importer un marqueur"}
-            </strong>
-          </button>
-        </div>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/png,image/webp,image/jpeg,image/svg+xml"
-          className="hidden"
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0] ?? null;
-            event.currentTarget.value = "";
-            void handleImportFile(file);
-          }}
-        />
-
-        {importStatus ? (
-          <div className="mt-2 rounded-lg bg-white/80 px-2 py-1.5 text-[10px] leading-relaxed text-slate-600">
-            {importStatus}
-          </div>
-        ) : null}
-      </section>
-
-      <section className="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
+      <section className="rounded-2xl border border-slate-200 bg-white p-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div>
             <strong className="block text-xs text-slate-900">Mes marqueurs</strong>
             <span className="text-[10px] text-slate-500">
-              Disponibles sur la carte, dans la légende et dans les exports.
+              {keepsPersonalLibrary
+                ? "Tes marqueurs enregistrés apparaissent ici en priorité pour être réutilisés rapidement."
+                : "Conservés dans ce projet temporaire, sa légende et son PNG."}
             </span>
           </div>
           <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-600">
@@ -177,9 +138,17 @@ export function CustomMarkerLibrary({
           </span>
         </div>
 
+        {!keepsPersonalLibrary ? (
+          <div className="mb-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-[10px] leading-relaxed text-indigo-900">
+            En mode invité, les marqueurs restent dans le projet courant.
+            Active un compte pour les conserver dans une bibliothèque personnelle
+            réutilisable.
+          </div>
+        ) : null}
+
         {visibleCustomMarkers.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-5 text-center text-[11px] leading-relaxed text-slate-500">
-            Tes marqueurs dessinés ou importés apparaîtront ici.
+            Aucun marqueur personnel enregistré pour le moment.
           </div>
         ) : (
           <div className="grid max-h-64 grid-cols-3 gap-2 overflow-y-auto pr-1">
@@ -222,7 +191,11 @@ export function CustomMarkerLibrary({
                       if (selected) {
                         onSelect({ type: "builtin", id: "circle" });
                       }
-                      setImportStatus(`« ${marker.name} » a été supprimé de Mes marqueurs.`);
+                      setImportStatus(
+                        keepsPersonalLibrary
+                          ? `« ${marker.name} » a été supprimé de Mes marqueurs.`
+                          : `« ${marker.name} » a été retiré du projet temporaire.`,
+                      );
                     }}
                     className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded-md border border-red-200 bg-white text-[12px] font-black text-red-600 shadow-sm hover:border-red-400 hover:bg-red-50"
                     title="Supprimer de Mes marqueurs"
@@ -250,6 +223,58 @@ export function CustomMarkerLibrary({
             })}
           </div>
         )}
+      </section>
+
+      <section className="mt-3 rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-blue-50 p-3">
+        <div className="mb-2">
+          <strong className="block text-xs text-slate-900">
+            Créer un marqueur personnalisé
+          </strong>
+          <span className="text-[10px] leading-relaxed text-slate-500">
+            Fonction annexe : utilise-la si les marqueurs enregistrés et la
+            bibliothèque DroMap ne correspondent pas à ton besoin.
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setDesignerMarker(null)}
+            className="flex min-h-20 flex-col items-center justify-center gap-1 rounded-xl border border-violet-300 bg-white px-2 py-3 text-center text-violet-800 shadow-sm transition hover:-translate-y-0.5 hover:border-violet-500 hover:shadow-md"
+          >
+            <span className="text-2xl">✎</span>
+            <strong className="text-[11px]">Dessiner un marqueur</strong>
+          </button>
+          <button
+            type="button"
+            disabled={isImporting}
+            onClick={() => fileInputRef.current?.click()}
+            className="flex min-h-20 flex-col items-center justify-center gap-1 rounded-xl border border-blue-300 bg-white px-2 py-3 text-center text-blue-800 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-500 hover:shadow-md disabled:cursor-wait disabled:opacity-60"
+          >
+            <span className="text-2xl">⇧</span>
+            <strong className="text-[11px]">
+              {isImporting ? "Import en cours…" : "Importer un marqueur"}
+            </strong>
+          </button>
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/webp,image/jpeg,image/svg+xml"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0] ?? null;
+            event.currentTarget.value = "";
+            void handleImportFile(file);
+          }}
+        />
+
+        {importStatus ? (
+          <div className="mt-2 rounded-lg bg-white/80 px-2 py-1.5 text-[10px] leading-relaxed text-slate-600">
+            {importStatus}
+          </div>
+        ) : null}
       </section>
 
       {designerMarker !== undefined ? (

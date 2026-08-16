@@ -641,70 +641,19 @@ function getSafeDetailZoom(value: number | null | undefined) {
   return null;
 }
 
-function serializeMapLibreLayoutValue(value: unknown) {
-  try {
-    return JSON.stringify(value ?? "").toLocaleLowerCase("fr");
-  } catch {
-    return String(value ?? "").toLocaleLowerCase("fr");
-  }
-}
-
-function getMapLibreLayoutValue(map: any, layer: any, property: string) {
-  if (typeof map?.getLayoutProperty === "function") {
-    return map.getLayoutProperty(layer.id, property);
-  }
-
-  return layer?.layout?.[property];
-}
-
 /**
- * Détermine si une couche texte utilise un cartouche routier comme « VL7 ».
- * Dans ce cas, masquer seulement `text-field` laisserait le rectangle vide :
- * on masque donc toute la couche, texte et cartouche compris.
- */
-function isMapLibreRoadShieldLayer(map: any, layer: any, textField: unknown) {
-  const iconImage = getMapLibreLayoutValue(map, layer, "icon-image");
-
-  if (iconImage === undefined || iconImage === null || iconImage === "") {
-    return false;
-  }
-
-  const iconTextFit = getMapLibreLayoutValue(map, layer, "icon-text-fit");
-  const sourceLayer = layer?.["source-layer"] ?? layer?.sourceLayer ?? "";
-  const searchable = [
-    layer?.id,
-    sourceLayer,
-    serializeMapLibreLayoutValue(textField),
-    serializeMapLibreLayoutValue(iconImage),
-    serializeMapLibreLayoutValue(iconTextFit),
-  ]
-    .join(" ")
-    .toLocaleLowerCase("fr");
-
-  const textUsesRouteReference =
-    /(?:^|[^a-z])(ref|route_ref|road_ref|shield|network)(?:[^a-z]|$)/i.test(
-      serializeMapLibreLayoutValue(textField),
-    );
-  const layerLooksLikeShield =
-    /shield|road[-_ ]?(?:number|ref)|route[-_ ]?(?:number|ref)|highway[-_ ]?(?:number|ref)|motorway[-_ ]?(?:number|ref)|route badge|road badge/.test(
-      searchable,
-    );
-  const iconFittedToText =
-    iconTextFit !== undefined &&
-    iconTextFit !== null &&
-    String(iconTextFit).toLocaleLowerCase("fr") !== "none";
-
-  return textUsesRouteReference || layerLooksLikeShield || iconFittedToText;
-}
-
-/**
- * Masque les écritures d'un style MapLibre.
+ * Masque les éléments de type `symbol` du fond vectoriel.
  *
- * - les textes ordinaires sont retirés en conservant les pictogrammes ;
- * - les références routières placées dans un rectangle/cartouche sont
- *   masquées avec leur rectangle afin de ne jamais laisser un cadre vide ;
- * - lorsqu'un symbole avec fond n'est pas identifié avec assez de certitude,
- *   il reste intact plutôt que d'afficher un rectangle vide.
+ * Les styles MapLibre placent dans ces couches non seulement les textes,
+ * mais aussi les petits pictogrammes associés au fond : arrêts de bus,
+ * stations de métro, POI, pictogrammes de services, cartouches routiers, etc.
+ * Quand l’utilisateur masque les « écritures du fond », DroMap retire donc
+ * volontairement toute la couche symbolique afin de produire un fond nettoyé
+ * et cohérent, sans conserver de petits pictogrammes isolés.
+ *
+ * Le fond est recréé lorsque l’option est réactivée (showTextLabels fait partie
+ * des dépendances / clés de rendu), il n’est donc pas nécessaire de restaurer
+ * manuellement chaque propriété de layout ici.
  */
 export function applyMapLibreBasemapTextVisibility(
   map: any,
@@ -726,20 +675,10 @@ export function applyMapLibreBasemapTextVisibility(
     }
 
     try {
-      const textField = getMapLibreLayoutValue(map, layer, "text-field");
-
-      if (textField === undefined || textField === null || textField === "") {
-        continue;
-      }
-
-      if (isMapLibreRoadShieldLayer(map, layer, textField)) {
-        map.setLayoutProperty(layer.id, "visibility", "none");
-        continue;
-      }
-
-      map.setLayoutProperty(layer.id, "text-field", "");
+      map.setLayoutProperty(layer.id, "visibility", "none");
     } catch {
-      // Une couche non modifiable ne doit pas empêcher le reste du fond.
+      // Une couche non modifiable ne doit pas empêcher le nettoyage du reste
+      // du fond vectoriel.
     }
   }
 }

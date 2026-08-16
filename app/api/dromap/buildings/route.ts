@@ -188,7 +188,7 @@ async function fetchIgn(url: URL, accept: string) {
     });
 
     if (!response.ok) {
-      throw new Error(`IGN WFS returned ${response.status}`);
+      throw new Error("Le service de bâtiments est momentanément indisponible.");
     }
 
     return response;
@@ -758,7 +758,7 @@ async function fetchOsmNamedCandidates(bounds: WorkspaceRequestBounds) {
       });
 
       if (!response.ok) {
-        throw new Error(`Overpass returned ${response.status}`);
+        throw new Error("Le service de bâtiments est momentanément indisponible.");
       }
 
       return parseOsmNamedCandidates(await response.json());
@@ -1069,7 +1069,7 @@ async function fetchBuildingPage(
   const responseText = await response.text();
 
   if (responseText.trimStart().startsWith("<")) {
-    throw new Error("IGN WFS returned an XML exception instead of GeoJSON");
+    throw new Error("Le service de bâtiments a renvoyé des données inutilisables.");
   }
 
   const payload = JSON.parse(responseText) as GeoJsonFeatureCollection;

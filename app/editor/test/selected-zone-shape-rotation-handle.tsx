@@ -243,7 +243,11 @@ function ResizeHandleButton({
   );
 }
 
-export function SelectedZoneShapeRotationHandle() {
+export function SelectedZoneShapeRotationHandle({
+  featureId,
+}: {
+  featureId?: string;
+} = {}) {
   const map = useMap();
   const [, setViewportVersion] = useState(0);
   const [dragMode, setDragMode] = useState<DragMode>(null);
@@ -261,14 +265,15 @@ export function SelectedZoneShapeRotationHandle() {
   const currentMode = useEditorTestModeStore((state) => state.currentMode);
   const activeTool = useEditorTestToolStore((state) => state.activeTool);
   const setActiveTool = useEditorTestToolStore((state) => state.setActiveTool);
-  const selectedFeatureId = useEditorTestSelectionStore(
+  const storeSelectedFeatureId = useEditorTestSelectionStore(
     (state) => state.selectedFeatureId,
   );
+  const effectiveFeatureId = featureId ?? storeSelectedFeatureId;
   const setSelectedFeatureId = useEditorTestSelectionStore(
     (state) => state.setSelectedFeatureId,
   );
   const selectedFeature = useEditorTestFeaturesStore((state) =>
-    state.features.find((feature) => feature.id === selectedFeatureId),
+    state.features.find((feature) => feature.id === effectiveFeatureId),
   );
   const layers = useEditorTestLayersStore((state) => state.layers);
   const updateFeature = useEditorTestFeaturesStore((state) => state.updateFeature);
@@ -414,15 +419,31 @@ export function SelectedZoneShapeRotationHandle() {
     }
   };
 
-  const keepSelectedAfterDrag = (featureId: string) => {
-    setSelectedFeatureId(featureId);
+  const keepSelectedAfterDrag = (draggedFeatureId: string) => {
+    const selectionState = useEditorTestSelectionStore.getState();
+
+    // En sélection multiple, une poignée appartient déjà à un objet de
+    // l'ensemble sélectionné. Ne jamais repasser par setSelectedFeatureId ici :
+    // cette action réduirait la sélection au seul objet manipulé.
+    if (
+      selectionState.multiSelectionEnabled &&
+      selectionState.selectedFeatureIds.includes(draggedFeatureId)
+    ) {
+      return;
+    }
+
+    setSelectedFeatureId(draggedFeatureId);
 
     window.setTimeout(() => {
-      useEditorTestSelectionStore.getState().setSelectedFeatureId(featureId);
+      useEditorTestSelectionStore
+        .getState()
+        .setSelectedFeatureId(draggedFeatureId);
     }, 0);
 
     window.setTimeout(() => {
-      useEditorTestSelectionStore.getState().setSelectedFeatureId(featureId);
+      useEditorTestSelectionStore
+        .getState()
+        .setSelectedFeatureId(draggedFeatureId);
     }, 120);
   };
 

@@ -194,7 +194,7 @@ async function fetchNominatimResults(
     });
 
     if (!response.ok) {
-      throw new Error(`Nominatim returned ${response.status}`);
+      throw new Error("Le service de recherche est momentanément indisponible.");
     }
 
     const rawResults = (await response.json()) as NominatimSearchResult[];

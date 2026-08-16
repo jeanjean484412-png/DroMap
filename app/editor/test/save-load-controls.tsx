@@ -8,6 +8,7 @@ import { normalizeFeatureDrawOrdersForPersistence } from "@/lib/dromap/feature-o
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
 import type { DromapBasemapId } from "@/lib/dromap/basemap";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
+import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
 import {
   type DroMapLayer,
   useEditorTestLayersStore,
@@ -50,6 +51,10 @@ type LocalExportSettings = {
   legendMapTitlePosition: ExportLegendMapPosition;
   exportFormat: ExportFormat;
   showBasemapLabels: boolean;
+  mapTitle: string;
+  mapTitlePosition: ExportLegendMapPosition;
+  mapTitleFontSize: number;
+  mapTitleColor: string;
   legendBackgroundColor: string;
   legendSideWidth: number;
   legendBottomHeight: number;
@@ -90,7 +95,10 @@ type LocalSavePayload = {
   savedAt: string;
   features: DroMapFeature[];
   workspaceBounds: WorkspaceBounds | null;
+  workspaceBasemapZoom?: number | null;
+  workspaceBasemapBaseZoom?: number | null;
   basemapId?: DromapBasemapId;
+  showBasemapLabels?: boolean;
   showCountryNeighborContext?: boolean;
   showAllFeatureLabels?: boolean;
   showAllGeoJsonFeatureLabels?: boolean;
@@ -297,6 +305,10 @@ function getDefaultLocalExportSettings(): LocalExportSettings {
     legendMapTitlePosition: { x: 0.5, y: 0 },
     exportFormat: "auto",
     showBasemapLabels: true,
+    mapTitle: "",
+    mapTitlePosition: { x: 0.5, y: 0.08 },
+    mapTitleFontSize: 44,
+    mapTitleColor: "#0f172a",
     legendBackgroundColor: "#ffffff",
     legendSideWidth: 420,
     legendBottomHeight: 0,
@@ -343,6 +355,10 @@ function createLocalExportSettingsSnapshot(): LocalExportSettings {
     legendMapTitlePosition: { ...exportState.legendMapTitlePosition },
     exportFormat: exportState.exportFormat,
     showBasemapLabels: exportState.showBasemapLabels,
+    mapTitle: exportState.mapTitle,
+    mapTitlePosition: { ...exportState.mapTitlePosition },
+    mapTitleFontSize: exportState.mapTitleFontSize,
+    mapTitleColor: exportState.mapTitleColor,
     legendBackgroundColor: exportState.legendBackgroundColor,
     legendSideWidth: exportState.legendSideWidth,
     legendBottomHeight: exportState.legendBottomHeight,
@@ -417,6 +433,24 @@ function normalizeLocalExportSettings(value: unknown): LocalExportSettings {
       value.showBasemapLabels === undefined
         ? defaults.showBasemapLabels
         : value.showBasemapLabels !== false,
+    mapTitle:
+      typeof value.mapTitle === "string"
+        ? value.mapTitle.slice(0, 240)
+        : defaults.mapTitle,
+    mapTitlePosition: parseLegendMapPosition(
+      value.mapTitlePosition,
+      defaults.mapTitlePosition,
+    ),
+    mapTitleFontSize: clampNumber(
+      value.mapTitleFontSize,
+      defaults.mapTitleFontSize,
+      12,
+      120,
+    ),
+    mapTitleColor:
+      typeof value.mapTitleColor === "string"
+        ? value.mapTitleColor
+        : defaults.mapTitleColor,
     legendBackgroundColor:
       typeof value.legendBackgroundColor === "string"
         ? value.legendBackgroundColor
@@ -564,7 +598,7 @@ function getPanelPosition(button: HTMLButtonElement): FloatingPanelPosition {
   };
 }
 
-export function SaveLoadControls() {
+function LegacySaveLoadControls() {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
   const closeTimeoutRef = useRef<number | null>(null);
@@ -603,6 +637,18 @@ export function SaveLoadControls() {
   const validateWorkspaceZone = useEditorTestWorkspaceStore(
     (state) => state.validateWorkspaceZone,
   );
+  const workspaceBasemapZoom = useEditorTestWorkspaceStore(
+    (state) => state.workspaceBasemapZoom,
+  );
+  const workspaceBasemapBaseZoom = useEditorTestWorkspaceStore(
+    (state) => state.workspaceBasemapBaseZoom,
+  );
+  const setWorkspaceBasemapZoom = useEditorTestWorkspaceStore(
+    (state) => state.setWorkspaceBasemapZoom,
+  );
+  const setWorkspaceBasemapBaseZoom = useEditorTestWorkspaceStore(
+    (state) => state.setWorkspaceBasemapBaseZoom,
+  );
 
   const clearSelectedFeatureId = useEditorTestSelectionStore(
     (state) => state.clearSelectedFeatureId,
@@ -617,6 +663,12 @@ export function SaveLoadControls() {
   );
   const setBasemapIdFromUnknown = useEditorTestBasemapStore(
     (state) => state.setBasemapIdFromUnknown,
+  );
+  const showBasemapLabels = useEditorTestExportStore(
+    (state) => state.showBasemapLabels,
+  );
+  const setShowBasemapLabels = useEditorTestExportStore(
+    (state) => state.setShowBasemapLabels,
   );
   const showAllFeatureLabels = useEditorTestMapLabelsStore(
     (state) => state.showAllFeatureLabels,
@@ -727,7 +779,10 @@ export function SaveLoadControls() {
 
     const featuresSnapshot = features;
     const workspaceBoundsSnapshot = workspaceBounds;
+    const workspaceBasemapZoomSnapshot = workspaceBasemapZoom;
+    const workspaceBasemapBaseZoomSnapshot = workspaceBasemapBaseZoom;
     const basemapIdSnapshot = basemapId;
+    const showBasemapLabelsSnapshot = showBasemapLabels;
     const showCountryNeighborContextSnapshot = showCountryNeighborContext;
     const showAllFeatureLabelsSnapshot = showAllFeatureLabels;
     const showAllGeoJsonFeatureLabelsSnapshot = showAllGeoJsonFeatureLabels;
@@ -748,7 +803,10 @@ export function SaveLoadControls() {
         savedAt: new Date().toISOString(),
         features: featuresToSave,
         workspaceBounds: workspaceBoundsSnapshot,
+        workspaceBasemapZoom: workspaceBasemapZoomSnapshot,
+        workspaceBasemapBaseZoom: workspaceBasemapBaseZoomSnapshot,
         basemapId: basemapIdSnapshot,
+        showBasemapLabels: showBasemapLabelsSnapshot,
         showCountryNeighborContext: showCountryNeighborContextSnapshot,
         showAllFeatureLabels: showAllFeatureLabelsSnapshot,
         showAllGeoJsonFeatureLabels: showAllGeoJsonFeatureLabelsSnapshot,
@@ -808,11 +866,32 @@ export function SaveLoadControls() {
         parsedSave.featureMapLabelOutlineWidth ?? 1.5,
       );
       restoreLocalExportSettings(parsedSave.exportSettings);
+      setShowBasemapLabels(
+        parsedSave.showBasemapLabels ??
+          parsedSave.exportSettings?.showBasemapLabels ??
+          true,
+      );
       clearSelectedFeatureId();
 
       if (parsedSave.workspaceBounds) {
         setWorkspaceBounds(parsedSave.workspaceBounds);
         validateWorkspaceZone();
+
+        const savedBaseZoom =
+          typeof parsedSave.workspaceBasemapBaseZoom === "number" &&
+          Number.isFinite(parsedSave.workspaceBasemapBaseZoom)
+            ? parsedSave.workspaceBasemapBaseZoom
+            : null;
+        const savedDetailZoom =
+          typeof parsedSave.workspaceBasemapZoom === "number" &&
+          Number.isFinite(parsedSave.workspaceBasemapZoom)
+            ? parsedSave.workspaceBasemapZoom
+            : null;
+
+        if (savedBaseZoom !== null || savedDetailZoom !== null) {
+          setWorkspaceBasemapBaseZoom(savedBaseZoom ?? savedDetailZoom);
+          setWorkspaceBasemapZoom(savedDetailZoom ?? savedBaseZoom);
+        }
       } else {
         clearWorkspaceBounds();
       }
@@ -941,4 +1020,9 @@ export function SaveLoadControls() {
       {panel}
     </div>
   );
+}
+
+export function SaveLoadControls() {
+  const runtime = useDromapProductRuntime();
+  return runtime.enabled ? null : <LegacySaveLoadControls />;
 }

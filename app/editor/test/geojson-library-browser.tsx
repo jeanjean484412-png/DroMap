@@ -478,7 +478,7 @@ export function GeoJsonLibraryBrowser({
 
         throw new Error(
           remoteMessage ||
-            `${errorContext} a répondu avec le code ${response.status}.`,
+            `${errorContext} est momentanément indisponible.`,
         );
       }
 
@@ -537,7 +537,7 @@ export function GeoJsonLibraryBrowser({
 
         throw new Error(
           remoteMessage ||
-            `${errorContext} a répondu avec le code ${response.status}.`,
+            `${errorContext} est momentanément indisponible.`,
         );
       }
 
@@ -545,7 +545,7 @@ export function GeoJsonLibraryBrowser({
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         throw new Error(
-          `${errorContext} n’a pas répondu dans les ${Math.round(timeoutMs / 1000)} secondes prévues.`,
+          `${errorContext} met trop de temps à répondre. Réessaie dans quelques instants.`,
         );
       }
 
@@ -771,7 +771,7 @@ export function GeoJsonLibraryBrowser({
         await fetchJsonWithTimeout<GeoBoundariesAvailabilityResponse>(
           availabilityUrl,
           35_000,
-          "Le relais geoBoundaries de DroMap",
+          "La source de données",
         );
 
       setVerifiedGeoBoundariesLevels(availability.availableLevels);
@@ -818,7 +818,7 @@ export function GeoJsonLibraryBrowser({
       console.error(error);
       const message =
         error instanceof SyntaxError
-          ? "L’API geoBoundaries a renvoyé une réponse invalide."
+          ? "La source de données a renvoyé une réponse invalide."
           : error instanceof Error
             ? error.message
             : "Le niveau demandé n’a pas pu être vérifié.";
@@ -836,9 +836,6 @@ export function GeoJsonLibraryBrowser({
             <h3 className="text-sm font-semibold text-slate-950">
               Bibliothèque de données GeoJSON
             </h3>
-            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700">
-              Version étendue
-            </span>
           </div>
           <p className="mt-1 text-sm leading-relaxed text-slate-600">
             Recherche un jeu prêt à l’emploi ou choisis les limites administratives

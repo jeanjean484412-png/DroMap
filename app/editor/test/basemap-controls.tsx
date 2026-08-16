@@ -348,7 +348,7 @@ function BasemapSolidPreview(input: { basemap: DromapBasemapConfig }) {
   );
 }
 
-function BasemapPreviewThumbnail(input: {
+export function BasemapPreviewThumbnail(input: {
   basemapId: DromapBasemapId;
   compact?: boolean;
 }) {

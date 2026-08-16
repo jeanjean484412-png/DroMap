@@ -1,5 +1,4 @@
-const INITIAL_FLOATING_PANEL_Z_INDEX = 3000;
-const MAX_FLOATING_PANEL_Z_INDEX = 9000;
+const INITIAL_FLOATING_PANEL_Z_INDEX = 30_000;
 
 let currentFloatingPanelZIndex = INITIAL_FLOATING_PANEL_Z_INDEX;
 
@@ -8,10 +7,9 @@ export function getInitialFloatingPanelZIndex() {
 }
 
 export function bringFloatingPanelToFront() {
-  if (currentFloatingPanelZIndex >= MAX_FLOATING_PANEL_Z_INDEX) {
-    currentFloatingPanelZIndex = INITIAL_FLOATING_PANEL_Z_INDEX;
-  }
-
+  // Compteur volontairement monotone : le dernier panneau cliqué/ouvert doit
+  // toujours passer devant les précédents. Un reset pouvait replacer un
+  // panneau récent derrière une ancienne fenêtre encore ouverte.
   currentFloatingPanelZIndex += 1;
   return currentFloatingPanelZIndex;
 }

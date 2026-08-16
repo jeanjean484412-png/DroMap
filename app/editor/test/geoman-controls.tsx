@@ -123,6 +123,9 @@ export default function GeomanControls() {
   useEffect(() => {
     configureLeafletIcons();
 
+    let workspaceRectangleCornerIndex = 0;
+    let updateWorkspaceRectangleTooltip = () => {};
+
     map.pm.setGlobalOptions({
       markerStyle: { icon: defaultMarkerIcon },
     });
@@ -151,8 +154,10 @@ export default function GeomanControls() {
             getWorkspaceClampBoundsFromLatLngBounds(workspaceClampBounds),
           );
           useEditorTestWorkspaceStore.getState().setWorkspaceBounds(bounds);
+          workspaceRectangleCornerIndex = 0;
 
           window.setTimeout(() => {
+            updateWorkspaceRectangleTooltip();
             const latestMode = useEditorTestModeStore.getState().currentMode;
 
             if (latestMode === "workspace-select") {
@@ -198,6 +203,65 @@ export default function GeomanControls() {
     };
 
     const container = map.getContainer();
+    const WORKSPACE_TOOLTIP_FIRST = "click simple pour poser angle sup gauche";
+    const WORKSPACE_TOOLTIP_SECOND = "re-click pour poser angle inf droit";
+
+    updateWorkspaceRectangleTooltip = () => {
+      if (useEditorTestModeStore.getState().currentMode !== "workspace-select") {
+        return;
+      }
+
+      const expectedText =
+        workspaceRectangleCornerIndex === 0
+          ? WORKSPACE_TOOLTIP_FIRST
+          : WORKSPACE_TOOLTIP_SECOND;
+
+      for (const tooltip of container.querySelectorAll<HTMLElement>(
+        ".leaflet-tooltip-pane .leaflet-tooltip",
+      )) {
+        if (tooltip.textContent !== expectedText) {
+          tooltip.textContent = expectedText;
+        }
+      }
+    };
+
+    const onWorkspaceMapClick = (event: MouseEvent) => {
+      if (useEditorTestModeStore.getState().currentMode !== "workspace-select") {
+        return;
+      }
+
+      if (!(event.target instanceof Element)) {
+        return;
+      }
+
+      if (
+        event.target.closest(
+          ".leaflet-control, .leaflet-top, .leaflet-bottom, [data-dromap-ignore-shortcuts]",
+        )
+      ) {
+        return;
+      }
+
+      workspaceRectangleCornerIndex =
+        workspaceRectangleCornerIndex === 0 ? 1 : 0;
+
+      window.requestAnimationFrame(updateWorkspaceRectangleTooltip);
+      window.setTimeout(updateWorkspaceRectangleTooltip, 0);
+    };
+
+    const tooltipObserver = new MutationObserver(() => {
+      updateWorkspaceRectangleTooltip();
+    });
+
+    tooltipObserver.observe(container, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+
+    container.addEventListener("click", onWorkspaceMapClick, true);
+    updateWorkspaceRectangleTooltip();
+
     let replayAnimationFrameId: number | null = null;
     const replayTimeoutIds = new Set<number>();
 
@@ -282,6 +346,8 @@ export default function GeomanControls() {
       }
       replayTimeoutIds.clear();
 
+      tooltipObserver.disconnect();
+      container.removeEventListener("click", onWorkspaceMapClick, true);
       container.removeEventListener("mousemove", rememberPointerPosition, true);
       container.removeEventListener("mouseleave", clearPointerPosition, true);
       map.off("pm:create", onCreate);

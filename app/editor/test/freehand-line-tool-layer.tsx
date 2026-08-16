@@ -6,9 +6,11 @@ import { useMap } from "react-leaflet";
 
 import { deactivateGeomanModes } from "@/lib/dromap/geoman-toolbar";
 import type { DroMapFeature } from "@/lib/dromap/feature";
+import { scaleFeatureForVisualZoom } from "@/lib/dromap/feature-visual-scale";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 import { useEditorTestToolStore } from "@/stores/editor-test-tool";
+import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 import {
   applyDrawingPresetToFeature,
   useEditorTestDrawingOptionsStore,
@@ -36,13 +38,18 @@ type FreehandPoint = {
 function getDashArray(
   dashStyle: "solid" | "dashed" | "dotted",
   weight: number,
+  dashLength?: number,
+  dashGap?: number,
 ) {
+  const gap = Number.isFinite(dashGap) ? Math.max(2, Number(dashGap)) : Math.max(8, weight * 2.2);
+
   if (dashStyle === "dashed") {
-    return `${weight * 3} ${weight * 2}`;
+    const length = Number.isFinite(dashLength) ? Math.max(2, Number(dashLength)) : Math.max(12, weight * 4);
+    return `${length} ${gap}`;
   }
 
   if (dashStyle === "dotted") {
-    return `0.001 ${weight * 2.2}`;
+    return `0.001 ${gap}`;
   }
 
   return undefined;
@@ -60,7 +67,7 @@ function getPreviewPathOptions(feature: DroMapFeature): L.PolylineOptions {
     color: style.color ?? "#111827",
     opacity,
     weight,
-    dashArray: getDashArray(style.dashStyle ?? "solid", weight),
+    dashArray: getDashArray(style.dashStyle ?? "solid", weight, style.dashLength, style.dashGap),
     lineCap: featureHasLineArrow(feature)
       ? getLineArrowBodyLineCap(feature)
       : "round",
@@ -480,10 +487,22 @@ export function FreehandLineToolLayer() {
       }
 
       const layerGroup = ensurePreviewLayer();
-      const feature = createFreehandPreviewFeature(
+      const previewFeature = createFreehandPreviewFeature(
         points,
         freehandSmoothing,
         map,
+      );
+      const baseZoom =
+        useEditorTestWorkspaceStore.getState().workspaceBasemapBaseZoom;
+      const referenceZoom =
+        typeof baseZoom === "number" && Number.isFinite(baseZoom)
+          ? baseZoom
+          : map.getZoom();
+      const feature = scaleFeatureForVisualZoom(
+        previewFeature,
+        map.getZoom(),
+        referenceZoom,
+        { scaleText: false },
       );
       addPreviewFeatureToLayerGroup(feature, layerGroup, map);
     };

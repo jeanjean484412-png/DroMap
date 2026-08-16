@@ -16,6 +16,13 @@ type EditorTestWorkspaceState = {
   workspaceBasemapZoom: number | null;
   /** Niveau de détail vu par l'utilisateur au moment de la validation de zone. */
   workspaceBasemapBaseZoom: number | null;
+  /**
+   * Mode d'exploration temporaire de l'éditeur. Quand il est actif, l'utilisateur
+   * peut zoomer plus loin dans la zone et le fond reprend son niveau de détail
+   * natif au zoom courant. Cet état est volontairement éphémère : il ne modifie
+   * ni la zone, ni le niveau de détail enregistré pour le rendu/export.
+   */
+  workspaceNavigationUnlocked: boolean;
 
   setWorkspaceBounds: (bounds: WorkspaceBounds) => void;
   clearWorkspaceBounds: () => void;
@@ -24,6 +31,8 @@ type EditorTestWorkspaceState = {
   consumePendingWorkspaceFit: () => boolean;
   setWorkspaceBasemapZoom: (zoom: number | null) => void;
   setWorkspaceBasemapBaseZoom: (zoom: number | null) => void;
+  setWorkspaceNavigationUnlocked: (unlocked: boolean) => void;
+  toggleWorkspaceNavigationUnlocked: () => void;
 };
 
 function normalizeBasemapZoom(zoom: number | null) {
@@ -65,6 +74,7 @@ export const useEditorTestWorkspaceStore = create<EditorTestWorkspaceState>(
     pendingFitToWorkspace: false,
     workspaceBasemapZoom: null,
     workspaceBasemapBaseZoom: null,
+    workspaceNavigationUnlocked: false,
 
     setWorkspaceBounds: (bounds) => {
       if (workspaceBoundsEqual(get().workspaceBounds, bounds)) {
@@ -78,6 +88,7 @@ export const useEditorTestWorkspaceStore = create<EditorTestWorkspaceState>(
         workspaceBounds: bounds,
         workspaceBasemapZoom: null,
         workspaceBasemapBaseZoom: null,
+        workspaceNavigationUnlocked: false,
       });
     },
 
@@ -96,6 +107,7 @@ export const useEditorTestWorkspaceStore = create<EditorTestWorkspaceState>(
         pendingFitToWorkspace: false,
         workspaceBasemapZoom: null,
         workspaceBasemapBaseZoom: null,
+        workspaceNavigationUnlocked: false,
       });
 
       useEditorTestModeStore.getState().setCurrentMode("workspace-select");
@@ -113,6 +125,7 @@ export const useEditorTestWorkspaceStore = create<EditorTestWorkspaceState>(
         pendingFitToWorkspace: true,
         workspaceBasemapZoom: null,
         workspaceBasemapBaseZoom: null,
+        workspaceNavigationUnlocked: false,
       });
 
       useEditorTestModeStore.getState().setCurrentMode("edit");
@@ -123,6 +136,7 @@ export const useEditorTestWorkspaceStore = create<EditorTestWorkspaceState>(
         pendingFitToWorkspace: false,
         workspaceBasemapZoom: null,
         workspaceBasemapBaseZoom: null,
+        workspaceNavigationUnlocked: false,
       });
 
       useEditorTestModeStore.getState().setCurrentMode("workspace-select");
@@ -169,6 +183,33 @@ export const useEditorTestWorkspaceStore = create<EditorTestWorkspaceState>(
         workspaceBasemapZoom: normalizedZoom,
       });
     },
+
+    setWorkspaceNavigationUnlocked: (unlocked) => {
+      if (
+        unlocked &&
+        (!get().workspaceBounds ||
+          useEditorTestModeStore.getState().currentMode !== "edit")
+      ) {
+        return;
+      }
+
+      set({ workspaceNavigationUnlocked: unlocked });
+    },
+
+    toggleWorkspaceNavigationUnlocked: () => {
+      const state = get();
+
+      if (
+        !state.workspaceBounds ||
+        useEditorTestModeStore.getState().currentMode !== "edit"
+      ) {
+        return;
+      }
+
+      set({
+        workspaceNavigationUnlocked: !state.workspaceNavigationUnlocked,
+      });
+    },
   }),
 );
 
@@ -193,6 +234,7 @@ registerWorkspaceHistoryAccessors({
       pendingFitToWorkspace: snapshot.pendingFitToWorkspace,
       workspaceBasemapZoom: snapshot.workspaceBasemapZoom,
       workspaceBasemapBaseZoom: snapshot.workspaceBasemapBaseZoom,
+      workspaceNavigationUnlocked: false,
     });
     useEditorTestModeStore.getState().setCurrentMode(snapshot.currentMode);
   },

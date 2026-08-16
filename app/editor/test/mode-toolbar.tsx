@@ -27,6 +27,10 @@ import {
 
 import {
   DROMAP_DASH_STYLES,
+  MAX_DASH_GAP,
+  MAX_DASH_LENGTH,
+  MIN_DASH_GAP,
+  MIN_DASH_LENGTH,
   MAX_MARKER_SIZE,
   MIN_MARKER_SIZE,
 } from "./feature-style";
@@ -84,6 +88,8 @@ const DEFAULT_LINE_STYLE = {
   opacity: 1,
   weight: 4,
   dashStyle: "solid" as DroMapFeatureDashStyle,
+  dashLength: 12,
+  dashGap: 8,
   arrowStart: false,
   arrowEnd: false,
   freehandSmoothing: 45,
@@ -96,6 +102,8 @@ const DEFAULT_ZONE_STYLE = {
   fillColor: "#22c55e",
   fillOpacity: 0.25,
   dashStyle: "solid" as DroMapFeatureDashStyle,
+  dashLength: 12,
+  dashGap: 8,
   zoneStrokeEnabled: true,
   zoneFillEnabled: false,
   zoneHatchingStyle: "none" as DroMapZoneHatchingStyle,
@@ -418,6 +426,8 @@ function normalizeMarkerSearchText(value: string) {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/œ/g, "oe")
+    .replace(/æ/g, "ae")
     .toLowerCase()
     .replace(/['’]/g, " ")
     .replace(/[^a-z0-9\s-]/g, " ")
@@ -490,6 +500,51 @@ const MARKER_SEARCH_SYNONYMS: Record<string, string[]> = {
   ville: ["city", "building", "habitat", "urbain", "peuplement"],
 };
 
+// Vocabulaire volontairement proche des mots qu’un utilisateur non spécialiste
+// peut taper dans la recherche. Il complète les mots-clés techniques des icônes.
+const ADDITIONAL_MARKER_SEARCH_SYNONYMS: Record<string, string[]> = {
+  agriculture: ["ferme", "champ", "culture", "tracteur", "food", "wheat"],
+  ambulance: ["sante", "hopital", "urgence", "medical"],
+  banque: ["finance", "argent", "economie", "bank", "currency"],
+  barrage: ["eau", "energie", "hydro", "dam", "electricite"],
+  base: ["militaire", "camp", "defense", "army", "fort"],
+  bateau: ["navire", "ship", "port", "maritime", "transport"],
+  bombe: ["explosion", "guerre", "militaire", "danger", "conflit"],
+  bus: ["transport", "arret", "station", "route", "mobilite"],
+  capitale: ["ville", "city", "etat", "gouvernement", "pouvoir"],
+  char: ["tank", "militaire", "armee", "guerre", "vehicule"],
+  douane: ["frontiere", "border", "poste", "controle", "etat"],
+  drapeau: ["flag", "pays", "etat", "geopolitique", "frontiere"],
+  eau: ["water", "fleuve", "riviere", "lac", "barrage", "ressource"],
+  eglise: ["religion", "church", "culte", "societe"],
+  election: ["vote", "politique", "etat", "gouvernement", "societe"],
+  elevage: ["agriculture", "ferme", "animal", "food", "rural"],
+  euro: ["monnaie", "argent", "finance", "economie", "currency"],
+  ferme: ["agriculture", "champ", "rural", "food", "tracteur"],
+  gare: ["train", "rail", "station", "transport", "chemin de fer"],
+  gouvernement: ["etat", "politique", "pouvoir", "institution", "capitale"],
+  helicoptere: ["aerien", "avion", "transport", "militaire", "urgence"],
+  lac: ["eau", "water", "environnement", "ressource"],
+  metro: ["transport", "train", "station", "urbain", "mobilite"],
+  missile: ["militaire", "guerre", "arme", "rocket", "conflit"],
+  monument: ["histoire", "patrimoine", "tourisme", "building", "culture"],
+  mosquee: ["religion", "culte", "societe", "culture"],
+  navire: ["bateau", "ship", "port", "maritime", "transport"],
+  parlement: ["politique", "etat", "gouvernement", "institution"],
+  pont: ["bridge", "route", "transport", "infrastructure"],
+  rail: ["train", "gare", "transport", "chemin de fer"],
+  riviere: ["fleuve", "eau", "water", "ressource", "environnement"],
+  soldat: ["militaire", "armee", "guerre", "defense", "army"],
+  station: ["gare", "metro", "bus", "train", "transport"],
+  tempete: ["meteo", "risque", "danger", "vent", "storm"],
+  train: ["gare", "rail", "transport", "chemin de fer", "station"],
+  tram: ["transport", "rail", "station", "urbain", "mobilite"],
+  tunnel: ["route", "rail", "transport", "infrastructure"],
+  universite: ["education", "ecole", "school", "societe"],
+  volcan: ["risque", "montagne", "eruption", "danger", "environnement"],
+  voiture: ["route", "transport", "traffic", "mobilite", "car"],
+};
+
 const POPULAR_MARKER_SYMBOL_IDS = new Set([
   "city",
   "capital",
@@ -532,7 +587,16 @@ function getMarkerSearchWords(normalizedQuery: string) {
 
   return rawWords.map((word) => {
     const expanded = new Set([word]);
-    const synonyms = MARKER_SEARCH_SYNONYMS[word] ?? [];
+
+    // Tolère les pluriels usuels : « gares », « ports », « villes »…
+    if (word.length > 4 && word.endsWith("s")) expanded.add(word.slice(0, -1));
+    if (word.length > 5 && word.endsWith("es")) expanded.add(word.slice(0, -2));
+    if (word.length > 5 && word.endsWith("x")) expanded.add(word.slice(0, -1));
+
+    const synonyms = [
+      ...(MARKER_SEARCH_SYNONYMS[word] ?? []),
+      ...(ADDITIONAL_MARKER_SEARCH_SYNONYMS[word] ?? []),
+    ];
 
     for (const synonym of synonyms) {
       for (const synonymWord of normalizeMarkerSearchText(synonym)
@@ -587,7 +651,8 @@ function fuzzyWordMatches(word: string, token: string) {
     return true;
   }
 
-  const maxDistance = word.length >= 7 ? 2 : 1;
+  const longest = Math.max(word.length, token.length);
+  const maxDistance = longest >= 10 ? 3 : longest >= 6 ? 2 : 1;
 
   return levenshteinDistance(word, token, maxDistance) <= maxDistance;
 }
@@ -1000,7 +1065,15 @@ function MarkerSymbolPreview({
   );
 }
 
-export default function ModeToolbar() {
+type ModeToolbarProps = {
+  variant?: "floating" | "embedded";
+  showUtilityControls?: boolean;
+};
+
+export default function ModeToolbar({
+  variant = "floating",
+  showUtilityControls = true,
+}: ModeToolbarProps = {}) {
   const [openSettingsTool, setOpenSettingsTool] =
     useState<EditorTestActiveTool | null>(null);
   const [markerSettingsStep, setMarkerSettingsStep] =
@@ -1419,17 +1492,38 @@ export default function ModeToolbar() {
     }
   }
 
+  const embedded = variant === "embedded";
+
   return (
     <div
-      className="pointer-events-none absolute left-4 top-4 flex max-h-[calc(100vh-2rem)] items-start gap-3"
-      style={{ zIndex: openSettingsTool ? settingsPanelZIndex : 1000 }}
+      data-dromap-tour="tools"
+      className={
+        embedded
+          ? "pointer-events-none relative flex h-full min-h-0 w-24 shrink-0 items-start overflow-visible bg-white"
+          : "pointer-events-none absolute left-4 top-4 flex max-h-[calc(100vh-2rem)] items-start gap-3"
+      }
+      style={{
+        zIndex: embedded
+          ? openSettingsTool
+            ? 2200
+            : 40
+          : openSettingsTool
+            ? settingsPanelZIndex
+            : 1000,
+      }}
       onMouseDownCapture={() => {
         if (openSettingsTool) {
           bringSettingsPanelToFront();
         }
       }}
     >
-      <div className="pointer-events-auto flex max-h-[calc(100vh-2rem)] w-24 flex-col gap-2 overflow-y-auto rounded-2xl border border-black/10 bg-white/95 p-2 shadow-xl backdrop-blur">
+      <div
+        className={
+          embedded
+            ? "pointer-events-auto flex h-full min-h-0 w-24 shrink-0 flex-col gap-2 overflow-y-auto border-r border-slate-200 bg-white p-2"
+            : "pointer-events-auto flex max-h-[calc(100vh-2rem)] w-24 flex-col gap-2 overflow-y-auto rounded-2xl border border-black/10 bg-white/95 p-2 shadow-xl backdrop-blur"
+        }
+      >
         <div className="rounded-xl bg-neutral-900 px-2 py-2 text-center text-[10px] font-semibold leading-tight text-white">
           {EDITOR_MODE_LABELS[currentMode]}
         </div>
@@ -1564,32 +1658,40 @@ export default function ModeToolbar() {
           </div>
         ) : null}
 
-        <div className="border-t border-neutral-200 pt-2">
-          <div className="mb-2 rounded-xl bg-neutral-50 px-2 py-2 text-center text-[10px] leading-tight text-neutral-500">
-            {currentMode === "edit"
-              ? activeTool === "select"
-                ? "Sélection / modification"
-                : getActiveToolLabel(activeTool, zoneStyle.zoneShapeKind)
-              : "Zone"}
-          </div>
+        {showUtilityControls ? (
+          <>
+            <div className="border-t border-neutral-200 pt-2">
+              <div className="mb-2 rounded-xl bg-neutral-50 px-2 py-2 text-center text-[10px] leading-tight text-neutral-500">
+                {currentMode === "edit"
+                  ? activeTool === "select"
+                    ? "Sélection / modification"
+                    : getActiveToolLabel(activeTool, zoneStyle.zoneShapeKind)
+                  : "Zone"}
+              </div>
 
-          <WorkspaceActions />
-        </div>
+              <WorkspaceActions />
+            </div>
 
-        <div className="border-t border-neutral-200 pt-2">
-          <UndoRedoControls />
-        </div>
+            <div className="border-t border-neutral-200 pt-2">
+              <UndoRedoControls />
+            </div>
 
-        <div className="border-t border-neutral-200 pt-2">
-          <SaveLoadControls />
-        </div>
+            <div className="border-t border-neutral-200 pt-2">
+              <SaveLoadControls />
+            </div>
+          </>
+        ) : null}
       </div>
 
       {openSettingsTool ? (
         <div
           ref={settingsPanelRef}
           data-dromap-tool-settings-panel="true"
-          className={`pointer-events-auto ${settingsPanelWidth} max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl border border-black/10 bg-white/95 p-3 text-xs text-neutral-700 shadow-xl backdrop-blur`}
+          className={
+            embedded
+              ? `pointer-events-auto absolute left-24 top-0 h-full min-h-0 ${settingsPanelWidth} overflow-y-auto border-r border-slate-200 bg-white p-3 text-xs text-neutral-700 shadow-xl`
+              : `pointer-events-auto ${settingsPanelWidth} max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl border border-black/10 bg-white/95 p-3 text-xs text-neutral-700 shadow-xl backdrop-blur`
+          }
         >
           <div className="mb-3 flex items-center justify-between gap-2">
             <div>
@@ -1632,16 +1734,6 @@ export default function ModeToolbar() {
                   Choisis le marqueur à poser. Le bouton de la toolbar prendra ensuite cette image.
                 </div>
 
-                <CustomMarkerLibrary
-                  selectedSymbol={markerSymbol}
-                  onSelect={(symbol) => {
-                    setMarkerSymbol(symbol);
-                    setActiveTool("marker");
-                    setMarkerSettingsStep("style");
-                    scrollMarkerSettingsToTop();
-                  }}
-                />
-
                 <div className="border-t border-neutral-200 pt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Bibliothèque DroMap
                 </div>
@@ -1654,9 +1746,12 @@ export default function ModeToolbar() {
                     type="search"
                     value={markerSymbolSearch}
                     onChange={(event) => setMarkerSymbolSearch(event.target.value)}
-                    placeholder="Ville, port, bataille, énergie, risque..."
+                    placeholder="Ville, gare, port, bataille, énergie, risque..."
                     className="w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none transition placeholder:text-neutral-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
+                  <span className="mt-1 block text-[10px] leading-snug text-neutral-500">
+                    La recherche ignore les majuscules et les accents, comprend des synonymes courants et tolère de petites fautes de frappe.
+                  </span>
                 </label>
 
                 <div className="space-y-1 rounded-xl border border-neutral-200 bg-white p-2">
@@ -1754,6 +1849,18 @@ export default function ModeToolbar() {
                       </section>
                     );
                   })}
+                </div>
+
+                <div className="border-t border-neutral-200 pt-3">
+                  <CustomMarkerLibrary
+                    selectedSymbol={markerSymbol}
+                    onSelect={(symbol) => {
+                      setMarkerSymbol(symbol);
+                      setActiveTool("marker");
+                      setMarkerSettingsStep("style");
+                      scrollMarkerSettingsToTop();
+                    }}
+                  />
                 </div>
               </div>
             ) : (
@@ -1954,6 +2061,46 @@ export default function ModeToolbar() {
                   ))}
                 </select>
               </label>
+
+              {lineStyle.dashStyle === "dashed" ? (
+                <label className="block rounded-lg bg-neutral-50 px-2 py-2">
+                  <div className="mb-1 flex justify-between">
+                    <span>Longueur des tirets</span>
+                    <span>{lineStyle.dashLength}px</span>
+                  </div>
+                  <input
+                    className="w-full"
+                    type="range"
+                    min={MIN_DASH_LENGTH}
+                    max={MAX_DASH_LENGTH}
+                    step="1"
+                    value={lineStyle.dashLength}
+                    onChange={(event) =>
+                      updateLineStyle({ dashLength: Number(event.target.value) })
+                    }
+                  />
+                </label>
+              ) : null}
+
+              {lineStyle.dashStyle === "dashed" || lineStyle.dashStyle === "dotted" ? (
+                <label className="block rounded-lg bg-neutral-50 px-2 py-2">
+                  <div className="mb-1 flex justify-between">
+                    <span>{lineStyle.dashStyle === "dotted" ? "Espacement des pointillés" : "Espacement des tirets"}</span>
+                    <span>{lineStyle.dashGap}px</span>
+                  </div>
+                  <input
+                    className="w-full"
+                    type="range"
+                    min={MIN_DASH_GAP}
+                    max={MAX_DASH_GAP}
+                    step="1"
+                    value={lineStyle.dashGap}
+                    onChange={(event) =>
+                      updateLineStyle({ dashGap: Number(event.target.value) })
+                    }
+                  />
+                </label>
+              ) : null}
 
               <div className="grid grid-cols-2 gap-2 rounded-lg bg-neutral-50 px-2 py-2">
                 <label className="flex items-center justify-between gap-2">
@@ -2246,6 +2393,46 @@ export default function ModeToolbar() {
                       ))}
                     </select>
                   </label>
+
+                  {zoneStyle.dashStyle === "dashed" ? (
+                    <label className="block rounded-lg bg-neutral-50 px-2 py-2">
+                      <div className="mb-1 flex justify-between">
+                        <span>Longueur des tirets</span>
+                        <span>{zoneStyle.dashLength}px</span>
+                      </div>
+                      <input
+                        className="w-full"
+                        type="range"
+                        min={MIN_DASH_LENGTH}
+                        max={MAX_DASH_LENGTH}
+                        step="1"
+                        value={zoneStyle.dashLength}
+                        onChange={(event) =>
+                          updateZoneStyle({ dashLength: Number(event.target.value) })
+                        }
+                      />
+                    </label>
+                  ) : null}
+
+                  {zoneStyle.dashStyle === "dashed" || zoneStyle.dashStyle === "dotted" ? (
+                    <label className="block rounded-lg bg-neutral-50 px-2 py-2">
+                      <div className="mb-1 flex justify-between">
+                        <span>{zoneStyle.dashStyle === "dotted" ? "Espacement des pointillés" : "Espacement des tirets"}</span>
+                        <span>{zoneStyle.dashGap}px</span>
+                      </div>
+                      <input
+                        className="w-full"
+                        type="range"
+                        min={MIN_DASH_GAP}
+                        max={MAX_DASH_GAP}
+                        step="1"
+                        value={zoneStyle.dashGap}
+                        onChange={(event) =>
+                          updateZoneStyle({ dashGap: Number(event.target.value) })
+                        }
+                      />
+                    </label>
+                  ) : null}
 
                   <label className="block">
                     <div className="mb-1 flex justify-between">

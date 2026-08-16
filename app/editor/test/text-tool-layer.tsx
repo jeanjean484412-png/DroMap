@@ -11,6 +11,7 @@ import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
 import { useEditorTestTextEditStore } from "@/stores/editor-test-text-edit";
 import { useEditorTestToolStore } from "@/stores/editor-test-tool";
+import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 import { applyDrawingPresetToFeature } from "@/stores/editor-test-drawing-options";
 
 function createTextFeature(
@@ -83,7 +84,13 @@ export function TextToolLayer() {
     container.style.cursor = "text";
 
     const handleMapClick = (event: L.LeafletMouseEvent) => {
-      const feature = createTextFeature(event.latlng, map.getZoom());
+      const baseZoom =
+        useEditorTestWorkspaceStore.getState().workspaceBasemapBaseZoom;
+      const referenceZoom =
+        typeof baseZoom === "number" && Number.isFinite(baseZoom)
+          ? baseZoom
+          : map.getZoom();
+      const feature = createTextFeature(event.latlng, referenceZoom);
 
       addFeatureWithHistory(feature);
       setSelectedFeatureId(feature.id);

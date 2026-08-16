@@ -104,7 +104,11 @@ function suppressNextMapClick() {
   }, 350);
 }
 
-export function SelectedTextRotationHandle() {
+export function SelectedTextRotationHandle({
+  featureId,
+}: {
+  featureId?: string;
+} = {}) {
   const map = useMap();
   const [, setViewportVersion] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -116,14 +120,15 @@ export function SelectedTextRotationHandle() {
   );
   const currentMode = useEditorTestModeStore((state) => state.currentMode);
   const activeTool = useEditorTestToolStore((state) => state.activeTool);
-  const selectedFeatureId = useEditorTestSelectionStore(
+  const storeSelectedFeatureId = useEditorTestSelectionStore(
     (state) => state.selectedFeatureId,
   );
+  const effectiveFeatureId = featureId ?? storeSelectedFeatureId;
   const editingTextFeatureId = useEditorTestTextEditStore(
     (state) => state.editingTextFeatureId,
   );
   const selectedFeature = useEditorTestFeaturesStore((state) =>
-    state.features.find((feature) => feature.id === selectedFeatureId),
+    state.features.find((feature) => feature.id === effectiveFeatureId),
   );
   const layers = useEditorTestLayersStore((state) => state.layers);
   const updateFeature = useEditorTestFeaturesStore((state) => state.updateFeature);
@@ -159,7 +164,7 @@ export function SelectedTextRotationHandle() {
     currentMode === "edit" &&
     (activeTool === "select" || activeTool === "edit") &&
     isSelectedTextPointFeature(selectedFeature) &&
-    editingTextFeatureId !== selectedFeatureId &&
+    editingTextFeatureId !== effectiveFeatureId &&
     isFeatureLayerVisible(selectedFeature, layers) &&
     !isFeatureEffectivelyLocked(selectedFeature, layers);
 

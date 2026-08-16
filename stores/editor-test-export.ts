@@ -69,6 +69,10 @@ type EditorTestExportState = {
   legendMapTitlePosition: ExportLegendMapPosition;
   exportFormat: ExportFormat;
   showBasemapLabels: boolean;
+  mapTitle: string;
+  mapTitlePosition: ExportMapElementCustomPosition;
+  mapTitleFontSize: number;
+  mapTitleColor: string;
 
   legendBackgroundColor: string;
   legendSideWidth: number;
@@ -105,17 +109,23 @@ type EditorTestExportState = {
   legendSectionOrder: string[];
   legendGroupLabels: Record<string, string>;
   legendGroupSections: Record<string, string>;
+  advancedLegendEditorRequestId: number;
 
   openExportPanel: () => void;
   closeExportPanel: () => void;
   openImportPanel: () => void;
   closeImportPanel: () => void;
+  requestOpenAdvancedLegendEditor: () => void;
   setLegendTitle: (title: string) => void;
   setLegendPosition: (position: ExportLegendPosition) => void;
   setLegendMapPosition: (position: ExportLegendMapPosition) => void;
   setLegendMapTitlePosition: (position: ExportLegendMapPosition) => void;
   setExportFormat: (format: ExportFormat) => void;
   setShowBasemapLabels: (visible: boolean) => void;
+  setMapTitle: (title: string) => void;
+  setMapTitlePosition: (position: ExportMapElementCustomPosition) => void;
+  setMapTitleFontSize: (fontSize: number) => void;
+  setMapTitleColor: (color: string) => void;
 
   setLegendBackgroundColor: (color: string) => void;
   setLegendSideWidth: (width: number) => void;
@@ -176,7 +186,7 @@ type EditorTestExportState = {
 };
 
 export const DEFAULT_LEGEND_SECTION = "Général";
-const DEFAULT_NEW_LEGEND_SECTION_BASE = "Sous-légende";
+const DEFAULT_NEW_LEGEND_SECTION_BASE = "Sous-titre";
 
 function normalizeSectionName(section: string) {
   const trimmedSection = section.trim();
@@ -246,6 +256,10 @@ export const useEditorTestExportStore = create<EditorTestExportState>(
     legendMapTitlePosition: { x: 0.5, y: 0 },
     exportFormat: "auto",
     showBasemapLabels: true,
+    mapTitle: "",
+    mapTitlePosition: { x: 0.5, y: 0.08 },
+    mapTitleFontSize: 44,
+    mapTitleColor: "#0f172a",
 
     legendBackgroundColor: "#ffffff",
     legendSideWidth: 420,
@@ -282,6 +296,7 @@ export const useEditorTestExportStore = create<EditorTestExportState>(
     legendSectionOrder: [],
     legendGroupLabels: {},
     legendGroupSections: {},
+    advancedLegendEditorRequestId: 0,
 
     openExportPanel: () => {
       set({ isExportPanelOpen: true, isImportPanelOpen: false });
@@ -297,6 +312,13 @@ export const useEditorTestExportStore = create<EditorTestExportState>(
 
     closeImportPanel: () => {
       set({ isImportPanelOpen: false });
+    },
+
+    requestOpenAdvancedLegendEditor: () => {
+      set((state) => ({
+        advancedLegendEditorRequestId:
+          state.advancedLegendEditorRequestId + 1,
+      }));
     },
 
     setLegendTitle: (title) => {
@@ -331,6 +353,27 @@ export const useEditorTestExportStore = create<EditorTestExportState>(
 
     setShowBasemapLabels: (visible) => {
       set({ showBasemapLabels: visible });
+    },
+
+    setMapTitle: (title) => {
+      set({ mapTitle: title.slice(0, 240) });
+    },
+
+    setMapTitlePosition: (position) => {
+      set({
+        mapTitlePosition: {
+          x: Math.min(1, Math.max(0, position.x)),
+          y: Math.min(1, Math.max(0, position.y)),
+        },
+      });
+    },
+
+    setMapTitleFontSize: (fontSize) => {
+      set({ mapTitleFontSize: Math.min(120, Math.max(12, fontSize)) });
+    },
+
+    setMapTitleColor: (color) => {
+      set({ mapTitleColor: color });
     },
 
     setLegendBackgroundColor: (color) => {

@@ -1,15 +1,17 @@
 "use client";
 
-import { useMemo } from "react";
-import { MapContainer, TileLayer } from "react-leaflet";
+import { Fragment, useEffect, useMemo } from "react";
+import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { WorkspaceMaskLayer } from "./workspace-mask-layer";
 import { WorkspaceInteractionGuard } from "./workspace-interaction-guard";
 import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
+import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
 import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 import { useEditorTestWorldSnapshotStore } from "@/stores/editor-test-world-snapshot";
+import { useEditorTestMapViewStore } from "@/stores/editor-test-map-view";
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
 import {
   isFullWorldWorkspaceBounds,
@@ -46,12 +48,272 @@ import { MapLibreBasemapLayer } from "./maplibre-basemap-layer";
 import { BasemapAttributionControl } from "./basemap-attribution-control";
 import { WorldBasemapSnapshotLayer } from "./world-basemap-snapshot-layer";
 
+
+function SelectedFeatureEditHandles() {
+  const selectedFeatureId = useEditorTestSelectionStore(
+    (state) => state.selectedFeatureId,
+  );
+  const selectedFeatureIds = useEditorTestSelectionStore(
+    (state) => state.selectedFeatureIds,
+  );
+  const multiSelectionEnabled = useEditorTestSelectionStore(
+    (state) => state.multiSelectionEnabled,
+  );
+  const effectiveSelectedFeatureIds =
+    multiSelectionEnabled && selectedFeatureIds.length > 0
+      ? selectedFeatureIds
+      : selectedFeatureId
+        ? [selectedFeatureId]
+        : [];
+
+  return (
+    <>
+      {effectiveSelectedFeatureIds.map((featureId) => (
+        <Fragment key={`edit-handles-${featureId}`}>
+          <SelectedMarkerRotationHandle featureId={featureId} />
+          <SelectedTextRotationHandle featureId={featureId} />
+          <SelectedZoneShapeRotationHandle featureId={featureId} />
+        </Fragment>
+      ))}
+      <SelectedTextResizeHandle />
+    </>
+  );
+}
+
 const FRANCE_CENTER: LatLngExpression = [46.603354, 1.888334];
 /**
  * Bornes de déplacement pour les fonds classiques.
  * Les fonds à tuiles peuvent afficher deux copies du monde côte à côte,
  * mais DroMap reste borné : on évite une répétition infinie.
  */
+
+function MapViewStateBridge() {
+  const map = useMap();
+
+  const updateCurrentView = () => {
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+
+    if (!Number.isFinite(center.lat) || !Number.isFinite(center.lng) || !Number.isFinite(zoom)) {
+      return;
+    }
+
+    const visibleBounds = map.getBounds();
+
+    useEditorTestMapViewStore.getState().setCurrentView({
+      center: { lat: center.lat, lng: center.lng },
+      zoom,
+      visibleBounds: {
+        southWest: {
+          lat: visibleBounds.getSouth(),
+          lng: visibleBounds.getWest(),
+        },
+        northEast: {
+          lat: visibleBounds.getNorth(),
+          lng: visibleBounds.getEast(),
+        },
+      },
+    });
+  };
+
+  useMapEvents({
+    moveend: updateCurrentView,
+    zoomend: updateCurrentView,
+  });
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(updateCurrentView);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [map]);
+
+  return null;
+}
+
+function PendingMapViewRestore() {
+  const map = useMap();
+  const currentMode = useEditorTestModeStore((state) => state.currentMode);
+  const workspaceBounds = useEditorTestWorkspaceStore((state) => state.workspaceBounds);
+
+  useEffect(() => {
+    if (currentMode !== "edit" || !workspaceBounds) {
+      return;
+    }
+
+    let firstFrameId = 0;
+    let secondFrameId = 0;
+    let timeoutId = 0;
+
+    firstFrameId = window.requestAnimationFrame(() => {
+      secondFrameId = window.requestAnimationFrame(() => {
+        timeoutId = window.setTimeout(() => {
+          const pendingView = useEditorTestMapViewStore
+            .getState()
+            .consumePendingRestoreView();
+
+          if (!pendingView) {
+            return;
+          }
+
+          // L'étape Zone utilise désormais exactement la même surface de
+          // carte que l'éditeur : plein écran sous une barre de 56 px, avec les
+          // panneaux superposés sans réduire le viewport Leaflet. Le résultat
+          // de la validation peut donc être restauré sans aucun recalcul.
+          //
+          // Ne jamais refaire fitBounds ici : fitBounds recalcule le zoom selon
+          // la taille courante du conteneur et peut donc modifier le niveau de
+          // détail verrouillé. On reprend strictement le centre et le zoom
+          // produits par la validation de l'éditeur.
+          map.invalidateSize({ pan: false });
+          map.setView(
+            [pendingView.center.lat, pendingView.center.lng],
+            pendingView.zoom,
+            { animate: false },
+          );
+
+          const restoredCenter = map.getCenter();
+          const restoredBounds = map.getBounds();
+          useEditorTestMapViewStore.getState().setCurrentView({
+            center: {
+              lat: restoredCenter.lat,
+              lng: restoredCenter.lng,
+            },
+            zoom: map.getZoom(),
+            visibleBounds: {
+              southWest: {
+                lat: restoredBounds.getSouth(),
+                lng: restoredBounds.getWest(),
+              },
+              northEast: {
+                lat: restoredBounds.getNorth(),
+                lng: restoredBounds.getEast(),
+              },
+            },
+          });
+        }, 30);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrameId);
+      window.cancelAnimationFrame(secondFrameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [currentMode, map, workspaceBounds]);
+
+  return null;
+}
+
+function MapPresentationReadyBridge({
+  onReady,
+}: {
+  onReady?: () => void;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!onReady) {
+      return;
+    }
+
+    let completed = false;
+    let settleTimerId = 0;
+    let hardTimeoutId = 0;
+    let firstFrameId = 0;
+    let secondFrameId = 0;
+
+    const finish = () => {
+      if (completed) return;
+      completed = true;
+      window.clearTimeout(settleTimerId);
+      window.clearTimeout(hardTimeoutId);
+
+      // Une dernière mesure après deux frames garantit que Leaflet a reçu la
+      // taille définitive de son conteneur avant que l'interface soit révélée.
+      map.invalidateSize({ pan: false });
+      firstFrameId = window.requestAnimationFrame(() => {
+        secondFrameId = window.requestAnimationFrame(() => {
+          onReady();
+        });
+      });
+    };
+
+    const prerequisitesAreSettled = () => {
+      const workspaceState = useEditorTestWorkspaceStore.getState();
+      const mapViewState = useEditorTestMapViewStore.getState();
+      const size = map.getSize();
+
+      if (size.x < 200 || size.y < 200) {
+        return false;
+      }
+
+      // Ne jamais révéler l'ancien cadrage transitoire : attendre que le vrai
+      // fitBounds de zone et/ou la restauration de vue aient été consommés.
+      if (workspaceState.pendingFitToWorkspace || mapViewState.pendingRestoreView) {
+        return false;
+      }
+
+      const basemap = getDromapBasemapConfig(
+        useEditorTestBasemapStore.getState().basemapId,
+      );
+      const mode = useEditorTestModeStore.getState().currentMode;
+      const bounds = workspaceState.workspaceBounds;
+      const usesWorldSnapshot =
+        mode === "edit" &&
+        Boolean(bounds) &&
+        isFullWorldWorkspaceBounds(bounds) &&
+        basemap.kind !== "solid" &&
+        !workspaceState.workspaceNavigationUnlocked;
+
+      if (usesWorldSnapshot) {
+        const snapshotStatus = useEditorTestWorldSnapshotStore.getState().status;
+        if (snapshotStatus === "idle" || snapshotStatus === "loading") {
+          return false;
+        }
+      }
+
+      return true;
+    };
+
+    const scheduleCheck = () => {
+      if (completed) return;
+      window.clearTimeout(settleTimerId);
+      settleTimerId = window.setTimeout(() => {
+        if (!prerequisitesAreSettled()) {
+          scheduleCheck();
+          return;
+        }
+
+        finish();
+      }, 140);
+    };
+
+    const handleMapMotion = () => scheduleCheck();
+
+    map.whenReady(scheduleCheck);
+    map.on("moveend", handleMapMotion);
+    map.on("zoomend", handleMapMotion);
+    map.on("resize", handleMapMotion);
+
+    // Filet de sécurité : une source de fond lente ne doit jamais bloquer
+    // définitivement l'accès à l'éditeur. La carte est alors révélée après
+    // invalidation de taille, même si des tuiles continuent de charger.
+    hardTimeoutId = window.setTimeout(finish, 1600);
+
+    return () => {
+      completed = true;
+      window.clearTimeout(settleTimerId);
+      window.clearTimeout(hardTimeoutId);
+      window.cancelAnimationFrame(firstFrameId);
+      window.cancelAnimationFrame(secondFrameId);
+      map.off("moveend", handleMapMotion);
+      map.off("zoomend", handleMapMotion);
+      map.off("resize", handleMapMotion);
+    };
+  }, [map, onReady]);
+
+  return null;
+}
+
 const CLASSIC_DOUBLE_WORLD_PANNABLE_BOUNDS: [
   [number, number],
   [number, number],
@@ -60,7 +322,11 @@ const CLASSIC_DOUBLE_WORLD_PANNABLE_BOUNDS: [
   [88, 360],
 ];
 
-export default function TestMap() {
+type TestMapProps = {
+  onPresentationReady?: () => void;
+};
+
+export default function TestMap({ onPresentationReady }: TestMapProps = {}) {
   const basemapId = useEditorTestBasemapStore((state) => state.basemapId);
   const currentMode = useEditorTestModeStore((state) => state.currentMode);
   const workspaceBasemapZoom = useEditorTestWorkspaceStore(
@@ -68,6 +334,9 @@ export default function TestMap() {
   );
   const workspaceBounds = useEditorTestWorkspaceStore(
     (state) => state.workspaceBounds,
+  );
+  const workspaceNavigationUnlocked = useEditorTestWorkspaceStore(
+    (state) => state.workspaceNavigationUnlocked,
   );
   const basemap = getDromapBasemapConfig(basemapId);
   const mapLibreFallbackBasemap =
@@ -88,12 +357,16 @@ export default function TestMap() {
   const worldSnapshotStatus = useEditorTestWorldSnapshotStore(
     (state) => state.status,
   );
-  const worldSnapshotFailedForActiveBasemap =
+  const shouldUseWorldSnapshot =
     isFullWorldWorkspace &&
+    basemap.kind !== "solid" &&
+    !workspaceNavigationUnlocked;
+  const worldSnapshotFailedForActiveBasemap =
+    shouldUseWorldSnapshot &&
     worldSnapshotBasemapId === basemap.id &&
     worldSnapshotStatus === "error";
   const shouldRenderLiveBasemap =
-    !isFullWorldWorkspace || worldSnapshotFailedForActiveBasemap;
+    !shouldUseWorldSnapshot || worldSnapshotFailedForActiveBasemap;
 
   /**
    * « Sélectionner le monde » ne crée pas un mode d’affichage distinct : après
@@ -101,7 +374,9 @@ export default function TestMap() {
    * graphique que pour une zone tracée manuellement.
    */
   const requestedLockedTileNativeZoom =
-    currentMode === "edit" && workspaceBasemapZoom !== null
+    currentMode === "edit" &&
+    !workspaceNavigationUnlocked &&
+    workspaceBasemapZoom !== null
       ? Math.floor(workspaceBasemapZoom)
       : undefined;
   const lockedTileNativeZoom =
@@ -115,13 +390,23 @@ export default function TestMap() {
         )
       : undefined;
   const lockedMapLibreDetailZoom =
-    currentMode === "edit" && workspaceBasemapZoom !== null
+    currentMode === "edit" &&
+    !workspaceNavigationUnlocked &&
+    workspaceBasemapZoom !== null
       ? workspaceBasemapZoom
       : undefined;
   const workspaceLatLngBounds = useMemo(
     () => (workspaceBounds ? toLatLngBounds(workspaceBounds) : null),
     [workspaceBounds],
   );
+  /**
+   * Le mode « Zoom précis » est volontairement limité à l'affichage de
+   * l'éditeur : quand il est actif, TileLayer/MapLibre reprennent leur détail
+   * natif au zoom courant et la capture monde figée est remplacée par le fond
+   * vivant. Les valeurs workspaceBasemapZoom / workspaceBasemapBaseZoom ne sont
+   * pas modifiées : preview et export gardent donc exactement le rendu validé.
+   */
+
   /**
    * Important : on ne borne pas TileLayer à la zone de travail.
    *
@@ -239,7 +524,7 @@ export default function TestMap() {
           />
         ) : null}
 
-        {isFullWorldWorkspace ? (
+        {shouldUseWorldSnapshot ? (
           <WorldBasemapSnapshotLayer basemap={basemap} />
         ) : null}
 
@@ -275,12 +560,12 @@ export default function TestMap() {
         <ZoneFillToolLayer />
         <TextToolLayer />
         <SelectedFeatureHighlight />
-        <SelectedMarkerRotationHandle />
-        <SelectedTextRotationHandle />
-        <SelectedTextResizeHandle />
+        <SelectedFeatureEditHandles />
         <SelectedTextInlineEditor />
-        <SelectedZoneShapeRotationHandle />
+        <MapViewStateBridge />
         <MapViewController />
+        <PendingMapViewRestore />
+        <MapPresentationReadyBridge onReady={onPresentationReady} />
       </MapContainer>
     </>
   );

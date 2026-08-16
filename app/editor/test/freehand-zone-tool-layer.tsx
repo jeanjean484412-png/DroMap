@@ -6,6 +6,7 @@ import { useMap } from "react-leaflet";
 
 import { deactivateGeomanModes } from "@/lib/dromap/geoman-toolbar";
 import type { DroMapFeature } from "@/lib/dromap/feature";
+import { scaleFeatureForVisualZoom } from "@/lib/dromap/feature-visual-scale";
 import {
   applyDrawingPresetToFeature,
   useEditorTestDrawingOptionsStore,
@@ -13,6 +14,7 @@ import {
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
 import { useEditorTestModeStore } from "@/stores/editor-test-mode";
 import { useEditorTestToolStore } from "@/stores/editor-test-tool";
+import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
 
 import { getLeafletDashArray } from "./feature-style";
 import { createZoneHatchingLeafletLayer } from "./zone-hatching";
@@ -455,7 +457,23 @@ export function FreehandZoneToolLayer() {
       }
 
       const layerGroup = ensurePreviewLayer();
-      const feature = createPreviewFeature(points, freehandSmoothing, map);
+      const previewFeature = createPreviewFeature(
+        points,
+        freehandSmoothing,
+        map,
+      );
+      const baseZoom =
+        useEditorTestWorkspaceStore.getState().workspaceBasemapBaseZoom;
+      const referenceZoom =
+        typeof baseZoom === "number" && Number.isFinite(baseZoom)
+          ? baseZoom
+          : map.getZoom();
+      const feature = scaleFeatureForVisualZoom(
+        previewFeature,
+        map.getZoom(),
+        referenceZoom,
+        { scaleText: false },
+      );
       addPreviewFeatureToLayerGroup(feature, layerGroup, map);
     };
 

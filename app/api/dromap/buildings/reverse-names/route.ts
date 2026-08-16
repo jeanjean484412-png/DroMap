@@ -301,7 +301,7 @@ export async function POST(request: NextRequest) {
     payload = await request.json();
   } catch {
     return NextResponse.json(
-      { error: "Corps JSON invalide." },
+      { error: "La demande n’a pas pu être traitée." },
       { status: 400 },
     );
   }

@@ -54,7 +54,6 @@ import type { ExportCanvasRect, ExportLegendAppearance } from "./export-layout";
 import {
   DEFAULT_EXPORT_LEGEND_SECTION,
   MAX_EXPORT_LEGEND_SYMBOL_SIZE,
-  getExportLegendGlobalSymbolScale,
   createExportLegendDisplayItems,
   createExportLegendLayout,
   getExportLegendEntrySymbolMetrics,
@@ -1878,7 +1877,7 @@ function ExportLegendPreview({
                       fontSize: legendLayout.sectionFontSize,
                       lineHeight: 1.12,
                     }}
-                    title="Sous-légende : glisse des groupes ici"
+                    title="Sous-titre : glisse des groupes ici"
                   >
                     <EditableLegendText
                       value={displayItem.label}
@@ -1887,7 +1886,7 @@ function ExportLegendPreview({
                         if (trimmedValue.length === 0) return;
                         onRenameSection(displayItem.section, trimmedValue);
                       }}
-                      placeholder="Sous-légende"
+                      placeholder="Sous-titre"
                       multiline
                       liveCommit
                       className="absolute left-0 top-0 min-w-0 resize-none overflow-hidden whitespace-pre-wrap rounded border border-transparent bg-transparent p-0 pr-8 font-bold uppercase tracking-[0.12em] outline-none hover:border-slate-300 hover:bg-white/70 focus:border-indigo-400 focus:bg-white/95 focus:ring-2 focus:ring-indigo-200"
@@ -1935,8 +1934,8 @@ function ExportLegendPreview({
                       }}
                       onPointerDown={(event) => event.stopPropagation()}
                       className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-rose-200 bg-white/95 text-rose-600 opacity-0 shadow-sm transition hover:bg-rose-50 group-hover/section:opacity-100 focus:opacity-100"
-                      title="Supprimer cette sous-légende"
-                      aria-label="Supprimer cette sous-légende"
+                      title="Supprimer ce sous-titre"
+                      aria-label="Supprimer ce sous-titre"
                     >
                       ×
                     </button>
@@ -2012,8 +2011,25 @@ function ExportLegendPreview({
                     touchAction: "none",
                     userSelect: "none",
                   }}
-                  title="Glisser pour changer l’ordre ou déplacer dans une sous-légende"
+                  title="Glisser pour changer l’ordre ou déplacer dans un sous-titre"
                 >
+                  {legendPosition === "map" ? (
+                    <button
+                      type="button"
+                      data-legend-entry-hitbox="true"
+                      aria-label={`Déplacer ${entry.label || "cet élément"} dans la légende`}
+                      title="Glisser pour réordonner cet élément dans la légende"
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        handleEntryPointerDown(event, entry);
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                      className="absolute -left-7 top-1/2 z-30 flex h-7 w-6 -translate-y-1/2 cursor-grab items-center justify-center rounded-lg border border-indigo-200 bg-white/95 text-sm font-black text-indigo-600 shadow-sm hover:bg-indigo-50 active:cursor-grabbing"
+                    >
+                      <span aria-hidden="true">⋮⋮</span>
+                    </button>
+                  ) : null}
+
                   <span
                     className="absolute flex shrink-0 items-center justify-center overflow-visible"
                     style={{
@@ -2556,6 +2572,44 @@ function NorthArrowGraphic({
   );
 }
 
+function ExportMapTitlePreview(input: {
+  title: string;
+  position: ExportMapElementCustomPosition;
+  fontSize: number;
+  color: string;
+  onPositionChange: (position: ExportMapElementCustomPosition) => void;
+}) {
+  const drag = useMapElementPointerDrag(input.onPositionChange);
+  const safeTitle = input.title.trim();
+
+  if (!safeTitle) return null;
+
+  return (
+    <button
+      type="button"
+      onPointerDown={drag.onPointerDown}
+      onPointerMove={drag.onPointerMove}
+      onPointerUp={drag.onPointerUp}
+      onPointerCancel={drag.onPointerCancel}
+      onClick={(event) => {
+        drag.consumeClickAfterDrag(event);
+      }}
+      className="absolute z-[950] max-w-[82%] cursor-grab touch-none select-none whitespace-pre-wrap border-0 bg-transparent px-2 py-1 text-center font-extrabold leading-[1.12] transition active:cursor-grabbing hover:ring-2 hover:ring-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+      style={{
+        ...getFreeMapElementPositionStyle(input.position),
+        fontSize: input.fontSize,
+        color: input.color,
+        textShadow:
+          "-2px -2px 0 rgba(255,255,255,.98), 2px -2px 0 rgba(255,255,255,.98), -2px 2px 0 rgba(255,255,255,.98), 2px 2px 0 rgba(255,255,255,.98), 0 0 4px rgba(255,255,255,.98)",
+      }}
+      title="Glisser pour déplacer le titre de la carte."
+      aria-label="Déplacer le titre de la carte"
+    >
+      {safeTitle}
+    </button>
+  );
+}
+
 function ExportScaleBarPreview(input: {
   enabled: boolean;
   style: ExportScaleBarStyle;
@@ -2982,6 +3036,30 @@ export function ExportPreviewScene() {
     useState(false);
   const [isLegendOverlayMoving, setIsLegendOverlayMoving] = useState(false);
   const [isLegendTitleMoving, setIsLegendTitleMoving] = useState(false);
+  const [isMapTitleMenuOpen, setIsMapTitleMenuOpen] = useState(false);
+  const advancedLegendEditorRequestId = useEditorTestExportStore(
+    (state) => state.advancedLegendEditorRequestId,
+  );
+  const lastHandledAdvancedLegendRequestIdRef = useRef(
+    advancedLegendEditorRequestId,
+  );
+
+  useEffect(() => {
+    // Le compteur de demande est persistant dans le store. À la réouverture
+    // de « Légende & Rendu final », un ancien compteur > 0 ne doit surtout
+    // pas rouvrir automatiquement l'éditeur avancé. On ne réagit qu'à une
+    // NOUVELLE demande émise pendant que cette preview est déjà montée.
+    if (
+      advancedLegendEditorRequestId <=
+      lastHandledAdvancedLegendRequestIdRef.current
+    ) {
+      return;
+    }
+
+    lastHandledAdvancedLegendRequestIdRef.current =
+      advancedLegendEditorRequestId;
+    setIsAdvancedLegendEditorOpen(true);
+  }, [advancedLegendEditorRequestId]);
 
   const legendTitle = useEditorTestExportStore((state) => state.legendTitle);
   const setLegendTitle = useEditorTestExportStore(
@@ -3008,6 +3086,26 @@ export function ExportPreviewScene() {
   );
   const setShowBasemapLabels = useEditorTestExportStore(
     (state) => state.setShowBasemapLabels,
+  );
+  const mapTitle = useEditorTestExportStore((state) => state.mapTitle);
+  const setMapTitle = useEditorTestExportStore((state) => state.setMapTitle);
+  const mapTitlePosition = useEditorTestExportStore(
+    (state) => state.mapTitlePosition,
+  );
+  const setMapTitlePosition = useEditorTestExportStore(
+    (state) => state.setMapTitlePosition,
+  );
+  const mapTitleFontSize = useEditorTestExportStore(
+    (state) => state.mapTitleFontSize,
+  );
+  const setMapTitleFontSize = useEditorTestExportStore(
+    (state) => state.setMapTitleFontSize,
+  );
+  const mapTitleColor = useEditorTestExportStore(
+    (state) => state.mapTitleColor,
+  );
+  const setMapTitleColor = useEditorTestExportStore(
+    (state) => state.setMapTitleColor,
   );
 
   const legendBackgroundColor = useEditorTestExportStore(
@@ -3036,9 +3134,6 @@ export function ExportPreviewScene() {
   );
   const legendSymbolSize = useEditorTestExportStore(
     (state) => state.legendSymbolSize,
-  );
-  const setLegendSymbolSize = useEditorTestExportStore(
-    (state) => state.setLegendSymbolSize,
   );
   const legendItemGap = useEditorTestExportStore(
     (state) => state.legendItemGap,
@@ -3579,7 +3674,10 @@ export function ExportPreviewScene() {
   }
 
   function shouldIgnoreLegendOverlayMoveTarget(target: EventTarget | null) {
-    if (!(target instanceof HTMLElement)) {
+    // Un figuré de légende contient souvent du SVG. SVGElement n'est pas un
+    // HTMLElement : avec l'ancien test, cliquer sur le symbole lançait le
+    // déplacement de toute la légende au lieu du déplacement de l'entrée.
+    if (!(target instanceof Element)) {
       return false;
     }
 
@@ -4053,6 +4151,13 @@ export function ExportPreviewScene() {
                     onMapPositionChange={setNorthArrowMapPosition}
                     onRequestDisable={() => undefined}
                   />
+                  <ExportMapTitlePreview
+                    title={mapTitle}
+                    position={mapTitlePosition}
+                    fontSize={mapTitleFontSize}
+                    color={mapTitleColor}
+                    onPositionChange={setMapTitlePosition}
+                  />
                 </div>
 
                 {mapLegendTitleRect ? (
@@ -4095,16 +4200,145 @@ export function ExportPreviewScene() {
       ) : null}
 
       <div
-        className="relative z-[1750] flex shrink-0 flex-nowrap items-center gap-1.5 border-b border-slate-200 bg-white px-2 py-1.5"
+        className="relative z-[1750] flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1.5 border-b border-slate-200 bg-white px-2 py-1.5"
         onClick={(event) => event.stopPropagation()}
       >
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setIsMapTitleMenuOpen((current) => !current);
+              if (!mapTitle.trim()) setMapTitle("Titre de la carte");
+            }}
+            className={[
+              "rounded-xl border px-3 py-2 text-xs font-bold transition",
+              mapTitle.trim()
+                ? "border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100"
+                : "border-slate-300 bg-white text-slate-800 hover:bg-slate-50",
+            ].join(" ")}
+            title="Ajouter ou modifier un titre directement sur la carte"
+          >
+            Titre de la carte
+          </button>
+
+          {isMapTitleMenuOpen ? (
+            <div
+              className="absolute left-0 top-[calc(100%+0.5rem)] z-[4000] w-80 rounded-2xl border border-slate-300 bg-white p-4 text-slate-950 shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-black text-slate-950">Titre sur la carte</h3>
+                <button
+                  type="button"
+                  onClick={() => setIsMapTitleMenuOpen(false)}
+                  className="rounded-lg px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100"
+                >
+                  Fermer
+                </button>
+              </div>
+
+              <label htmlFor="export-map-title" className="mt-3 block text-xs font-semibold text-slate-700">
+                Texte
+              </label>
+              <textarea
+                id="export-map-title"
+                value={mapTitle}
+                onChange={(event) => setMapTitle(event.currentTarget.value)}
+                rows={2}
+                maxLength={240}
+                className="mt-1 w-full resize-none rounded-xl border border-slate-400 bg-white px-3 py-2 text-sm font-semibold text-slate-950 placeholder:text-slate-400 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                placeholder="Titre de la carte"
+              />
+
+              <div className="mt-3 grid grid-cols-[1fr_92px] gap-3">
+                <label className="text-xs font-semibold text-slate-700">
+                  Taille
+                  <input
+                    type="range"
+                    min={12}
+                    max={120}
+                    step={1}
+                    value={mapTitleFontSize}
+                    onChange={(event) => setMapTitleFontSize(Number(event.currentTarget.value))}
+                    className="mt-2 w-full accent-indigo-600"
+                  />
+                </label>
+                <label className="text-xs font-semibold text-slate-700">
+                  Valeur
+                  <input
+                    type="number"
+                    min={12}
+                    max={120}
+                    value={mapTitleFontSize}
+                    onChange={(event) => setMapTitleFontSize(Number(event.currentTarget.value))}
+                    className="mt-1 w-full rounded-xl border border-slate-400 bg-white px-2 py-2 text-sm font-semibold text-slate-950"
+                  />
+                </label>
+              </div>
+
+              <label htmlFor="export-map-title-color" className="mt-3 block text-xs font-semibold text-slate-700">
+                Couleur
+              </label>
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  id="export-map-title-color"
+                  type="color"
+                  value={/^#[0-9a-fA-F]{6}$/.test(mapTitleColor) ? mapTitleColor : "#0f172a"}
+                  onChange={(event) => setMapTitleColor(event.currentTarget.value)}
+                  className="h-10 w-12 rounded-lg border border-slate-300 bg-white p-1"
+                />
+                <input
+                  value={mapTitleColor}
+                  onChange={(event) => setMapTitleColor(event.currentTarget.value)}
+                  className="min-w-0 flex-1 rounded-xl border border-slate-400 bg-white px-3 py-2 text-sm font-semibold text-slate-950"
+                  aria-label="Couleur hexadécimale du titre"
+                />
+              </div>
+
+              <p className="mt-3 text-xs font-medium leading-5 text-slate-700">
+                Le titre apparaît dans la carte. Glisse-le directement dans l’aperçu pour le déplacer.
+              </p>
+
+              <div className="mt-3 flex justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMapTitlePosition({ x: 0.5, y: 0.08 })}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Recentrer en haut
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMapTitle("")}
+                  className="rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50"
+                >
+                  Supprimer
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+
+        {safeLegendTitle.length === 0 ? (
+          <button
+            type="button"
+            onClick={() => setLegendTitle("Légende")}
+            className="rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+            title="Ajouter un titre de légende"
+          >
+            + Titre
+          </button>
+        ) : null}
+
         <button
           type="button"
           onClick={() => addLegendSection()}
           className="rounded-xl border border-indigo-300 bg-indigo-50 px-2.5 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100"
-          title="Ajouter une sous-légende directement dans la légende"
+          title="Ajouter un sous-titre directement dans la légende"
         >
-          + Sous-légende
+          + Sous-titre
         </button>
 
         {hiddenEntriesCount > 0 ? (
@@ -4153,57 +4387,6 @@ export function ExportPreviewScene() {
           </div>
         ) : null}
 
-        {safeLegendTitle.length === 0 ? (
-          <button
-            type="button"
-            onClick={() => setLegendTitle("Légende")}
-            className="rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-            title="Ajouter un titre de légende"
-          >
-            + Titre
-          </button>
-        ) : null}
-
-        <button
-          type="button"
-          onClick={() => setIsAdvancedLegendEditorOpen((isOpen) => !isOpen)}
-          className={`rounded-xl border px-2.5 py-2 text-xs font-semibold transition ${
-            isAdvancedLegendEditorOpen
-              ? "border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700"
-              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-          }`}
-          title="Ouvrir les réglages avancés de la légende"
-        >
-          Édition avancée
-        </button>
-
-        <div
-          className="flex w-44 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5"
-          title="Augmenter ou réduire tous les figurés de légende en même temps"
-        >
-          <span className="text-[11px] font-semibold text-slate-700">
-            Figurés
-          </span>
-          <input
-            type="range"
-            min={24}
-            max={144}
-            step={2}
-            value={legendSymbolSize}
-            onChange={(event) =>
-              setLegendSymbolSize(Number(event.currentTarget.value))
-            }
-            className="min-w-0 flex-1 accent-indigo-600"
-            aria-label="Taille globale des figurés de légende"
-          />
-          <span className="w-9 text-right text-[10px] font-bold tabular-nums text-slate-500">
-            {Math.round(
-              getExportLegendGlobalSymbolScale(legendSymbolSize) * 100,
-            )}
-            %
-          </span>
-        </div>
-
         <div className="mx-0.5 h-8 w-px bg-slate-200" />
 
         <MapElementControls
@@ -4236,8 +4419,8 @@ export function ExportPreviewScene() {
             ].join(" ")}
             title={
               showBasemapLabels
-                ? "Masquer les noms, rues et autres écritures du fond vectoriel"
-                : "Réafficher les écritures du fond vectoriel"
+                ? "Masquer les noms, rues, arrêts, pictogrammes et autres symboles du fond vectoriel"
+                : "Réafficher les écritures et petits symboles du fond vectoriel"
             }
           >
             {showBasemapLabels
@@ -4248,7 +4431,7 @@ export function ExportPreviewScene() {
 
         {canAdjustBasemapDetail ? (
           <div
-            className="ml-auto flex w-[260px] max-w-[30vw] shrink-0 items-center rounded-xl border border-slate-200 bg-slate-50 px-3 py-1"
+            className="ml-auto flex w-[220px] max-w-[26vw] shrink-0 items-center rounded-xl border border-slate-200 bg-slate-50 px-3 py-1"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="min-w-0 flex-1">
@@ -4329,6 +4512,13 @@ export function ExportPreviewScene() {
                   onRequestDisable={() =>
                     requestMapElementDisable("north-arrow")
                   }
+                />
+                <ExportMapTitlePreview
+                  title={mapTitle}
+                  position={mapTitlePosition}
+                  fontSize={mapTitleFontSize}
+                  color={mapTitleColor}
+                  onPositionChange={setMapTitlePosition}
                 />
               </div>
 

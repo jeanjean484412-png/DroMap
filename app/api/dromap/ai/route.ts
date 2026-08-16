@@ -882,7 +882,7 @@ function normalizePlan(value: unknown): DroMapAiPlan {
   return {
     summary:
       asNullableString(source.summary) ??
-      "Plan cartographique préparé par Gemini.",
+      "Plan cartographique préparé.",
     warnings,
     facts: normalizeFacts(source.facts),
     sources: normalizeSources(source.sources),
@@ -2333,7 +2333,7 @@ export async function POST(request: NextRequest) {
     const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (!apiKey)
       return NextResponse.json(
-        { error: "GEMINI_API_KEY est absente de .env.local." },
+        { error: "L’assistant IA est temporairement indisponible." },
         { status: 500 },
       );
     const body = (await request.json()) as DroMapAiApiRequest;
@@ -2345,7 +2345,7 @@ export async function POST(request: NextRequest) {
       );
     if (!body.context || !isRecord(body.context))
       return NextResponse.json(
-        { error: "Contexte DroMap manquant." },
+        { error: "Impossible de préparer la demande dans l’état actuel de la carte." },
         { status: 400 },
       );
     const workspaceMode =
@@ -2507,10 +2507,13 @@ export async function POST(request: NextRequest) {
     };
     return NextResponse.json(response);
   } catch (error) {
-    const message =
+    const rawMessage =
       error instanceof Error
         ? error.message
         : "Erreur inconnue de l'assistant IA.";
+    const message = /gemini|api[_ -]?key|\.env|modèle|model|réponse non json|commande dromap exploitable/i.test(rawMessage)
+      ? "L’assistant IA n’a pas pu traiter cette demande. Réessaie ou reformule-la."
+      : rawMessage;
     const status =
       isRecord(error) &&
       typeof error.status === "number" &&

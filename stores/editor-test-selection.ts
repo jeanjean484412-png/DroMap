@@ -38,6 +38,8 @@ type EditorTestSelectionState = {
   mapBoundsFitRequest: MapBoundsFitRequest | null;
   objectsPanelRequest: SelectionRequest | null;
   selectedFromObjectsPanel: boolean;
+  /** Incrémenté à chaque sélection déclenchée depuis la carte / les outils. */
+  mapSelectionRequestId: number;
   setSelectedFeatureId: (
     featureId: string | null,
     options?: SelectFeatureOptions,
@@ -72,6 +74,7 @@ export const useEditorTestSelectionStore = create<EditorTestSelectionState>(
     mapBoundsFitRequest: null,
     objectsPanelRequest: null,
     selectedFromObjectsPanel: false,
+    mapSelectionRequestId: 0,
 
     setSelectedFeatureId: (
       featureId: string | null,
@@ -84,6 +87,7 @@ export const useEditorTestSelectionStore = create<EditorTestSelectionState>(
             selectedFeatureIds: [],
             selectedFromObjectsPanel: false,
             focusedSelectionRequest: state.focusedSelectionRequest,
+            mapSelectionRequestId: state.mapSelectionRequestId,
           };
         }
 
@@ -92,6 +96,9 @@ export const useEditorTestSelectionStore = create<EditorTestSelectionState>(
           selectedFeatureIds: [featureId],
           selectedFromObjectsPanel: Boolean(options.focusOnMap),
           focusedSelectionRequest: state.focusedSelectionRequest,
+          mapSelectionRequestId: options.focusOnMap
+            ? state.mapSelectionRequestId
+            : state.mapSelectionRequestId + 1,
         };
 
         if (!options.focusOnMap) {
@@ -151,6 +158,9 @@ export const useEditorTestSelectionStore = create<EditorTestSelectionState>(
                   (state.focusedSelectionRequest?.requestId ?? 0) + 1,
               }
             : state.focusedSelectionRequest,
+          mapSelectionRequestId: options.focusOnMap
+            ? state.mapSelectionRequestId
+            : state.mapSelectionRequestId + 1,
         };
       });
     },

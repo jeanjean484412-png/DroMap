@@ -60,6 +60,21 @@ export function getFeatureVisualReferenceZoom(
   return isFiniteNumber(fallbackZoom) ? fallbackZoom : 0;
 }
 
+export function getVisualZoomScale(
+  currentZoom: number,
+  referenceZoom: number,
+) {
+  if (!isFiniteNumber(currentZoom) || !isFiniteNumber(referenceZoom)) {
+    return 1;
+  }
+
+  return clamp(
+    2 ** (currentZoom - referenceZoom),
+    MIN_VISUAL_SCALE,
+    MAX_VISUAL_SCALE,
+  );
+}
+
 export function getFeatureVisualScale(
   feature: DroMapFeature,
   currentZoom: number,
@@ -84,11 +99,7 @@ export function getFeatureVisualScale(
     fallbackReferenceZoom,
   );
 
-  return clamp(
-    2 ** (currentZoom - referenceZoom),
-    MIN_VISUAL_SCALE,
-    MAX_VISUAL_SCALE,
-  );
+  return getVisualZoomScale(currentZoom, referenceZoom);
 }
 
 export function ensureFeatureVisualReferenceZoom(
@@ -151,8 +162,12 @@ export function scaleFeatureForVisualZoom(
     nextStyle.markerSize = scaleNumber(style.markerSize, 18, scale, 0.5, 4096);
   } else if (type === "line") {
     nextStyle.weight = scaleNumber(style.weight, 3, scale, 0.25, 512);
+    nextStyle.dashLength = scaleNumber(style.dashLength, 12, scale, 0.25, 2048);
+    nextStyle.dashGap = scaleNumber(style.dashGap, 8, scale, 0.25, 2048);
   } else if (type === "zone") {
     nextStyle.weight = scaleNumber(style.weight, 2, scale, 0.25, 512);
+    nextStyle.dashLength = scaleNumber(style.dashLength, 12, scale, 0.25, 2048);
+    nextStyle.dashGap = scaleNumber(style.dashGap, 8, scale, 0.25, 2048);
     nextStyle.zoneHatchingWeight = scaleNumber(
       style.zoneHatchingWeight,
       2,

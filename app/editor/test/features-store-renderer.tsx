@@ -202,6 +202,23 @@ function isDromapArrowLayer(layer: L.Layer): layer is DromapArrowLayer {
   return Boolean((layer as DromapArrowLayer).dromapArrowOwnerId);
 }
 
+function removeLineArrowLayersForFeature(map: L.Map, featureId: string) {
+  const layersToRemove: L.Layer[] = [];
+
+  map.eachLayer((layer) => {
+    if (
+      isDromapArrowLayer(layer) &&
+      (layer as DromapArrowLayer).dromapArrowOwnerId === featureId
+    ) {
+      layersToRemove.push(layer);
+    }
+  });
+
+  for (const layer of layersToRemove) {
+    map.removeLayer(layer);
+  }
+}
+
 function removeLineArrowLayers(map: L.Map) {
   const layersToRemove: L.Layer[] = [];
 
@@ -396,6 +413,37 @@ function syncZoneOutlineLayers(
   }
 }
 
+function addLineArrowLayersForFeature(
+  map: L.Map,
+  feature: DroMapFeature,
+  paneName?: string,
+) {
+  const bodyLayer = createLineArrowBodyLeafletLayer(
+    feature,
+    map,
+    L,
+    getPathOptions(feature, {
+      interactionOnly: false,
+      paneName,
+    }),
+  );
+
+  if (bodyLayer) {
+    const dromapBodyLayer = bodyLayer as DromapArrowLayer;
+    dromapBodyLayer.dromapArrowOwnerId = feature.id;
+    dromapBodyLayer.dromapArrowKind = "line-body";
+    bodyLayer.addTo(map);
+  }
+
+  const arrowLayer = createLineArrowLeafletLayer(feature, map, L, paneName);
+  if (!arrowLayer) return;
+
+  const dromapArrowLayer = arrowLayer as DromapArrowLayer;
+  dromapArrowLayer.dromapArrowOwnerId = feature.id;
+  dromapArrowLayer.dromapArrowKind = "line-end";
+  arrowLayer.addTo(map);
+}
+
 function syncLineArrowLayers(
   map: L.Map,
   features: DroMapFeature[],
@@ -404,36 +452,11 @@ function syncLineArrowLayers(
   removeLineArrowLayers(map);
 
   for (const feature of features) {
-    const paneName = paneNamesById.get(feature.id);
-    const bodyLayer = createLineArrowBodyLeafletLayer(
-      feature,
+    addLineArrowLayersForFeature(
       map,
-      L,
-      getPathOptions(feature, {
-        interactionOnly: false,
-        paneName,
-      }),
+      feature,
+      paneNamesById.get(feature.id),
     );
-
-    if (bodyLayer) {
-      const dromapBodyLayer = bodyLayer as DromapArrowLayer;
-      dromapBodyLayer.dromapArrowOwnerId = feature.id;
-      dromapBodyLayer.dromapArrowKind = "line-body";
-
-      bodyLayer.addTo(map);
-    }
-
-    const arrowLayer = createLineArrowLeafletLayer(feature, map, L, paneName);
-
-    if (!arrowLayer) {
-      continue;
-    }
-
-    const dromapArrowLayer = arrowLayer as DromapArrowLayer;
-    dromapArrowLayer.dromapArrowOwnerId = feature.id;
-    dromapArrowLayer.dromapArrowKind = "line-end";
-
-    arrowLayer.addTo(map);
   }
 }
 
@@ -1090,12 +1113,67 @@ export function FeaturesStoreRenderer() {
       );
     };
 
+    const handleFeatureGeometryPreview = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        featureId?: string;
+        coordinates?: Array<[number, number]>;
+      }>).detail;
+      const featureId = detail?.featureId;
+      const coordinates = detail?.coordinates;
+
+      if (!featureId || !Array.isArray(coordinates) || coordinates.length < 2) {
+        return;
+      }
+
+      const sourceFeature = sourceFeaturesByDrawOrder.find(
+        (feature) => feature.id === featureId,
+      );
+      if (
+        !sourceFeature ||
+        sourceFeature.geometry.type !== "LineString" ||
+        !featureHasLineArrow(sourceFeature)
+      ) {
+        return;
+      }
+
+      const previewFeature = scaleFeatureForVisualZoom(
+        {
+          ...sourceFeature,
+          geometry: {
+            type: "LineString",
+            coordinates,
+          },
+        },
+        map.getZoom(),
+        fallbackReferenceZoom,
+        { scaleText: false },
+      );
+
+      // Pendant le déplacement d'un sommet, la polyline Geoman invisible se
+      // met déjà à jour. On ne remplace ici que les couches visibles dérivées
+      // (corps coupé + pointe) afin que la flèche suive la poignée en direct.
+      removeLineArrowLayersForFeature(map, featureId);
+      addLineArrowLayersForFeature(
+        map,
+        previewFeature,
+        getFeaturePaneName(featureId),
+      );
+    };
+
     renderAtCurrentZoom();
 
     map.on("moveend zoomend resize", renderAtCurrentZoom);
+    window.addEventListener(
+      "dromap:feature-geometry-preview",
+      handleFeatureGeometryPreview,
+    );
 
     return () => {
       map.off("moveend zoomend resize", renderAtCurrentZoom);
+      window.removeEventListener(
+        "dromap:feature-geometry-preview",
+        handleFeatureGeometryPreview,
+      );
       removeFeatureMapLabelLayers(map);
       removeLineArrowLayers(map);
       removeLineHitboxLayers(map);

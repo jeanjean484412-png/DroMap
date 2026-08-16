@@ -62,6 +62,10 @@ export type DroMapFeatureStyle = {
   fillColor?: string;
   fillOpacity?: number;
   dashStyle?: DroMapFeatureDashStyle;
+  /** Longueur visuelle d’un tiret au zoom de référence. */
+  dashLength?: number;
+  /** Espacement visuel entre tirets ou pointillés au zoom de référence. */
+  dashGap?: number;
   zoneStrokeEnabled?: boolean;
   zoneFillEnabled?: boolean;
   zoneHatchingStyle?: DroMapZoneHatchingStyle | "dots";
@@ -591,15 +595,24 @@ export function layerToDroMapFeature(
   const existingStyle =
     existing?.properties.style ?? DEFAULT_STYLE[featureType];
 
-  const style =
-    isPathLikeLayer(layer) && (featureType === "line" || featureType === "zone")
+  // Une edition Geoman d'un objet existant est une edition de geometrie,
+  // pas de style. La couche Leaflet affiche potentiellement une version
+  // visuellement mise a l'echelle (weight * renderScale). Si on relit
+  // layer.options.weight pendant le deplacement d'une poignee, on finit
+  // par enregistrer cette epaisseur d'affichage comme epaisseur reelle,
+  // puis elle est de nouveau mise a l'echelle : le contour grossit ou
+  // retrecit apres chaque modification de forme.
+  //
+  // Pour un objet existant, on conserve donc strictement le style stocke.
+  // Pour une nouvelle couche seulement, on peut initialiser le style depuis
+  // Leaflet avant l'application des presets DroMap.
+  const style = existing
+    ? { ...existingStyle }
+    : isPathLikeLayer(layer) &&
+        (featureType === "line" || featureType === "zone")
       ? {
           ...existingStyle,
           ...styleFromPath(layer),
-          ...(featureType === "line" &&
-          (existingStyle.arrowStart === true || existingStyle.arrowEnd === true)
-            ? { opacity: existingStyle.opacity }
-            : {}),
         }
       : existingStyle;
 

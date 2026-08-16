@@ -231,7 +231,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number) {
     }
 
     throw new Error(
-      "Le serveur DroMap n’a pas réussi à joindre geoBoundaries. Réessaie dans quelques instants.",
+      "La source de données est momentanément indisponible. Réessaie dans quelques instants.",
       { cause: error },
     );
   } finally {
@@ -268,7 +268,7 @@ async function getAvailableLevels(iso: string) {
 
   if (!response.ok) {
     throw new Error(
-      `geoBoundaries a répondu avec le code ${response.status} pendant la vérification du pays.`,
+      `La source de données est momentanément indisponible pour ce pays.`,
     );
   }
 
@@ -283,7 +283,7 @@ async function getMetadata(iso: string, adm: AdmLevel) {
 
   if (!response.ok) {
     throw new Error(
-      `geoBoundaries a répondu avec le code ${response.status} pour ${iso} ${adm}.`,
+      `La source de données est momentanément indisponible pour ce niveau.`,
     );
   }
 
@@ -410,7 +410,7 @@ export async function GET(request: Request) {
 
     if (!upstream.ok || !upstream.body) {
       throw new Error(
-        `Le fichier GeoJSON distant a répondu avec le code ${upstream.status}.`,
+        `Le fichier GeoJSON demandé est momentanément indisponible.`,
       );
     }
 
@@ -425,7 +425,7 @@ export async function GET(request: Request) {
           ok: false,
           code: "REMOTE_FILE_TOO_LARGE",
           message:
-            "Ce fichier dépasse 300 Mo et ne peut pas être chargé directement dans cette version de DroMap.",
+            "Ce fichier dépasse 300 Mo et est trop volumineux pour être chargé directement.",
           availableLevels,
         },
         413,

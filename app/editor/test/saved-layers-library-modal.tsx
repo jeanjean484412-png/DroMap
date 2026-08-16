@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { bringFloatingPanelToFront } from "./floating-panel-z-index";
+import { getFeatureDashGap, getFeatureDashLength } from "./feature-style";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
 import type { DroMapSavedLayer } from "@/stores/editor-test-layers";
@@ -25,6 +28,8 @@ type SavedLayerEntry =
 type SavedLayersLibraryModalProps = {
   isOpen: boolean;
   zIndex: number;
+  mode?: "manage" | "select";
+  selectActionLabel?: string;
   savedLayers: DroMapSavedLayer[];
   savedGeoJsonLayers: DromapSavedGeoJsonLayer[];
   appliedSavedLayerIds: Set<string>;
@@ -48,6 +53,8 @@ type PreviewStyle = {
   fillOpacity: number;
   markerSize: number;
   dashStyle: "solid" | "dashed" | "dotted";
+  dashLength: number;
+  dashGap: number;
 };
 
 const PREVIEW_WIDTH = 620;
@@ -200,6 +207,8 @@ function getDroMapFeatureStyle(feature: DroMapFeature): PreviewStyle {
       feature.properties.type === "zone" ? (style.fillOpacity ?? 0.22) : 0,
     markerSize: Math.max(4, Math.min(12, (style.markerSize ?? 22) / 3.5)),
     dashStyle: style.dashStyle ?? "solid",
+    dashLength: getFeatureDashLength(feature),
+    dashGap: getFeatureDashGap(feature),
   };
 }
 
@@ -212,16 +221,18 @@ function getGeoJsonStyle(style: DromapGeoJsonLayerStyle): PreviewStyle {
     fillOpacity: style.fillOpacity,
     markerSize: Math.max(4, Math.min(12, style.markerSize / 3.5)),
     dashStyle: style.dashStyle,
+    dashLength: 9,
+    dashGap: style.dashStyle === "dotted" ? 5 : 6,
   };
 }
 
 function getDashArray(style: PreviewStyle) {
   if (style.dashStyle === "dashed") {
-    return "9 6";
+    return `${style.dashLength} ${style.dashGap}`;
   }
 
   if (style.dashStyle === "dotted") {
-    return "2 5";
+    return `0.001 ${style.dashGap}`;
   }
 
   return undefined;
@@ -426,6 +437,8 @@ function getEntrySubtitle(entry: SavedLayerEntry) {
 export function SavedLayersLibraryModal({
   isOpen,
   zIndex,
+  mode = "manage",
+  selectActionLabel = "Choisir ce calque",
   savedLayers,
   savedGeoJsonLayers,
   appliedSavedLayerIds,
@@ -441,6 +454,7 @@ export function SavedLayersLibraryModal({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "dromap" | "geojson">("all");
+  const [modalZIndex, setModalZIndex] = useState(() => Math.max(zIndex, 30_000));
 
   const entries = useMemo<SavedLayerEntry[]>(
     () => [
@@ -484,6 +498,7 @@ export function SavedLayersLibraryModal({
       return;
     }
 
+    setModalZIndex(bringFloatingPanelToFront());
     setSelectedKey((current) => {
       if (current && entries.some((entry) => entry.key === current)) {
         return current;
@@ -553,10 +568,14 @@ export function SavedLayersLibraryModal({
     }
   };
 
-  return (
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
     <div
       className="fixed inset-0 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm"
-      style={{ zIndex }}
+      style={{ zIndex: modalZIndex }}
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
@@ -571,7 +590,10 @@ export function SavedLayersLibraryModal({
         data-dromap-ignore-shortcuts="true"
         data-dromap-ignore-map-wheel="true"
         className="flex h-[min(780px,calc(100vh-2rem))] w-[min(1180px,calc(100vw-2rem))] flex-col overflow-hidden rounded-3xl border border-white/60 bg-white shadow-2xl"
-        onMouseDown={(event) => event.stopPropagation()}
+        onMouseDown={(event) => {
+          event.stopPropagation();
+          setModalZIndex(bringFloatingPanelToFront());
+        }}
       >
         <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-slate-50/90 px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
@@ -716,9 +738,7 @@ export function SavedLayersLibraryModal({
                   </div>
                 </div>
 
-                <LayerPreview entry={selectedEntry} />
-
-                <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 shadow-sm">
                   <div className="text-xs leading-relaxed text-slate-500">
                     {isSelectedEntryApplied
                       ? "Ce calque est déjà présent dans la carte actuelle."
@@ -726,30 +746,40 @@ export function SavedLayersLibraryModal({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleRenameSelected}
-                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-100"
-                    >
-                      Renommer
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleDeleteSelected}
-                      className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-700 shadow-sm transition hover:bg-red-50"
-                    >
-                      Supprimer
-                    </button>
+                    {mode === "manage" ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleRenameSelected}
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-100"
+                        >
+                          Renommer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDeleteSelected}
+                          className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-700 shadow-sm transition hover:bg-red-50"
+                        >
+                          Supprimer
+                        </button>
+                      </>
+                    ) : null}
                     <button
                       type="button"
                       onClick={handleApplySelected}
                       disabled={isSelectedEntryApplied}
                       className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
-                      {isSelectedEntryApplied ? "Déjà ajouté" : "Ajouter à la carte"}
+                      {isSelectedEntryApplied
+                        ? "Déjà ajouté"
+                        : mode === "select"
+                          ? selectActionLabel
+                          : "Ajouter à la carte"}
                     </button>
                   </div>
                 </div>
+
+                <LayerPreview entry={selectedEntry} />
               </div>
             ) : (
               <div className="flex min-h-full items-center justify-center">
@@ -767,6 +797,7 @@ export function SavedLayersLibraryModal({
           </main>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -22,6 +22,8 @@ type LineStylePreset = {
   opacity: number;
   weight: number;
   dashStyle: "solid" | "dashed" | "dotted";
+  dashLength: number;
+  dashGap: number;
   arrowStart: boolean;
   arrowEnd: boolean;
   freehandSmoothing: number;
@@ -34,6 +36,8 @@ type ZoneStylePreset = {
   fillColor: string;
   fillOpacity: number;
   dashStyle: "solid" | "dashed" | "dotted";
+  dashLength: number;
+  dashGap: number;
   zoneStrokeEnabled: boolean;
   zoneFillEnabled: boolean;
   zoneHatchingStyle: DroMapZoneHatchingStyle;
@@ -103,6 +107,8 @@ export const useEditorTestDrawingOptionsStore =
       opacity: 1,
       weight: 4,
       dashStyle: "solid",
+      dashLength: 12,
+      dashGap: 8,
       arrowStart: false,
       arrowEnd: false,
       freehandSmoothing: 45,
@@ -115,6 +121,8 @@ export const useEditorTestDrawingOptionsStore =
       fillColor: "#22c55e",
       fillOpacity: 0.25,
       dashStyle: "solid",
+      dashLength: 12,
+      dashGap: 8,
       zoneStrokeEnabled: true,
       zoneFillEnabled: false,
       zoneHatchingStyle: "none",
@@ -229,6 +237,8 @@ export function applyDrawingPresetToFeature(
       opacity: state.lineStyle.opacity,
       weight: state.lineStyle.weight,
       dashStyle: state.lineStyle.dashStyle,
+      dashLength: state.lineStyle.dashLength,
+      dashGap: state.lineStyle.dashGap,
       arrowStart: state.lineStyle.arrowStart,
       arrowEnd: state.lineStyle.arrowEnd,
       ...(feature.properties.lineVariant === "freehand"

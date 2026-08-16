@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
 import {
@@ -33,6 +34,7 @@ import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
 import { bringFloatingPanelToFront, getInitialFloatingPanelZIndex } from "./floating-panel-z-index";
 import { ColorPicker } from "./color-picker";
 import { SavedLayersLibraryModal } from "./saved-layers-library-modal";
+import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
 
 function cloneJsonValue<T>(value: T): T {
   if (typeof structuredClone === "function") {
@@ -184,17 +186,32 @@ type PendingSliderPatch = {
   commit: () => void;
 };
 
-export function LayersPanel() {
-  const [isOpen, setIsOpen] = useState(false);
+type LayersPanelProps = {
+  variant?: "floating" | "embedded";
+};
+
+export function LayersPanel({
+  variant = "floating",
+}: LayersPanelProps = {}) {
+  const embedded = variant === "embedded";
+  const { capabilities, requestRestriction } = useDromapProductRuntime();
+  const [isOpen, setIsOpen] = useState(embedded);
   const [panelZIndex, setPanelZIndex] = useState(
     getInitialFloatingPanelZIndex(),
   );
   const [dialog, setDialog] = useState<LayerDialogState | null>(null);
+  const [dialogZIndex, setDialogZIndex] = useState(getInitialFloatingPanelZIndex());
   const [isSavedLayersLibraryOpen, setIsSavedLayersLibraryOpen] = useState(false);
   const [dialogName, setDialogName] = useState("");
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [sliderDrafts, setSliderDrafts] = useState<Record<string, number>>({});
   const pendingSliderPatchesRef = useRef<Record<string, PendingSliderPatch>>({});
+
+  useLayoutEffect(() => {
+    if (dialog) {
+      setDialogZIndex(bringFloatingPanelToFront());
+    }
+  }, [dialog]);
 
   const features = useEditorTestFeaturesStore((state) => state.features);
   const replaceFeatures = useEditorTestFeaturesStore((state) => state.replaceFeatures);
@@ -270,9 +287,35 @@ export function LayersPanel() {
   );
 
   useEffect(() => {
+    if (embedded) {
+      setIsOpen(true);
+    }
+  }, [embedded]);
+
+  useEffect(() => {
     loadSavedLayersFromStorage();
     loadSavedGeoJsonLayersFromStorage();
   }, [loadSavedGeoJsonLayersFromStorage, loadSavedLayersFromStorage]);
+
+  useEffect(() => {
+    if (!capabilities.canSaveLayersToLibrary) {
+      setIsSavedLayersLibraryOpen(false);
+    }
+  }, [capabilities.canSaveLayersToLibrary]);
+
+  useEffect(() => {
+    const handleOpenSavedLayersLibrary = () => {
+      if (!capabilities.canSaveLayersToLibrary) {
+        requestSavedLayersAccess();
+        return;
+      }
+      setPanelZIndex(bringFloatingPanelToFront());
+      setIsSavedLayersLibraryOpen(true);
+      if (!embedded) setIsOpen(true);
+    };
+    window.addEventListener("dromap:open-saved-layers-library", handleOpenSavedLayersLibrary);
+    return () => window.removeEventListener("dromap:open-saved-layers-library", handleOpenSavedLayersLibrary);
+  }, [capabilities.canSaveLayersToLibrary, embedded]);
 
   useEffect(() => {
     return () => {
@@ -553,7 +596,19 @@ export function LayersPanel() {
     convertGeoJsonLayerToEditableObjects(layer);
   }
 
+  function requestSavedLayersAccess() {
+    requestRestriction({
+      title: "Bibliothèque personnelle de calques réservée",
+      description:
+        "Créez un compte pour enregistrer vos calques dans une bibliothèque personnelle et les réutiliser dans plusieurs projets. Le projet actuel sera conservé.",
+    });
+  }
+
   function handleSaveLayer(layer: DroMapLayer) {
+    if (!capabilities.canSaveLayersToLibrary) {
+      requestSavedLayersAccess();
+      return;
+    }
     const layerFeatures = features.filter(
       (feature) => getFeatureLayerId(feature) === layer.id,
     );
@@ -569,6 +624,10 @@ export function LayersPanel() {
     openNameDialog({ kind: "save-layer", layer, initialName: layer.name });
   }
   function handleSaveGeoJsonLayer(layer: DromapGeoJsonLayer) {
+    if (!capabilities.canSaveLayersToLibrary) {
+      requestSavedLayersAccess();
+      return;
+    }
     if (layer.data.features.length === 0) {
       openMessageDialog(
         "Calque GeoJSON vide",
@@ -739,6 +798,12 @@ export function LayersPanel() {
     }
 
     if (dialog.kind === "save-layer") {
+      if (!capabilities.canSaveLayersToLibrary) {
+        closeDialog();
+        requestSavedLayersAccess();
+        return;
+      }
+
       const name = requireDialogName();
       if (!name) {
         return;
@@ -765,6 +830,12 @@ export function LayersPanel() {
     }
 
     if (dialog.kind === "save-geojson-layer") {
+      if (!capabilities.canSaveLayersToLibrary) {
+        closeDialog();
+        requestSavedLayersAccess();
+        return;
+      }
+
       const name = requireDialogName();
       if (!name) {
         return;
@@ -890,18 +961,18 @@ export function LayersPanel() {
       case "rename-layer":
         return "Ce nom concerne seulement le calque présent dans la carte actuelle.";
       case "save-layer":
-        return "Le calque sera ajouté à ta base locale avec ses objets, styles, labels et réglages de légende.";
+        return "Le calque sera ajouté à ta bibliothèque personnelle avec ses objets, styles, étiquettes et réglages de légende.";
       case "rename-geojson-layer":
         return "Ce nom concerne le calque GeoJSON léger importé dans la carte actuelle.";
       case "save-geojson-layer":
-        return "Le calque GeoJSON sera ajouté à ta base locale avec ses données et son style global.";
+        return "Le calque GeoJSON sera ajouté à ta bibliothèque personnelle avec ses données et son style global.";
       case "rename-saved-layer":
-        return "Le calque sera renommé dans ta base. Les calques déjà appliqués dans une carte ne seront pas modifiés.";
+        return "Le calque sera renommé dans ta bibliothèque. Les calques déjà appliqués dans une carte ne seront pas modifiés.";
       case "rename-saved-geojson-layer":
-        return "Le calque GeoJSON sera renommé dans ta base. Les calques déjà appliqués dans une carte ne seront pas modifiés.";
+        return "Le calque GeoJSON sera renommé dans ta bibliothèque. Les calques déjà appliqués dans une carte ne seront pas modifiés.";
       case "delete-layer": {
         const count = dialog.featureCount;
-        return `${count} objet${count > 1 ? "s" : ""} seront supprimé${count > 1 ? "s" : ""} de cette carte. La base de calques enregistrés ne sera pas modifiée.`;
+        return `${count} objet${count > 1 ? "s" : ""} seront supprimé${count > 1 ? "s" : ""} de cette carte. La bibliothèque de calques enregistrés ne sera pas modifiée.`;
       }
       case "convert-layer-to-geojson": {
         const count = dialog.featureCount;
@@ -910,7 +981,7 @@ export function LayersPanel() {
       case "delete-geojson-layer":
         return `Le calque “${dialog.layer.name}” sera retiré de cette carte. Le fichier GeoJSON source ne sera pas modifié.`;
       case "convert-geojson-layer":
-        return `Ce calque contient ${dialog.targetFeatureCount.toLocaleString()} éléments qui seront ajoutés comme objets DroMap éditables individuellement. C’est très lourd : la carte, la légende, les exports et l’onglet Objets risquent de laguer fortement. Garde plutôt le calque GeoJSON léger si tu n’as pas besoin d’éditer chaque élément séparément.`;
+        return `Ce calque contient ${dialog.targetFeatureCount.toLocaleString()} éléments qui seront ajoutés comme objets DroMap éditables individuellement. C’est très lourd : la carte, la légende, les exports et l’onglet Objets risquent de ralentir fortement. Garde plutôt le calque GeoJSON léger si tu n’as pas besoin d’éditer chaque élément séparément.`;
       case "delete-saved-layer":
         return "Les cartes déjà créées ne seront pas modifiées.";
       case "delete-saved-geojson-layer":
@@ -942,10 +1013,15 @@ export function LayersPanel() {
     const isHeavyConversion = dialog.kind === "convert-geojson-layer";
     const isMessage = dialog.kind === "message";
 
-    return (
+    if (typeof document === "undefined") {
+      return null;
+    }
+
+    return createPortal(
       <div
-        className="absolute inset-0 flex items-start justify-center bg-slate-950/25 px-4 py-24 backdrop-blur-[1px]"
-        style={{ zIndex: panelZIndex + 10 }}
+        className="fixed inset-0 flex items-start justify-center bg-slate-950/25 px-4 py-24 backdrop-blur-[1px]"
+        style={{ zIndex: dialogZIndex }}
+        onMouseDown={() => setDialogZIndex(bringFloatingPanelToFront())}
       >
         <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-4 text-sm shadow-2xl">
           <div className="text-base font-semibold text-slate-950">{getDialogTitle()}</div>
@@ -1020,11 +1096,12 @@ export function LayersPanel() {
             </button>
           </div>
         </div>
-      </div>
+      </div>,
+      document.body,
     );
   }
 
-  if (!isOpen) {
+  if (!isOpen && !embedded) {
     return (
       <button
         type="button"
@@ -1072,8 +1149,13 @@ export function LayersPanel() {
     <>
       <aside
         data-dromap-ignore-shortcuts="true"
-        className="absolute right-4 top-[5.25rem] flex max-h-[72vh] w-[25rem] flex-col overflow-hidden rounded-2xl border border-black/10 bg-white/95 text-sm shadow-2xl backdrop-blur"
-        style={{ zIndex: panelZIndex }}
+        data-dromap-tour="inspector-content"
+        className={
+          embedded
+            ? "relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-white text-sm"
+            : "absolute right-4 top-[5.25rem] flex max-h-[72vh] w-[25rem] flex-col overflow-hidden rounded-2xl border border-black/10 bg-white/95 text-sm shadow-2xl backdrop-blur"
+        }
+        style={{ zIndex: embedded ? 1 : panelZIndex }}
         onMouseDown={() => setPanelZIndex(bringFloatingPanelToFront())}
         onFocusCapture={() => setPanelZIndex(bringFloatingPanelToFront())}
       >
@@ -1088,13 +1170,15 @@ export function LayersPanel() {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setIsOpen(false)}
-            className="rounded-lg px-2 py-1 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-          >
-            Fermer
-          </button>
+          {!embedded ? (
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="rounded-lg px-2 py-1 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+            >
+              Fermer
+            </button>
+          ) : null}
         </header>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
@@ -1216,7 +1300,7 @@ export function LayersPanel() {
                         onClick={() => handleSaveLayer(layer)}
                         className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
                       >
-                        Enregistrer
+                        {capabilities.canSaveLayersToLibrary ? "Enregistrer" : "🔒 Enregistrer"}
                       </button>
                     </div>
 
@@ -1374,7 +1458,7 @@ export function LayersPanel() {
                         onClick={() => handleSaveGeoJsonLayer(layer)}
                         className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
                       >
-                        Enreg.
+                        {capabilities.canSaveLayersToLibrary ? "Enreg." : "🔒 Enreg."}
                       </button>
                     </div>
 
@@ -1543,6 +1627,11 @@ export function LayersPanel() {
             <button
               type="button"
               onClick={() => {
+                if (!capabilities.canSaveLayersToLibrary) {
+                  requestSavedLayersAccess();
+                  return;
+                }
+
                 setPanelZIndex(bringFloatingPanelToFront());
                 setIsSavedLayersLibraryOpen(true);
               }}
@@ -1568,7 +1657,9 @@ export function LayersPanel() {
                 </span>
                 <span className="min-w-0">
                   <span className="block font-black text-slate-950">
-                    Mes calques enregistrés
+                    {capabilities.canSaveLayersToLibrary
+                      ? "Mes calques enregistrés"
+                      : "🔒 Mes calques enregistrés"}
                   </span>
                   <span className="mt-0.5 block text-xs leading-snug text-slate-500">
                     {savedLayers.length + savedGeoJsonLayers.length === 0
@@ -1578,7 +1669,7 @@ export function LayersPanel() {
                 </span>
               </span>
               <span className="shrink-0 rounded-lg bg-indigo-50 px-2.5 py-1.5 text-xs font-black text-indigo-700 transition group-hover:bg-indigo-100">
-                Ouvrir →
+                {capabilities.canSaveLayersToLibrary ? "Ouvrir →" : "Compte requis"}
               </span>
             </button>
           </section>

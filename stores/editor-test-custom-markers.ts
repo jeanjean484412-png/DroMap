@@ -124,6 +124,8 @@ export type DroMapCustomMarkerDefinition = {
 type EditorTestCustomMarkersState = {
   customMarkers: DroMapCustomMarkerDefinition[];
   hasLoadedFromStorage: boolean;
+  libraryPersistenceEnabled: boolean;
+  setLibraryPersistenceEnabled: (enabled: boolean) => void;
   loadFromStorage: () => void;
   addCustomMarker: (
     marker: Omit<DroMapCustomMarkerDefinition, "createdAt" | "updatedAt"> & {
@@ -404,9 +406,27 @@ export const useEditorTestCustomMarkersStore =
   create<EditorTestCustomMarkersState>((set, get) => ({
     customMarkers: [],
     hasLoadedFromStorage: false,
+    libraryPersistenceEnabled: true,
+
+    setLibraryPersistenceEnabled: (libraryPersistenceEnabled) => {
+      const wasEnabled = get().libraryPersistenceEnabled;
+      set({
+        libraryPersistenceEnabled,
+        hasLoadedFromStorage:
+          libraryPersistenceEnabled && !wasEnabled
+            ? false
+            : get().hasLoadedFromStorage,
+      });
+    },
 
     loadFromStorage: () => {
-      if (get().hasLoadedFromStorage || typeof window === "undefined") return;
+      if (
+        get().hasLoadedFromStorage ||
+        !get().libraryPersistenceEnabled ||
+        typeof window === "undefined"
+      ) {
+        return;
+      }
 
       let markers: DroMapCustomMarkerDefinition[] = [];
       try {
@@ -419,7 +439,17 @@ export const useEditorTestCustomMarkersStore =
       } catch (error) {
         console.warn("Bibliothèque de marqueurs illisible :", error);
       }
-      set({ customMarkers: markers, hasLoadedFromStorage: true });
+      const merged = new Map(
+        markers.map((marker) => [marker.id, marker] as const),
+      );
+      for (const marker of get().customMarkers) {
+        merged.set(marker.id, marker);
+      }
+      const customMarkers = Array.from(merged.values()).sort((a, b) =>
+        b.updatedAt.localeCompare(a.updatedAt),
+      );
+      set({ customMarkers, hasLoadedFromStorage: true });
+      persist(customMarkers);
     },
 
     addCustomMarker: (markerInput) => {
@@ -437,7 +467,9 @@ export const useEditorTestCustomMarkersStore =
         ...get().customMarkers.filter((item) => item.id !== marker.id),
       ];
       set({ customMarkers });
-      persist(customMarkers);
+      if (get().libraryPersistenceEnabled) {
+        persist(customMarkers);
+      }
       return marker;
     },
 
@@ -456,7 +488,9 @@ export const useEditorTestCustomMarkersStore =
           : marker,
       );
       set({ customMarkers });
-      persist(customMarkers);
+      if (get().libraryPersistenceEnabled) {
+        persist(customMarkers);
+      }
     },
 
     removeCustomMarker: (markerId) => {
@@ -472,7 +506,9 @@ export const useEditorTestCustomMarkersStore =
           : marker,
       );
       set({ customMarkers });
-      persist(customMarkers);
+      if (get().libraryPersistenceEnabled) {
+        persist(customMarkers);
+      }
     },
 
     mergeCustomMarkers: (markers) => {
@@ -485,20 +521,42 @@ export const useEditorTestCustomMarkersStore =
         b.updatedAt.localeCompare(a.updatedAt),
       );
       set({ customMarkers, hasLoadedFromStorage: true });
-      persist(customMarkers);
+      if (get().libraryPersistenceEnabled) {
+        persist(customMarkers);
+      }
     },
 
     replaceCustomMarkers: (markers) => {
       const customMarkers = normalizeCustomMarkerDefinitions(markers);
       set({ customMarkers, hasLoadedFromStorage: true });
-      persist(customMarkers);
+      if (get().libraryPersistenceEnabled) {
+        persist(customMarkers);
+      }
     },
   }));
 
+let transientCustomMarkers: Map<string, DroMapCustomMarkerDefinition> | null = null;
+
+export function setTransientCustomMarkers(
+  markers: DroMapCustomMarkerDefinition[],
+): () => void {
+  const previous = transientCustomMarkers;
+  transientCustomMarkers = new Map(
+    normalizeCustomMarkerDefinitions(markers).map((marker) => [marker.id, marker]),
+  );
+
+  return () => {
+    transientCustomMarkers = previous;
+  };
+}
+
 export function getCustomMarkerById(markerId: string) {
-  return useEditorTestCustomMarkersStore
-    .getState()
-    .customMarkers.find((marker) => marker.id === markerId);
+  return (
+    transientCustomMarkers?.get(markerId) ??
+    useEditorTestCustomMarkersStore
+      .getState()
+      .customMarkers.find((marker) => marker.id === markerId)
+  );
 }
 
 export function createCustomMarkerId(kind: "drawn" | "image") {

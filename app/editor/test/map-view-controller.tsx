@@ -518,7 +518,58 @@ export default function MapViewController() {
   const workspaceBounds = useEditorTestWorkspaceStore(
     (state) => state.workspaceBounds,
   );
+  const workspaceNavigationUnlocked = useEditorTestWorkspaceStore(
+    (state) => state.workspaceNavigationUnlocked,
+  );
+  const previousWorkspaceNavigationUnlockedRef = useRef(
+    workspaceNavigationUnlocked,
+  );
   const activeTool = useEditorTestToolStore((state) => state.activeTool);
+
+  useEffect(() => {
+    const wasUnlocked = previousWorkspaceNavigationUnlockedRef.current;
+    previousWorkspaceNavigationUnlockedRef.current = workspaceNavigationUnlocked;
+
+    if (
+      !wasUnlocked ||
+      workspaceNavigationUnlocked ||
+      currentMode !== "edit" ||
+      !workspaceBounds
+    ) {
+      return;
+    }
+
+    const workspaceState = useEditorTestWorkspaceStore.getState();
+    const defaultZoom =
+      workspaceState.workspaceBasemapBaseZoom ??
+      workspaceState.workspaceBasemapZoom;
+
+    if (defaultZoom === null || !Number.isFinite(defaultZoom)) {
+      return;
+    }
+
+    const basemap = getDromapBasemapConfig(basemapId);
+
+    // Le mode Zoom précis peut laisser la carte très fortement zoomée. Quand
+    // l'utilisateur revient au zoom classique, on revient immédiatement au
+    // zoom validé de la zone au lieu de l'obliger à dézoomer manuellement de
+    // nombreux niveaux. La zone, le centre courant et le détail enregistré ne
+    // sont pas modifiés.
+    map.setMinZoom(0);
+    map.setMaxZoom(
+      basemap.kind === "tile" || basemap.kind === "maplibre"
+        ? basemap.maxZoom
+        : 22,
+    );
+    map.setZoom(defaultZoom, { animate: false });
+    requestDrawCursorReplay();
+  }, [
+    map,
+    basemapId,
+    currentMode,
+    workspaceBounds,
+    workspaceNavigationUnlocked,
+  ]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -632,6 +683,7 @@ export default function MapViewController() {
     }
 
     const snapshot = readNavigationSnapshot(map);
+    const activeBasemap = getDromapBasemapConfig(basemapId);
     const workspaceLatLngBounds = L.latLngBounds(
       toLatLngBounds(workspaceBounds),
     );
@@ -680,6 +732,38 @@ export default function MapViewController() {
         useEditorTestWorkspaceStore.getState().workspaceBasemapZoom;
       const currentZoom = map.getZoom();
       const lockedMinZoom = getLockedMinZoom(lockedBasemapZoom, currentZoom);
+
+      /**
+       * « Zoom précis » est un mode d'exploration temporaire. On garde la
+       * contrainte spatiale de la zone de travail, mais on retire la limite de
+       * sur-zoom imposée par le niveau de détail validé. Le fond vivant peut
+       * alors charger ses tuiles / labels natifs au zoom courant.
+       *
+       * Important : on ne touche jamais à workspaceBasemapZoom ici. Le rendu
+       * de projet, la preview et l'export restent donc fondés sur le niveau de
+       * détail validé, même pendant cette exploration.
+       */
+      if (workspaceNavigationUnlocked) {
+        const explorationMaxZoom =
+          activeBasemap.kind === "tile" || activeBasemap.kind === "maplibre"
+            ? activeBasemap.maxZoom
+            : 22;
+        const safeMinZoom = Math.min(lockedMinZoom, currentZoom);
+        const safeMaxZoom = Math.max(
+          safeMinZoom,
+          explorationMaxZoom,
+          currentZoom,
+        );
+
+        map.setMinZoom(safeMinZoom);
+        map.setMaxZoom(safeMaxZoom);
+
+        if (!isWorkspaceConstraintSuspended()) {
+          constrainEditorViewport(options);
+        }
+        return;
+      }
+
       const lockedMaxZoom = getLockedMaxZoom(
         lockedBasemapZoom,
         map.getMaxZoom(),
@@ -791,10 +875,19 @@ export default function MapViewController() {
         animate: false,
       });
 
-      // Comportement rétabli : la base de détail est celle du fond après le
-      // cadrage de la zone validée. Le curseur de preview part donc du rendu
-      // final de la zone de travail, pas du zoom vu avant fitBounds.
-      lockBasemapDetailToCurrentZoom(map);
+      const restoredWorkspaceState = useEditorTestWorkspaceStore.getState();
+      const hasRestoredBasemapDetail =
+        typeof restoredWorkspaceState.workspaceBasemapZoom === "number" &&
+        Number.isFinite(restoredWorkspaceState.workspaceBasemapZoom) &&
+        typeof restoredWorkspaceState.workspaceBasemapBaseZoom === "number" &&
+        Number.isFinite(restoredWorkspaceState.workspaceBasemapBaseZoom);
+
+      // Lors d'une création normale de zone, le détail de base est celui du fond
+      // après le cadrage. Lors du chargement/import d'un projet, les deux valeurs
+      // ont déjà été restaurées : ne pas les écraser avec le zoom du fitBounds.
+      if (!hasRestoredBasemapDetail) {
+        lockBasemapDetailToCurrentZoom(map);
+      }
     } else if (
       useEditorTestWorkspaceStore.getState().workspaceBasemapZoom === null
     ) {
@@ -849,6 +942,7 @@ export default function MapViewController() {
     workspaceBounds,
     basemapId,
     activeTool,
+    workspaceNavigationUnlocked,
   ]);
 
   return null;

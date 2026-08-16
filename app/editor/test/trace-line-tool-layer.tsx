@@ -13,6 +13,7 @@ import {
 } from "@/lib/dromap/basemap-boundaries";
 import { deactivateGeomanModes } from "@/lib/dromap/geoman-toolbar";
 import type { DroMapFeature } from "@/lib/dromap/feature";
+import { scaleFeatureForVisualZoom } from "@/lib/dromap/feature-visual-scale";
 import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
 import {
   applyDrawingPresetToFeature,
@@ -95,13 +96,18 @@ type TraceProjection = {
 function getDashArray(
   dashStyle: "solid" | "dashed" | "dotted",
   weight: number,
+  dashLength?: number,
+  dashGap?: number,
 ) {
+  const gap = Number.isFinite(dashGap) ? Math.max(2, Number(dashGap)) : Math.max(8, weight * 2.2);
+
   if (dashStyle === "dashed") {
-    return `${weight * 3} ${weight * 2}`;
+    const length = Number.isFinite(dashLength) ? Math.max(2, Number(dashLength)) : Math.max(12, weight * 4);
+    return `${length} ${gap}`;
   }
 
   if (dashStyle === "dotted") {
-    return `0.001 ${weight * 2.2}`;
+    return `0.001 ${gap}`;
   }
 
   return undefined;
@@ -119,7 +125,7 @@ function getPreviewPathOptions(feature: DroMapFeature): L.PolylineOptions {
     color: style.color ?? "#111827",
     opacity,
     weight,
-    dashArray: getDashArray(style.dashStyle ?? "solid", weight),
+    dashArray: getDashArray(style.dashStyle ?? "solid", weight, style.dashLength, style.dashGap),
     lineCap: featureHasLineArrow(feature)
       ? getLineArrowBodyLineCap(feature)
       : "round",
@@ -1234,10 +1240,22 @@ export function TraceLineToolLayer() {
         return;
       }
 
-      const feature = {
+      const previewFeature = {
         ...createTracedLineFeature(tracedPoints),
         id: "dromap-trace-line-preview",
       };
+      const baseZoom =
+        useEditorTestWorkspaceStore.getState().workspaceBasemapBaseZoom;
+      const referenceZoom =
+        typeof baseZoom === "number" && Number.isFinite(baseZoom)
+          ? baseZoom
+          : map.getZoom();
+      const feature = scaleFeatureForVisualZoom(
+        previewFeature,
+        map.getZoom(),
+        referenceZoom,
+        { scaleText: false },
+      );
       addPreviewFeatureToLayerGroup(feature, ensurePreviewLayer(), map);
     };
 

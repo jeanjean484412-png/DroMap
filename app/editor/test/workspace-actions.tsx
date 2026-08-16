@@ -64,6 +64,13 @@ export function WorkspaceActions() {
     (state) => state.modifyWorkspaceZone,
   );
 
+  const workspaceNavigationUnlocked = useEditorTestWorkspaceStore(
+    (state) => state.workspaceNavigationUnlocked,
+  );
+  const toggleWorkspaceNavigationUnlocked = useEditorTestWorkspaceStore(
+    (state) => state.toggleWorkspaceNavigationUnlocked,
+  );
+
   const features = useEditorTestFeaturesStore((state) => state.features);
   const removeFeaturesWithHistory = useEditorTestFeaturesStore(
     (state) => state.removeFeaturesWithHistory,
@@ -509,7 +516,7 @@ export function WorkspaceActions() {
   if (currentMode === "edit" && workspaceBounds) {
     return (
       <>
-        <div className="flex justify-center">
+        <div className="flex items-stretch justify-center gap-2">
           <button
             ref={workspaceMenuTriggerRef}
             type="button"
@@ -518,9 +525,36 @@ export function WorkspaceActions() {
             aria-label="Zone de travail"
             aria-haspopup="menu"
             aria-expanded={workspaceMenuOpen}
-            className="flex h-10 w-full items-center justify-center whitespace-nowrap rounded-xl border border-orange-500 bg-orange-500 px-1 text-[9px] font-bold text-white shadow-sm transition hover:bg-orange-400"
+            className="flex h-10 min-w-[6.5rem] items-center justify-center whitespace-nowrap rounded-xl border border-orange-500 bg-orange-500 px-3 text-[10px] font-bold text-white shadow-sm transition hover:bg-orange-400"
           >
             Zone de travail
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleWorkspaceNavigationUnlocked}
+            aria-pressed={workspaceNavigationUnlocked}
+            title={
+              workspaceNavigationUnlocked
+                ? "Reverrouiller le zoom et le niveau de détail du fond"
+                : "Débloquer temporairement le zoom et le niveau de détail pour explorer précisément la zone"
+            }
+            aria-label={
+              workspaceNavigationUnlocked
+                ? "Reverrouiller le zoom et le niveau de détail"
+                : "Débloquer le zoom et le niveau de détail"
+            }
+            className={[
+              "flex h-10 min-w-[6.5rem] items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border px-3 text-[10px] font-bold shadow-sm transition",
+              workspaceNavigationUnlocked
+                ? "border-sky-600 bg-sky-600 text-white hover:bg-sky-500"
+                : "border-sky-300 bg-white text-sky-800 hover:border-sky-500 hover:bg-sky-50",
+            ].join(" ")}
+          >
+            <span aria-hidden="true" className="text-sm leading-none">
+              ⌕
+            </span>
+            {workspaceNavigationUnlocked ? "Zoom libre" : "Zoom précis"}
           </button>
         </div>
 

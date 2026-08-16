@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
 import { useEditorTestLayerCommandsStore } from "@/stores/editor-test-layer-commands";
 import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
+import { useEditorTestExportStore } from "@/stores/editor-test-export";
 import { isFeatureLocked } from "@/lib/dromap/feature";
 import {
   isFeatureEffectivelyLocked,
@@ -99,6 +100,15 @@ export function EditorKeyboardShortcuts() {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) {
+        return;
+      }
+
+      // « Légende & Rendu final » reste monté au-dessus de l'éditeur. Tant
+      // qu'il est ouvert, aucun raccourci ne doit modifier l'historique ou la
+      // sélection de l'éditeur caché derrière. Son propre contrôleur gère
+      // Ctrl+Z/Ctrl+Y dans ce contexte.
+      const exportState = useEditorTestExportStore.getState();
+      if (exportState.isExportPanelOpen || exportState.isImportPanelOpen) {
         return;
       }
 

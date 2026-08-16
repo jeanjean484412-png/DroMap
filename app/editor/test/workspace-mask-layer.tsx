@@ -28,6 +28,7 @@ type WorkspaceBoundsNumbers = {
 };
 
 const MASK_MIN_SIZE = 0.000001;
+const WORKSPACE_MASK_PANE_Z_INDEX = 20000;
 
 /**
  * Étendue maximale dans laquelle le masque de zone de travail doit rester visible.
@@ -174,7 +175,7 @@ function addFullWorldScreenMask(
   overlay.setAttribute("aria-hidden", "true");
   overlay.style.position = "absolute";
   overlay.style.inset = "0";
-  overlay.style.zIndex = "650";
+  overlay.style.zIndex = String(WORKSPACE_MASK_PANE_Z_INDEX);
   overlay.style.pointerEvents = "none";
   overlay.style.overflow = "hidden";
   mapContainer.appendChild(overlay);
@@ -250,7 +251,7 @@ export function WorkspaceMaskLayer() {
 
     if (!pane) {
       pane = map.createPane("workspaceMaskPane");
-      pane.style.zIndex = "650";
+      pane.style.zIndex = String(WORKSPACE_MASK_PANE_Z_INDEX);
       pane.style.pointerEvents = "none";
     }
 

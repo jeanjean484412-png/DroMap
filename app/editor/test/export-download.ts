@@ -32,7 +32,7 @@ import {
   type DromapGeoJsonLayer,
 } from "@/stores/editor-test-geojson-layers";
 
-import { getFeatureDashStyle, getFeatureMarkerSize } from "./feature-style";
+import { getFeatureDashGap, getFeatureDashLength, getFeatureDashStyle, getFeatureMarkerSize } from "./feature-style";
 import {
   FEATURE_MAP_LABEL_FONT_SIZE_PX,
   FEATURE_MAP_LABEL_MAX_WIDTH_PX,
@@ -167,15 +167,20 @@ type FeatureStyle = {
   fontSize?: number;
 };
 
-type DownloadCanvasExportInput = {
+export type DownloadCanvasExportInput = {
   features: DroMapFeature[];
   layers?: DroMapLayer[];
   geoJsonLayers?: DromapGeoJsonLayer[];
+  customMarkers?: DroMapCustomMarkerDefinition[];
   workspaceBounds: WorkspaceBounds;
   workspaceBasemapZoom: number | null;
   workspaceBasemapBaseZoom?: number | null;
   basemapId?: DromapBasemapId;
   showBasemapLabels?: boolean;
+  mapTitle?: string;
+  mapTitlePosition?: ExportLegendMapPosition;
+  mapTitleFontSize?: number;
+  mapTitleColor?: string;
   showCountryNeighborContext?: boolean;
   showAllFeatureLabels?: boolean;
   showAllGeoJsonFeatureLabels?: boolean;
@@ -1014,11 +1019,15 @@ function getCanvasLineDash(feature: DroMapFeature, lineWidth: number) {
     return [] as number[];
   }
 
+  const baseWeight = Math.max(0.25, Number(feature.properties?.style?.weight ?? lineWidth));
+  const visualScale = Math.max(0.05, lineWidth / baseWeight);
+  const dashGap = getFeatureDashGap(feature) * visualScale;
+
   if (dashStyle === "dashed") {
-    return [Math.max(8, lineWidth * 3), Math.max(6, lineWidth * 1.8)];
+    return [getFeatureDashLength(feature) * visualScale, dashGap];
   }
 
-  return [0.001, Math.max(6, lineWidth * 2.4)];
+  return [0.001, dashGap];
 }
 
 function getLegendZoneStrokeWidth(feature: DroMapFeature, weight: number) {
@@ -2300,6 +2309,63 @@ function drawFeatureMapLabel(
   ctx.restore();
 }
 
+function drawMapTitleOnCanvas(
+  ctx: CanvasRenderingContext2D,
+  mapRect: ExportCanvasRect,
+  title: string | undefined,
+  position: ExportLegendMapPosition | undefined,
+  fontSize: number | undefined,
+  color: string | undefined,
+) {
+  const safeTitle = (title ?? "").trim();
+  if (!safeTitle) return;
+
+  const safeFontSize = clamp(fontSize ?? 44, 12, 120);
+  const safePosition = position ?? { x: 0.5, y: 0.08 };
+  const centerX =
+    mapRect.x + clamp(safePosition.x, 0, 1) * mapRect.width;
+  const centerY =
+    mapRect.y + clamp(safePosition.y, 0, 1) * mapRect.height;
+  const maxWidth = Math.max(120, mapRect.width * 0.82);
+  const lineHeight = safeFontSize * 1.12;
+
+  ctx.save();
+  ctx.font = `800 ${safeFontSize}px ${EXPORT_LEGEND_FONT_FAMILY}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  ctx.miterLimit = 2;
+
+  const lines = safeTitle
+    .split(/\r?\n/)
+    .flatMap((line) =>
+      wrapLegendTextLines(line.trim() || " ", maxWidth, safeFontSize),
+    )
+    .slice(0, 6);
+  const totalHeight = Math.max(lineHeight, lines.length * lineHeight);
+  const minCenterY = mapRect.y + totalHeight / 2 + 8;
+  const maxCenterY = mapRect.y + mapRect.height - totalHeight / 2 - 8;
+  const safeCenterY = clamp(
+    centerY,
+    Math.min(minCenterY, mapRect.y + mapRect.height / 2),
+    Math.max(maxCenterY, mapRect.y + mapRect.height / 2),
+  );
+  const firstLineY = safeCenterY - ((lines.length - 1) * lineHeight) / 2;
+  const outlineWidth = Math.max(2, safeFontSize * 0.1);
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.98)";
+  ctx.lineWidth = outlineWidth;
+  ctx.fillStyle =
+    color && /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#0f172a";
+
+  lines.forEach((line, index) => {
+    const y = firstLineY + index * lineHeight;
+    ctx.strokeText(line, centerX, y, maxWidth);
+    ctx.fillText(line, centerX, y, maxWidth);
+  });
+  ctx.restore();
+}
+
 function drawMapBorder(
   ctx: CanvasRenderingContext2D,
   mapRect: ExportCanvasRect,
@@ -3373,6 +3439,12 @@ function createProjectJson(input: DownloadCanvasExportInput) {
     export: {
       format: input.exportFormat,
       showBasemapLabels: input.showBasemapLabels !== false,
+      mapTitle: {
+        text: input.mapTitle ?? "",
+        position: input.mapTitlePosition ?? { x: 0.5, y: 0.08 },
+        fontSize: input.mapTitleFontSize ?? 44,
+        color: input.mapTitleColor ?? "#0f172a",
+      },
       legendPosition: input.legendPosition,
       legendMapPosition: input.legendMapPosition ?? { x: 0, y: 0.84 },
       legendMapTitlePosition: input.legendMapTitlePosition ?? { x: 0.5, y: 0 },
@@ -3421,7 +3493,8 @@ function createProjectJson(input: DownloadCanvasExportInput) {
       symbolOverrides: input.legendSymbolOverrides,
     },
     customMarkers: cloneJsonValue(
-      useEditorTestCustomMarkersStore.getState().customMarkers,
+      input.customMarkers ??
+        useEditorTestCustomMarkersStore.getState().customMarkers,
     ),
     layers: cloneJsonValue(input.layers ?? []),
     geoJsonLayers: cloneJsonValue(input.geoJsonLayers ?? []),
@@ -3440,6 +3513,10 @@ export type ImportedDromapProject = {
   featureMapLabelScale: number;
   featureMapLabelOutlineWidth: number;
   showBasemapLabels: boolean;
+  mapTitle: string;
+  mapTitlePosition: ExportLegendMapPosition;
+  mapTitleFontSize: number;
+  mapTitleColor: string;
   exportFormat: ExportFormat;
   legendPosition: ExportLegendPosition;
   legendMapPosition: ExportLegendMapPosition;
@@ -4089,6 +4166,8 @@ export function parseDromapProjectJson(
   const safeScaleBar = isRecord(scaleBar) ? scaleBar : {};
   const northArrow = getRecordValue(exportSettings, "northArrow");
   const safeNorthArrow = isRecord(northArrow) ? northArrow : {};
+  const mapTitle = getRecordValue(exportSettings, "mapTitle");
+  const safeMapTitle = isRecord(mapTitle) ? mapTitle : {};
   const safeBasemapId = getDromapBasemapConfig(basemapId).id;
 
   return {
@@ -4121,6 +4200,20 @@ export function parseDromapProjectJson(
     ),
     showBasemapLabels:
       getRecordValue(exportSettings, "showBasemapLabels") !== false,
+    mapTitle: parseString(getRecordValue(safeMapTitle, "text"), "").slice(0, 240),
+    mapTitlePosition: parseLegendMapPosition(
+      getRecordValue(safeMapTitle, "position"),
+      { x: 0.5, y: 0.08 },
+    ),
+    mapTitleFontSize: clamp(
+      parseFiniteNumber(getRecordValue(safeMapTitle, "fontSize"), 44),
+      12,
+      120,
+    ),
+    mapTitleColor: parseString(
+      getRecordValue(safeMapTitle, "color"),
+      "#0f172a",
+    ),
     exportFormat: parseExportFormat(getRecordValue(exportSettings, "format")),
     legendPosition: parseLegendPosition(
       getRecordValue(exportSettings, "legendPosition"),
@@ -5763,6 +5856,15 @@ async function renderCanvasExportToCanvas(
         featureMapLabelEditorOffsetScale,
     );
   }
+
+  drawMapTitleOnCanvas(
+    ctx,
+    layout.mapRect,
+    input.mapTitle,
+    input.mapTitlePosition,
+    input.mapTitleFontSize,
+    input.mapTitleColor,
+  );
 
   // L'attribution légale reste la toute dernière couche de l'export.
   drawBasemapAttribution(ctx, basemap, layout.mapRect);
