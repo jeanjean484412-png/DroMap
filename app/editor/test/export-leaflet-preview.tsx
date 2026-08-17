@@ -36,7 +36,7 @@ import {
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
 import { getDromapExportAttributionHtml } from "@/lib/dromap/credits";
 import { BasemapBoundariesLayer } from "./basemap-boundaries-layer";
-import { GeoJsonLayersRenderer } from "./geojson-layers-renderer";
+import { FullGeoJsonLayersRenderer } from "./geojson-layers-renderer";
 import { MapLibreBasemapLayer } from "./maplibre-basemap-layer";
 import {
   createLineArrowBodyLeafletLayer,
@@ -979,7 +979,7 @@ export function ExportLeafletPreview({
         <BasemapBoundariesLayer boundaryOverlay={basemap.boundaryOverlay} />
 
         <ExportMapController bounds={leafletBounds} />
-        <GeoJsonLayersRenderer />
+        <FullGeoJsonLayersRenderer />
         <ExportFeatureLayers
           features={features}
           fallbackReferenceZoom={workspaceBasemapZoom}

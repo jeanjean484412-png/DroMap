@@ -31,6 +31,36 @@ const eslintConfig = defineConfig([
     }
   },
 
+  {
+    files: [
+      "app/editor/test/geojson-layers-renderer.tsx",
+      "app/editor/test/geojson-leaflet-rendering.ts",
+      "app/editor/test/geojson-layer-style.ts",
+      "app/editor/test/export-*.{ts,tsx}",
+      "app/**/render/**/*.{ts,tsx}",
+      "lib/dromap/project-thumbnail.ts",
+      "components/dromap-product/dashboard-project-export-dialog.tsx"
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "**/editor-only/**",
+                "./editor-only/**",
+                "../**/editor-only/**",
+                "@/**/editor-only/**"
+              ],
+              message: "Le culling viewport est réservé à l'éditeur ; preview et export doivent utiliser les données complètes."
+            }
+          ]
+        }
+      ]
+    }
+  },
+
   globalIgnores([
     ".next/**",
     "out/**",

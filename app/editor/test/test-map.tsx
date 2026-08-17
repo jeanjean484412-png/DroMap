@@ -43,7 +43,7 @@ import { SelectedTextInlineEditor } from "./selected-text-inline-editor";
 import { SelectedZoneShapeRotationHandle } from "./selected-zone-shape-rotation-handle";
 import { BasemapBoundariesLayer } from "./basemap-boundaries-layer";
 import { BasemapBoundsMaskLayer } from "./basemap-bounds-mask-layer";
-import { GeoJsonLayersRenderer } from "./geojson-layers-renderer";
+import { EditorGeoJsonLayersRenderer } from "./editor-only/editor-geojson-layers-renderer";
 import { MapLibreBasemapLayer } from "./maplibre-basemap-layer";
 import { BasemapAttributionControl } from "./basemap-attribution-control";
 import { WorldBasemapSnapshotLayer } from "./world-basemap-snapshot-layer";
@@ -549,7 +549,7 @@ export default function TestMap({ onPresentationReady }: TestMapProps = {}) {
         <DrawingToolPreviewLayer />
         <WorkspaceMaskLayer />
         <WorkspaceBoundsLayer />
-        <GeoJsonLayersRenderer />
+        <EditorGeoJsonLayersRenderer />
         <FeaturesStoreRenderer />
         <FeaturesStyleSync />
         <FeatureLayerDeleteCommand />
