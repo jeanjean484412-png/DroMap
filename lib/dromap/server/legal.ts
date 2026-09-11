@@ -20,6 +20,10 @@ function env(name: string) {
   return value || null;
 }
 
+function isIncompleteLegalProductionAllowed() {
+  return process.env.DROMAP_ALLOW_INCOMPLETE_LEGAL_IN_PRODUCTION === "true";
+}
+
 export function getDromapLegalIdentity(): LegalIdentity {
   const legalName = env("DROMAP_LEGAL_NAME");
   const legalForm = env("DROMAP_LEGAL_FORM");
@@ -43,7 +47,11 @@ export function getDromapLegalIdentity(): LegalIdentity {
   ];
   const missingRequiredFields = requiredFields.flatMap(([name, value]) => (value ? [] : [name]));
 
-  if (process.env.VERCEL_ENV === "production" && missingRequiredFields.length > 0) {
+  if (
+    process.env.VERCEL_ENV === "production" &&
+    missingRequiredFields.length > 0 &&
+    !isIncompleteLegalProductionAllowed()
+  ) {
     throw new Error(
       `Configuration juridique DroMap incomplète en production : ${missingRequiredFields.join(", ")}`,
     );
