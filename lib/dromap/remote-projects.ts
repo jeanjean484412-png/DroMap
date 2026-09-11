@@ -59,7 +59,12 @@ async function readConflict(response: Response) {
   }
 }
 
-async function fetchWithSessionRefresh(input: RequestInfo | URL, init: RequestInit = {}) {
+async function fetchWithSessionRefresh(input: RequestInfo | URL, init: RequestInit = {}, ownerId?: string) {
+  if (ownerId) {
+    const headers = new Headers(init.headers);
+    headers.set("X-Dromap-Owner-Id", ownerId);
+    init = { ...init, headers };
+  }
   let response = await fetch(input, { ...init, credentials: "same-origin" });
   if (response.status !== 401) return response;
   try {
@@ -352,7 +357,7 @@ function projectManifestFromProject(project: DromapProject): RemoteProjectManife
   };
 }
 
-async function uploadChunk(projectId: string, revision: string, chunk: string, chunkIndex: number) {
+async function uploadChunk(projectId: string, revision: string, chunk: string, chunkIndex: number, ownerId?: string) {
   const response = await fetchWithSessionRefresh(
     `/api/dromap/projects/${encodeURIComponent(projectId)}/chunks/${chunkIndex}`,
     {
@@ -360,6 +365,7 @@ async function uploadChunk(projectId: string, revision: string, chunk: string, c
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ revision, chunk }),
     },
+    ownerId,
   );
   if (!response.ok) {
     throw new Error(await readError(response, "Une partie du projet n’a pas pu être enregistrée en ligne."));
@@ -383,6 +389,7 @@ export async function putRemoteProject(
   project: DromapProject,
   expectedRevision: string | null,
   expectedUpdatedAt: string | null = project.remoteUpdatedAt ?? null,
+  ownerId?: string,
 ): Promise<RemoteProjectManifest> {
   const { encoded, encoding, payloadSizeBytes } = await encodeProject(project);
   const chunks = splitEncodedPayload(encoded);
@@ -391,7 +398,7 @@ export async function putRemoteProject(
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   await runWithConcurrency(chunks, MAX_PARALLEL_CHUNKS, async (chunk, index) => {
-    await uploadChunk(project.id, revision, chunk, index);
+    await uploadChunk(project.id, revision, chunk, index, ownerId);
   });
 
   const response = await fetchWithSessionRefresh(
@@ -411,6 +418,7 @@ export async function putRemoteProject(
         metadata: createRemoteProjectMetadata(project),
       }),
     },
+    ownerId,
   );
   if (response.status === 409) {
     const conflict = await readConflict(response);
@@ -436,6 +444,7 @@ export async function patchRemoteProjectMetadata(
   project: DromapProject,
   expectedRevision: string,
   expectedUpdatedAt: string | null = project.remoteUpdatedAt ?? null,
+  ownerId?: string,
 ): Promise<RemoteProjectManifest> {
   const response = await fetchWithSessionRefresh(
     `/api/dromap/projects/${encodeURIComponent(project.id)}`,
@@ -450,6 +459,7 @@ export async function patchRemoteProjectMetadata(
         metadata: createRemoteProjectMetadata(project),
       }),
     },
+    ownerId,
   );
   if (response.status === 409) {
     const conflict = await readConflict(response);

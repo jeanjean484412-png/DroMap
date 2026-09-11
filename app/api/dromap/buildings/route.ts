@@ -1,3 +1,4 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -9,6 +10,11 @@ const MAX_FEATURES = 15_000;
 const PAGE_SIZE = 2_500;
 const REQUEST_TIMEOUT_MS = 25_000;
 const OSM_NAME_REQUEST_TIMEOUT_MS = 12_000;
+// Les instances Overpass publiques n'ont pas vocation à devenir une dépendance
+// implicite d'un SaaS. L'enrichissement reste disponible pour un déploiement
+// explicitement configuré, mais il est désactivé par défaut.
+const ENABLE_PUBLIC_OSM_NAME_ENRICHMENT =
+  process.env.DROMAP_ENABLE_PUBLIC_OSM_NAME_ENRICHMENT === "true";
 const MAX_OSM_ENRICHMENT_AREA_KM2 = 250;
 const MAX_OSM_ENRICHMENT_BUILDINGS = 7_500;
 const MAX_OSM_NAME_CANDIDATES = 6_000;
@@ -1085,7 +1091,7 @@ async function fetchBuildingPage(
   };
 }
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const bounds = parseBounds(request);
 
   if (!bounds) {
@@ -1201,10 +1207,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const enrichedNameCount = await enrichBuildingsWithOpenStreetMapNames(
-      features,
-      bounds,
-    );
+    const enrichedNameCount = ENABLE_PUBLIC_OSM_NAME_ENRICHMENT
+      ? await enrichBuildingsWithOpenStreetMapNames(features, bounds)
+      : 0;
 
     return NextResponse.json(
       {
@@ -1244,3 +1249,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 503 });
   }
 }
+
+export const GET = withRequestSecurity(handleGET);

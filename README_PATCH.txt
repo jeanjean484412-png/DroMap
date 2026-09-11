@@ -13,4 +13,4 @@ Corrections :
 Installation :
 - Extraire le ZIP à la racine du projet DroMap.
 - Accepter le remplacement des deux fichiers.
-- Relancer pnpm dev puis recharger /editor/test avec Ctrl+F5.
+- Relancer pnpm dev puis recharger /editor avec Ctrl+F5.

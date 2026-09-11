@@ -1,9 +1,15 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
+const NOMINATIM_REVERSE_URL =
+  process.env.NOMINATIM_REVERSE_URL?.trim() ||
+  "https://nominatim.openstreetmap.org/reverse";
+const NOMINATIM_USER_AGENT =
+  process.env.NOMINATIM_USER_AGENT?.trim() ||
+  "DroMap/1.0 building-reverse-name";
 const MAX_POINTS_PER_REQUEST = 20;
 const MIN_DELAY_MS = 1_100;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -295,7 +301,7 @@ async function reverseLookup(point: ReverseNamePoint) {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   let payload: unknown;
   try {
     payload = await request.json();
@@ -342,3 +348,5 @@ export async function POST(request: NextRequest) {
       "La recherche inverse renvoie l'objet OpenStreetMap nommé le plus proche, pas nécessairement le nom juridique du bâtiment. Les propositions doivent être vérifiées avant application.",
   });
 }
+
+export const POST = withRequestSecurity(handlePOST);

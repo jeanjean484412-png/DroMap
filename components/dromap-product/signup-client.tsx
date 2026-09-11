@@ -6,13 +6,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { DromapButton } from "@/components/dromap-ui/button";
 import { signUpDromapAccount } from "@/lib/dromap/account";
+import { DROMAP_TERMS_VERSION } from "@/lib/dromap/legal-public";
 import { useDromapProductStore } from "@/stores/dromap-product";
 import { DromapProductBootstrap } from "./product-bootstrap";
 import { DromapAuthShell } from "./auth-shell";
 
-function safeReturnTo(value: string | null) {
-  return value && value.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
-}
+import { safeReturnTo } from "@/lib/dromap/safe-return-to";
 
 function SignupForm() {
   const router = useRouter();
@@ -36,7 +35,14 @@ function SignupForm() {
     }
     setLoading(true);
     setError(null);
-    const result = await signUpDromapAccount(email, password, firstName, lastName, returnTo);
+    const result = await signUpDromapAccount(
+      email,
+      password,
+      firstName,
+      lastName,
+      returnTo,
+      DROMAP_TERMS_VERSION,
+    );
     if (!result.ok || !result.data) {
       setError(result.error ?? "Création du compte impossible.");
       setLoading(false);
@@ -65,7 +71,7 @@ function SignupForm() {
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-900">
           Le projet que tu utilisais en invité reste conservé sur cet appareil et sera transféré automatiquement dès ta première connexion.
         </div>
-        <Link href={`/login?returnTo=${encodeURIComponent(returnTo)}`} className="mt-5 inline-flex w-full justify-center rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-500">
+        <Link href={`/login?returnTo=${encodeURIComponent(returnTo)}`} className="mt-5 inline-flex w-full justify-center rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-teal-500">
           Aller à la connexion
         </Link>
       </DromapAuthShell>
@@ -90,7 +96,7 @@ function SignupForm() {
               required
               value={firstName}
               onChange={(event) => setFirstName(event.target.value)}
-              className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+              className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
             />
           </label>
           <label className="block text-sm font-semibold text-slate-800">
@@ -100,7 +106,7 @@ function SignupForm() {
               autoComplete="family-name"
               value={lastName}
               onChange={(event) => setLastName(event.target.value)}
-              className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+              className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
             />
           </label>
         </div>
@@ -112,7 +118,7 @@ function SignupForm() {
             required
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
           />
         </label>
         <label className="block text-sm font-semibold text-slate-800">
@@ -124,7 +130,7 @@ function SignupForm() {
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
           />
           <span className="mt-1 block text-xs font-normal text-slate-500">8 caractères minimum.</span>
         </label>
@@ -137,16 +143,19 @@ function SignupForm() {
             required
             value={confirmPassword}
             onChange={(event) => setConfirmPassword(event.target.value)}
-            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
           />
         </label>
+        <p className="text-xs leading-5 text-slate-500">
+          En créant ton compte, tu acceptes les <Link href="/conditions-generales" target="_blank" className="font-bold text-teal-700 hover:underline">conditions générales d’utilisation</Link> et reconnais avoir pris connaissance de la <Link href="/confidentialite" target="_blank" className="font-bold text-teal-700 hover:underline">politique de confidentialité</Link>. Les conditions de vente sont acceptées séparément sur Stripe lorsqu’un paiement est effectué.
+        </p>
         <DromapButton type="submit" variant="primary" fullWidth disabled={loading}>
           {loading ? "Création…" : "Créer mon compte"}
         </DromapButton>
       </form>
       <p className="mt-5 text-center text-sm text-slate-600">
         Déjà un compte ?{" "}
-        <Link href={`/login?returnTo=${encodeURIComponent(returnTo)}`} className="font-bold text-indigo-700 hover:text-indigo-600">
+        <Link href={`/login?returnTo=${encodeURIComponent(returnTo)}`} className="font-bold text-teal-700 hover:text-teal-600">
           Se connecter
         </Link>
       </p>

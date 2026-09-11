@@ -2,19 +2,19 @@
 
 import {
   createCanvasExportPreviewDataUrl,
-} from "@/app/editor/test/export-download";
+} from "@/editor/export-download";
 import {
   createDromapEditorProjectSnapshot,
   normalizeDromapEditorExportSettings,
 } from "@/lib/dromap/editor-project-persistence";
 import {
   getRenderableFeaturesForLayers,
-} from "@/stores/editor-test-layers";
+} from "@/stores/editor-layers";
 import {
   getGeoJsonLayerLoadedFeatureCount,
   getRenderableGeoJsonLayers,
-} from "@/stores/editor-test-geojson-layers";
-import { useEditorTestMapLabelsStore } from "@/stores/editor-test-map-labels";
+} from "@/stores/editor-geojson-layers";
+import { useEditorMapLabelsStore } from "@/stores/editor-map-labels";
 
 const THUMBNAIL_WIDTH = 720;
 const THUMBNAIL_HEIGHT = 405;
@@ -26,6 +26,12 @@ function loadDataUrlImage(dataUrl: string) {
     image.onerror = () => reject(new Error("La miniature n’a pas pu être chargée."));
     image.src = dataUrl;
   });
+}
+
+function encodeBestThumbnail(canvas: HTMLCanvasElement) {
+  const jpeg = canvas.toDataURL("image/jpeg", 0.82);
+  const webp = canvas.toDataURL("image/webp", 0.82);
+  return webp.startsWith("data:image/webp;") && webp.length < jpeg.length ? webp : jpeg;
 }
 
 async function resizePreviewDataUrl(dataUrl: string) {
@@ -52,7 +58,7 @@ async function resizePreviewDataUrl(dataUrl: string) {
   const drawY = (canvas.height - drawHeight) / 2;
 
   context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
-  return canvas.toDataURL("image/jpeg", 0.84);
+  return encodeBestThumbnail(canvas);
 }
 
 export async function createDromapProjectThumbnailDataUrl() {
@@ -68,7 +74,7 @@ export async function createDromapProjectThumbnailDataUrl() {
   const exportSettings = normalizeDromapEditorExportSettings(
     snapshot.exportSettings,
   );
-  const mapLabelsState = useEditorTestMapLabelsStore.getState();
+  const mapLabelsState = useEditorMapLabelsStore.getState();
 
   const renderableFeatures = getRenderableFeaturesForLayers(
     snapshot.features,
@@ -112,6 +118,10 @@ export async function createDromapProjectThumbnailDataUrl() {
       mapLabelsState.editorFeatureMapLabelVisualZoom,
     featureMapLabelEditorOffsets:
       mapLabelsState.editorFeatureMapLabelOffsets,
+    // La miniature est un rendu statique et peut être générée pendant une
+    // transition de mode. Elle doit donc toujours relire le visualReferenceZoom
+    // stocké sur les objets, sans modifier la logique de l’éditeur/preview/export.
+    useStoredFeatureVisualScale: true,
     legendTitle: exportSettings.legendTitle,
     legendPosition: exportSettings.legendPosition,
     legendMapPosition: exportSettings.legendMapPosition,
@@ -140,10 +150,12 @@ export async function createDromapProjectThumbnailDataUrl() {
     scaleBarStyle: exportSettings.scaleBarStyle,
     scaleBarPosition: exportSettings.scaleBarPosition,
     scaleBarMapPosition: exportSettings.scaleBarMapPosition,
+    scaleBarSize: exportSettings.scaleBarSize,
     northArrowEnabled: exportSettings.northArrowEnabled,
     northArrowStyle: exportSettings.northArrowStyle,
     northArrowPosition: exportSettings.northArrowPosition,
     northArrowMapPosition: exportSettings.northArrowMapPosition,
+    northArrowSize: exportSettings.northArrowSize,
     hiddenLegendFeatureIds: exportSettings.hiddenLegendFeatureIds,
     hiddenLegendGroupKeys: exportSettings.hiddenLegendGroupKeys,
     legendFeatureOrder: exportSettings.legendFeatureOrder,
@@ -151,7 +163,7 @@ export async function createDromapProjectThumbnailDataUrl() {
     legendSectionOrder: exportSettings.legendSectionOrder,
     legendGroupLabels: exportSettings.legendGroupLabels,
     legendGroupSections: exportSettings.legendGroupSections,
-  });
+  }, 1);
 
   return resizePreviewDataUrl(previewDataUrl);
 }

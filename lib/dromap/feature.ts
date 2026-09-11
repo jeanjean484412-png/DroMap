@@ -46,6 +46,16 @@ export type DroMapFeatureSource = {
   type: "geojson";
   importId: string;
   sourceName?: string | null;
+  /** Libellé humain de la source de données, conservé pour les crédits/export. */
+  sourceLabel?: string;
+  /** URL de référence de la source de données. */
+  sourceUrl?: string;
+  /** Licence annoncée par la source de données. */
+  sourceLicense?: string;
+  /** Attribution à reproduire lorsque les données sont affichées ou exportées. */
+  sourceAttribution?: string;
+  /** Version/millésime de la source lorsque disponible. */
+  sourceVersion?: string;
   originalProperties?: Record<string, unknown>;
   /** Identifiant stable de l’entité GeoJSON d’origine, utile pour regrouper les parties Multi* au retour en calque GeoJSON. */
   originalFeatureId?: string | number | null;

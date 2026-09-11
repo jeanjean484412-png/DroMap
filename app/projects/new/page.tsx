@@ -14,7 +14,12 @@ function NewProjectRedirect() {
     if (hasCreatedRef.current) return;
     hasCreatedRef.current = true;
     const id = createProject();
-    router.replace(id ? `/projects/${id}/setup` : "/dashboard");
+    if (!id) {
+      router.replace("/dashboard");
+      return;
+    }
+    const createdProject = useDromapProductStore.getState().projects.find((project) => project.id === id);
+    router.replace(createdProject?.setupComplete ? `/projects/${id}/editor` : `/projects/${id}/setup`);
   }, [createProject, router]);
 
   return <div className="grid min-h-screen place-items-center bg-slate-50 text-sm text-slate-600">Création du projet…</div>;

@@ -52,7 +52,7 @@ export function DromapForgotPasswordClient() {
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+              className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
             />
           </label>
           <DromapButton type="submit" variant="primary" fullWidth disabled={loading}>

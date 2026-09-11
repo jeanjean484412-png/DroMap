@@ -8,24 +8,24 @@ import {
   DEFAULT_DROMAP_BASEMAP_ID,
   type DromapBasemapId,
 } from "@/lib/dromap/basemap";
-import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
+import { useEditorFeaturesStore } from "@/stores/editor-features";
 import {
   createDefaultDromapLayer,
   type DroMapLayer,
-  useEditorTestLayersStore,
-} from "@/stores/editor-test-layers";
+  useEditorLayersStore,
+} from "@/stores/editor-layers";
 import {
   type DromapGeoJsonLayer,
-  useEditorTestGeoJsonLayersStore,
-} from "@/stores/editor-test-geojson-layers";
-import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
-import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
-import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
-import { useEditorTestMapLabelsStore } from "@/stores/editor-test-map-labels";
+  useEditorGeoJsonLayersStore,
+} from "@/stores/editor-geojson-layers";
+import { useEditorSelectionStore } from "@/stores/editor-selection";
+import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
+import { useEditorBasemapStore } from "@/stores/editor-basemap";
+import { useEditorMapLabelsStore } from "@/stores/editor-map-labels";
 import {
   type DroMapCustomMarkerDefinition,
-  useEditorTestCustomMarkersStore,
-} from "@/stores/editor-test-custom-markers";
+  useEditorCustomMarkersStore,
+} from "@/stores/editor-custom-markers";
 import {
   type ExportFormat,
   type ExportLegendCustomEntry,
@@ -35,13 +35,13 @@ import {
   type ExportMapElementPosition,
   type ExportNorthArrowStyle,
   type ExportScaleBarStyle,
-  useEditorTestExportStore,
-} from "@/stores/editor-test-export";
-import { useEditorTestToolStore } from "@/stores/editor-test-tool";
-import { useEditorTestModeStore } from "@/stores/editor-test-mode";
-import { useEditorTestMapViewStore } from "@/stores/editor-test-map-view";
-import type { ImportedDromapProject } from "@/app/editor/test/export-download";
-import { normalizeLegendSymbolStyle } from "@/app/editor/test/export-custom-legend";
+  useEditorExportStore,
+} from "@/stores/editor-export";
+import { useEditorToolStore } from "@/stores/editor-tool";
+import { useEditorModeStore } from "@/stores/editor-mode";
+import { useEditorMapViewStore } from "@/stores/editor-map-view";
+import type { ImportedDromapProject } from "@/editor/export-download";
+import { normalizeLegendSymbolStyle } from "@/editor/export-custom-legend";
 
 export type DromapEditorExportSettings = {
   legendTitle: string;
@@ -76,10 +76,12 @@ export type DromapEditorExportSettings = {
   scaleBarStyle: ExportScaleBarStyle;
   scaleBarPosition: ExportMapElementPosition;
   scaleBarMapPosition: ExportLegendMapPosition | null;
+  scaleBarSize: number;
   northArrowEnabled: boolean;
   northArrowStyle: ExportNorthArrowStyle;
   northArrowPosition: ExportMapElementPosition;
   northArrowMapPosition: ExportLegendMapPosition | null;
+  northArrowSize: number;
   hiddenLegendFeatureIds: string[];
   hiddenLegendGroupKeys: string[];
   legendFeatureOrder: string[];
@@ -207,6 +209,7 @@ function parseCustomLegendEntries(value: unknown): ExportLegendCustomEntry[] {
 
 function parseLegendPosition(value: unknown): ExportLegendPosition {
   return value === "left" ||
+    value === "top" ||
     value === "bottom" ||
     value === "right" ||
     value === "map"
@@ -307,10 +310,12 @@ export function getDefaultDromapEditorExportSettings(): DromapEditorExportSettin
     scaleBarStyle: "alternating",
     scaleBarPosition: "bottom-left",
     scaleBarMapPosition: null,
+    scaleBarSize: 1,
     northArrowEnabled: true,
     northArrowStyle: "classic",
     northArrowPosition: "top-right",
     northArrowMapPosition: null,
+    northArrowSize: 1,
     hiddenLegendFeatureIds: [],
     hiddenLegendGroupKeys: [],
     legendFeatureOrder: [],
@@ -322,7 +327,7 @@ export function getDefaultDromapEditorExportSettings(): DromapEditorExportSettin
 }
 
 export function createDromapEditorExportSettingsSnapshot(): DromapEditorExportSettings {
-  const exportState = useEditorTestExportStore.getState();
+  const exportState = useEditorExportStore.getState();
 
   return {
     legendTitle: exportState.legendTitle,
@@ -367,12 +372,14 @@ export function createDromapEditorExportSettingsSnapshot(): DromapEditorExportSe
     scaleBarMapPosition: exportState.scaleBarMapPosition
       ? { ...exportState.scaleBarMapPosition }
       : null,
+    scaleBarSize: exportState.scaleBarSize,
     northArrowEnabled: exportState.northArrowEnabled,
     northArrowStyle: exportState.northArrowStyle,
     northArrowPosition: exportState.northArrowPosition,
     northArrowMapPosition: exportState.northArrowMapPosition
       ? { ...exportState.northArrowMapPosition }
       : null,
+    northArrowSize: exportState.northArrowSize,
     hiddenLegendFeatureIds: [...exportState.hiddenLegendFeatureIds],
     hiddenLegendGroupKeys: [...exportState.hiddenLegendGroupKeys],
     legendFeatureOrder: [...exportState.legendFeatureOrder],
@@ -527,6 +534,7 @@ export function normalizeDromapEditorExportSettings(
     scaleBarMapPosition: parseOptionalMapElementPosition(
       value.scaleBarMapPosition,
     ),
+    scaleBarSize: clampNumber(value.scaleBarSize, defaults.scaleBarSize, 0.5, 2),
     northArrowEnabled:
       value.northArrowEnabled === undefined
         ? defaults.northArrowEnabled
@@ -539,6 +547,7 @@ export function normalizeDromapEditorExportSettings(
     northArrowMapPosition: parseOptionalMapElementPosition(
       value.northArrowMapPosition,
     ),
+    northArrowSize: clampNumber(value.northArrowSize, defaults.northArrowSize, 0.5, 2),
     hiddenLegendFeatureIds: parseStringArray(value.hiddenLegendFeatureIds),
     hiddenLegendGroupKeys: parseStringArray(value.hiddenLegendGroupKeys),
     legendFeatureOrder: parseStringArray(value.legendFeatureOrder),
@@ -562,15 +571,15 @@ export function isDromapEditorProjectSnapshot(
 }
 
 export function createDromapEditorProjectSnapshot(): DromapEditorProjectSnapshot {
-  const featuresState = useEditorTestFeaturesStore.getState();
-  const layersState = useEditorTestLayersStore.getState();
-  const geoJsonState = useEditorTestGeoJsonLayersStore.getState();
-  const workspaceState = useEditorTestWorkspaceStore.getState();
-  const basemapState = useEditorTestBasemapStore.getState();
-  const labelsState = useEditorTestMapLabelsStore.getState();
-  const customMarkersState = useEditorTestCustomMarkersStore.getState();
+  const featuresState = useEditorFeaturesStore.getState();
+  const layersState = useEditorLayersStore.getState();
+  const geoJsonState = useEditorGeoJsonLayersStore.getState();
+  const workspaceState = useEditorWorkspaceStore.getState();
+  const basemapState = useEditorBasemapStore.getState();
+  const labelsState = useEditorMapLabelsStore.getState();
+  const customMarkersState = useEditorCustomMarkersStore.getState();
   const exportSettings = createDromapEditorExportSettingsSnapshot();
-  const currentMapView = useEditorTestMapViewStore.getState().currentView;
+  const currentMapView = useEditorMapViewStore.getState().currentView;
 
   return {
     schemaVersion: 1,
@@ -683,12 +692,14 @@ export function createDromapEditorSnapshotFromImportedProject(
       scaleBarMapPosition: imported.scaleBarMapPosition
         ? cloneValue(imported.scaleBarMapPosition)
         : null,
+      scaleBarSize: imported.scaleBarSize,
       northArrowEnabled: imported.northArrowEnabled,
       northArrowStyle: imported.northArrowStyle,
       northArrowPosition: imported.northArrowPosition,
       northArrowMapPosition: imported.northArrowMapPosition
         ? cloneValue(imported.northArrowMapPosition)
         : null,
+      northArrowSize: imported.northArrowSize,
       hiddenLegendFeatureIds: cloneValue(imported.hiddenLegendFeatureIds),
       hiddenLegendGroupKeys: cloneValue(imported.hiddenLegendGroupKeys),
       legendFeatureOrder: cloneValue(imported.legendFeatureOrder),
@@ -711,13 +722,13 @@ export function restoreDromapEditorProjectSnapshot(
   const layers = snapshot.layers ?? [];
   const activeLayerId = snapshot.activeLayerId ?? null;
 
-  useEditorTestToolStore.getState().resetActiveTool();
-  useEditorTestSelectionStore.getState().clearSelectedFeatureId();
-  useEditorTestLayersStore.getState().setLayers(cloneValue(layers), activeLayerId);
-  useEditorTestGeoJsonLayersStore
+  useEditorToolStore.getState().resetActiveTool();
+  useEditorSelectionStore.getState().clearSelectedFeatureId();
+  useEditorLayersStore.getState().setLayers(cloneValue(layers), activeLayerId);
+  useEditorGeoJsonLayersStore
     .getState()
     .setGeoJsonLayers(cloneValue(snapshot.geoJsonLayers ?? []));
-  const customMarkersStore = useEditorTestCustomMarkersStore.getState();
+  const customMarkersStore = useEditorCustomMarkersStore.getState();
   if (customMarkersStore.libraryPersistenceEnabled) {
     customMarkersStore.mergeCustomMarkers(
       cloneValue(snapshot.customMarkers ?? []),
@@ -727,27 +738,27 @@ export function restoreDromapEditorProjectSnapshot(
       cloneValue(snapshot.customMarkers ?? []),
     );
   }
-  useEditorTestFeaturesStore.getState().replaceFeatures(
+  useEditorFeaturesStore.getState().replaceFeatures(
     normalizeFeatureDrawOrdersForPersistence(cloneValue(snapshot.features)),
   );
-  useEditorTestBasemapStore
+  useEditorBasemapStore
     .getState()
     .setBasemapIdFromUnknown(snapshot.basemapId ?? DEFAULT_DROMAP_BASEMAP_ID);
-  useEditorTestBasemapStore
+  useEditorBasemapStore
     .getState()
     .setShowCountryNeighborContext(snapshot.showCountryNeighborContext !== false);
-  useEditorTestMapLabelsStore
+  useEditorMapLabelsStore
     .getState()
     .setShowAllFeatureLabels(snapshot.showAllFeatureLabels === true);
-  useEditorTestMapLabelsStore
+  useEditorMapLabelsStore
     .getState()
     .setShowAllGeoJsonFeatureLabels(
       snapshot.showAllGeoJsonFeatureLabels === true,
     );
-  useEditorTestMapLabelsStore
+  useEditorMapLabelsStore
     .getState()
     .setFeatureMapLabelScale(snapshot.featureMapLabelScale ?? 1);
-  useEditorTestMapLabelsStore
+  useEditorMapLabelsStore
     .getState()
     .setFeatureMapLabelOutlineWidth(
       snapshot.featureMapLabelOutlineWidth ?? 1.5,
@@ -756,12 +767,12 @@ export function restoreDromapEditorProjectSnapshot(
   const exportSettings = normalizeDromapEditorExportSettings(
     snapshot.exportSettings,
   );
-  useEditorTestExportStore.setState(exportSettings);
-  useEditorTestExportStore.getState().setShowBasemapLabels(
+  useEditorExportStore.setState(exportSettings);
+  useEditorExportStore.getState().setShowBasemapLabels(
     snapshot.showBasemapLabels ?? exportSettings.showBasemapLabels,
   );
 
-  const workspaceStore = useEditorTestWorkspaceStore.getState();
+  const workspaceStore = useEditorWorkspaceStore.getState();
   if (snapshot.workspaceBounds) {
     workspaceStore.setWorkspaceBounds(cloneValue(snapshot.workspaceBounds));
     workspaceStore.validateWorkspaceZone();
@@ -778,16 +789,16 @@ export function restoreDromapEditorProjectSnapshot(
         : null;
 
     if (savedBaseZoom !== null || savedDetailZoom !== null) {
-      useEditorTestWorkspaceStore
+      useEditorWorkspaceStore
         .getState()
         .setWorkspaceBasemapBaseZoom(savedBaseZoom ?? savedDetailZoom);
-      useEditorTestWorkspaceStore
+      useEditorWorkspaceStore
         .getState()
         .setWorkspaceBasemapZoom(savedDetailZoom ?? savedBaseZoom);
     }
   } else {
     workspaceStore.clearWorkspaceBounds();
-    useEditorTestModeStore.getState().setCurrentMode("workspace-select");
+    useEditorModeStore.getState().setCurrentMode("workspace-select");
   }
 
   const normalizedMapView = normalizeDromapMapView(snapshot.mapView);
@@ -797,11 +808,11 @@ export function restoreDromapEditorProjectSnapshot(
   // puis tente de restaurer le zoom, ce qui peut changer le zoom graphique et
   // le niveau de détail du fond entre le parcours de création et l'édition.
   if (normalizedMapView && snapshot.workspaceBounds) {
-    useEditorTestWorkspaceStore.getState().consumePendingWorkspaceFit();
+    useEditorWorkspaceStore.getState().consumePendingWorkspaceFit();
   }
 
-  useEditorTestMapViewStore.getState().setCurrentView(normalizedMapView);
-  useEditorTestMapViewStore
+  useEditorMapViewStore.getState().setCurrentView(normalizedMapView);
+  useEditorMapViewStore
     .getState()
     .requestRestoreView(normalizedMapView);
 

@@ -13,14 +13,14 @@ import {
 import { createDromapEditorProjectSnapshot } from "@/lib/dromap/editor-project-persistence";
 import { createDromapProjectThumbnailDataUrl } from "@/lib/dromap/project-thumbnail";
 import { useDromapProductStore } from "@/stores/dromap-product";
-import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
-import { useEditorTestLayersStore } from "@/stores/editor-test-layers";
-import { useEditorTestGeoJsonLayersStore } from "@/stores/editor-test-geojson-layers";
-import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
-import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
-import { useEditorTestMapLabelsStore } from "@/stores/editor-test-map-labels";
-import { useEditorTestCustomMarkersStore } from "@/stores/editor-test-custom-markers";
-import { useEditorTestExportStore } from "@/stores/editor-test-export";
+import { useEditorFeaturesStore } from "@/stores/editor-features";
+import { useEditorLayersStore } from "@/stores/editor-layers";
+import { useEditorGeoJsonLayersStore } from "@/stores/editor-geojson-layers";
+import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
+import { useEditorBasemapStore } from "@/stores/editor-basemap";
+import { useEditorMapLabelsStore } from "@/stores/editor-map-labels";
+import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
+import { useEditorExportStore } from "@/stores/editor-export";
 
 type SaveReason = "manual" | "automatic" | "navigation" | "unload";
 
@@ -45,8 +45,8 @@ function restoreTourSimulationBeforePersistence() {
 }
 
 function exportStateChanged(
-  current: ReturnType<typeof useEditorTestExportStore.getState>,
-  previous: ReturnType<typeof useEditorTestExportStore.getState>,
+  current: ReturnType<typeof useEditorExportStore.getState>,
+  previous: ReturnType<typeof useEditorExportStore.getState>,
 ) {
   const ignored = new Set(["isExportPanelOpen", "isImportPanelOpen"]);
   return Object.keys(current).some((key) => {
@@ -260,12 +260,12 @@ export function DromapProjectAutosaveProvider({
       }, 500);
     };
 
-    const unsubscribeFeatures = useEditorTestFeaturesStore.subscribe(
+    const unsubscribeFeatures = useEditorFeaturesStore.subscribe(
       (state, previous) => {
         if (state.features !== previous.features) scheduleSignificantChange();
       },
     );
-    const unsubscribeLayers = useEditorTestLayersStore.subscribe(
+    const unsubscribeLayers = useEditorLayersStore.subscribe(
       (state, previous) => {
         if (
           state.layers !== previous.layers ||
@@ -275,14 +275,14 @@ export function DromapProjectAutosaveProvider({
         }
       },
     );
-    const unsubscribeGeoJson = useEditorTestGeoJsonLayersStore.subscribe(
+    const unsubscribeGeoJson = useEditorGeoJsonLayersStore.subscribe(
       (state, previous) => {
         if (state.geoJsonLayers !== previous.geoJsonLayers) {
           scheduleSignificantChange();
         }
       },
     );
-    const unsubscribeWorkspace = useEditorTestWorkspaceStore.subscribe(
+    const unsubscribeWorkspace = useEditorWorkspaceStore.subscribe(
       (state, previous) => {
         if (
           state.workspaceBounds !== previous.workspaceBounds ||
@@ -293,7 +293,7 @@ export function DromapProjectAutosaveProvider({
         }
       },
     );
-    const unsubscribeBasemap = useEditorTestBasemapStore.subscribe(
+    const unsubscribeBasemap = useEditorBasemapStore.subscribe(
       (state, previous) => {
         if (
           state.basemapId !== previous.basemapId ||
@@ -304,7 +304,7 @@ export function DromapProjectAutosaveProvider({
         }
       },
     );
-    const unsubscribeLabels = useEditorTestMapLabelsStore.subscribe(
+    const unsubscribeLabels = useEditorMapLabelsStore.subscribe(
       (state, previous) => {
         if (
           state.showAllFeatureLabels !== previous.showAllFeatureLabels ||
@@ -318,14 +318,14 @@ export function DromapProjectAutosaveProvider({
         }
       },
     );
-    const unsubscribeMarkers = useEditorTestCustomMarkersStore.subscribe(
+    const unsubscribeMarkers = useEditorCustomMarkersStore.subscribe(
       (state, previous) => {
         if (state.customMarkers !== previous.customMarkers) {
           scheduleSignificantChange();
         }
       },
     );
-    const unsubscribeExport = useEditorTestExportStore.subscribe(
+    const unsubscribeExport = useEditorExportStore.subscribe(
       (state, previous) => {
         if (exportStateChanged(state, previous)) scheduleSignificantChange();
       },

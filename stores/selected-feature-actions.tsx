@@ -1,3 +1,3 @@
 "use client";
 
-export { SelectedFeatureActions } from "../app/editor/test/selected-feature-actions";
+export { SelectedFeatureActions } from "../editor/selected-feature-actions";

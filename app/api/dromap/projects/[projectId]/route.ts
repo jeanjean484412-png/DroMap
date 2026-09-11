@@ -1,3 +1,5 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
+import { measureStoredPayload } from "@/lib/dromap/server/stored-payload";
 import { NextResponse } from "next/server";
 
 import {
@@ -82,14 +84,14 @@ async function removeRevisionChunks(
   ).catch(() => null);
 }
 
-export async function GET(
-  _request: Request,
+async function handleGET(
+  request: Request,
   context: { params: Promise<{ projectId: string }> },
 ) {
   if (!getSupabaseConfig()) {
     return NextResponse.json({ error: "La sauvegarde en ligne est momentanément indisponible." }, { status: 503 });
   }
-  const auth = await getAuthenticatedRequestUser();
+  const auth = await getAuthenticatedRequestUser(request.headers.get("x-dromap-owner-id"));
   if (!auth) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
   const { projectId } = await context.params;
   if (!projectId) return NextResponse.json({ error: "Projet invalide." }, { status: 400 });
@@ -103,14 +105,14 @@ export async function GET(
   }
 }
 
-export async function PUT(
+async function handlePUT(
   request: Request,
   context: { params: Promise<{ projectId: string }> },
 ) {
   if (!getSupabaseConfig()) {
     return NextResponse.json({ error: "La sauvegarde en ligne est momentanément indisponible." }, { status: 503 });
   }
-  const auth = await getAuthenticatedRequestUser();
+  const auth = await getAuthenticatedRequestUser(request.headers.get("x-dromap-owner-id"));
   if (!auth) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
   const { projectId } = await context.params;
   const body = (await request.json().catch(() => null)) as
@@ -146,7 +148,7 @@ export async function PUT(
       : undefined;
   const chunkCount = typeof body?.chunkCount === "number" ? body.chunkCount : 0;
   const encoding = body?.encoding;
-  const payloadSizeBytes = typeof body?.payloadSizeBytes === "number" ? body.payloadSizeBytes : 0;
+  let payloadSizeBytes = 0;
   const syncUpdatedAt = new Date().toISOString();
   const deletedAt = typeof body?.deletedAt === "string" ? body.deletedAt : null;
   const metadata = normalizeMetadata(body?.metadata);
@@ -169,20 +171,10 @@ export async function PUT(
   }
 
   try {
-    const chunksResponse = await supabaseRestFetch(
-      `/dromap_project_chunks?owner_id=eq.${encodeURIComponent(auth.user.id)}&project_id=eq.${encodeURIComponent(projectId)}&revision=eq.${encodeURIComponent(revision)}&select=chunk_index&order=chunk_index.asc`,
-      auth.accessToken,
-      { method: "GET" },
+    payloadSizeBytes = await measureStoredPayload(
+      `/dromap_project_chunks?owner_id=eq.${encodeURIComponent(auth.user.id)}&project_id=eq.${encodeURIComponent(projectId)}&revision=eq.${encodeURIComponent(revision)}`,
+      auth.accessToken, chunkCount, encoding,
     );
-    const chunks = await parseJsonResponse<Array<{ chunk_index?: unknown }>>(chunksResponse);
-    const complete =
-      chunksResponse.ok &&
-      Array.isArray(chunks) &&
-      chunks.length === chunkCount &&
-      chunks.every((row, index) => row.chunk_index === index);
-    if (!complete) {
-      return NextResponse.json({ error: "Le projet n’a pas été entièrement transféré." }, { status: 409 });
-    }
 
     let manifestResponse: Response;
     if (expectedRevision === null) {
@@ -258,14 +250,14 @@ export async function PUT(
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   request: Request,
   context: { params: Promise<{ projectId: string }> },
 ) {
   if (!getSupabaseConfig()) {
     return NextResponse.json({ error: "La sauvegarde en ligne est momentanément indisponible." }, { status: 503 });
   }
-  const auth = await getAuthenticatedRequestUser();
+  const auth = await getAuthenticatedRequestUser(request.headers.get("x-dromap-owner-id"));
   if (!auth) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
   const { projectId } = await context.params;
   const body = (await request.json().catch(() => null)) as
@@ -328,7 +320,7 @@ export async function PATCH(
   }
 }
 
-export async function DELETE(
+async function handleDELETE(
   _request: Request,
   context: { params: Promise<{ projectId: string }> },
 ) {
@@ -366,3 +358,8 @@ export async function DELETE(
     return NextResponse.json({ error: "La suppression en ligne est momentanément indisponible." }, { status: 503 });
   }
 }
+
+export const GET = withRequestSecurity(handleGET);
+export const PUT = withRequestSecurity(handlePUT);
+export const PATCH = withRequestSecurity(handlePATCH);
+export const DELETE = withRequestSecurity(handleDELETE);

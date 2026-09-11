@@ -1,9 +1,15 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
+import { DromapPageSkeleton } from "@/components/dromap-ui/page-skeleton";
 import { DromapLoginClient } from "@/components/dromap-product/login-client";
+export const metadata: Metadata = {
+  title: "Connexion",
+  description: "Connectez-vous à DroMap pour retrouver les projets enregistrés avec votre compte.",
+};
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="grid min-h-screen place-items-center bg-slate-50 text-sm text-slate-600">Chargement…</div>}>
+    <Suspense fallback={<DromapPageSkeleton compact />}>
       <DromapLoginClient />
     </Suspense>
   );

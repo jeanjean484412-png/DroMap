@@ -1,3 +1,4 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
 import {
@@ -18,7 +19,7 @@ function parseChunkIndex(value: string) {
   return Number.isInteger(index) && index >= 0 && index <= 10000 ? index : null;
 }
 
-export async function PUT(
+async function handlePUT(
   request: Request,
   context: { params: Promise<{ chunkIndex: string }> },
 ) {
@@ -45,6 +46,9 @@ export async function PUT(
     );
     if (!response.ok) {
       const payload = await parseJsonResponse(response);
+      if (payload && typeof payload === "object" && "message" in payload && payload.message === "DROMAP_STORAGE_LIMIT") {
+        return NextResponse.json({ error: "La limite technique de stockage du compte est atteinte. Libère de l’espace ou contacte le support." }, { status: 413 });
+      }
       console.warn("DroMap: sauvegarde d'une partie de bibliothèque refusée", payload);
       return NextResponse.json({ error: "Une partie de la bibliothèque n’a pas pu être enregistrée." }, { status: 502 });
     }
@@ -54,7 +58,7 @@ export async function PUT(
   }
 }
 
-export async function GET(
+async function handleGET(
   request: Request,
   context: { params: Promise<{ chunkIndex: string }> },
 ) {
@@ -80,3 +84,6 @@ export async function GET(
     return NextResponse.json({ error: "La bibliothèque en ligne ne peut pas être chargée pour le moment." }, { status: 503 });
   }
 }
+
+export const PUT = withRequestSecurity(handlePUT);
+export const GET = withRequestSecurity(handleGET);

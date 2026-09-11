@@ -1,6 +1,11 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextRequest, NextResponse } from "next/server";
 
-const NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search";
+const NOMINATIM_SEARCH_URL =
+  process.env.NOMINATIM_SEARCH_URL?.trim() ||
+  "https://nominatim.openstreetmap.org/search";
+const NOMINATIM_USER_AGENT =
+  process.env.NOMINATIM_USER_AGENT?.trim() || "DroMap/1.0 place-search";
 const MIN_REQUEST_INTERVAL_MS = 1_100;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 const MAX_CACHE_ENTRIES = 200;
@@ -179,6 +184,11 @@ async function fetchNominatimResults(
   url.searchParams.set("addressdetails", "1");
   url.searchParams.set("accept-language", acceptLanguage);
 
+  const contactEmail = process.env.NOMINATIM_CONTACT_EMAIL?.trim();
+  if (contactEmail) {
+    url.searchParams.set("email", contactEmail);
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -187,7 +197,7 @@ async function fetchNominatimResults(
       headers: {
         Accept: "application/json",
         "Accept-Language": acceptLanguage,
-        "User-Agent": "DroMap/1.0 place-search",
+        "User-Agent": NOMINATIM_USER_AGENT,
       },
       cache: "no-store",
       signal: controller.signal,
@@ -213,7 +223,7 @@ async function fetchNominatimResults(
   }
 }
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const query = normalizeQuery(request.nextUrl.searchParams.get("q") ?? "");
 
   if (query.length < 2) {
@@ -263,3 +273,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 503 });
   }
 }
+
+export const GET = withRequestSecurity(handleGET);

@@ -1,3 +1,5 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
+import { measureStoredPayload } from "@/lib/dromap/server/stored-payload";
 import { NextResponse } from "next/server";
 
 import {
@@ -59,7 +61,7 @@ async function removeRevision(ownerId: string, revision: string, accessToken: st
   ).catch(() => null);
 }
 
-export async function GET() {
+async function handleGET() {
   if (!getSupabaseConfig()) return NextResponse.json({ error: "La bibliothèque en ligne est momentanément indisponible." }, { status: 503 });
   const auth = await getAuthenticatedRequestUser();
   if (!auth) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
@@ -72,7 +74,7 @@ export async function GET() {
   }
 }
 
-export async function PUT(request: Request) {
+async function handlePUT(request: Request) {
   if (!getSupabaseConfig()) return NextResponse.json({ error: "La bibliothèque en ligne est momentanément indisponible." }, { status: 503 });
   const auth = await getAuthenticatedRequestUser();
   if (!auth) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
@@ -90,7 +92,7 @@ export async function PUT(request: Request) {
       : undefined;
   const chunkCount = typeof body?.chunkCount === "number" ? body.chunkCount : 0;
   const encoding = body?.encoding;
-  const payloadSizeBytes = typeof body?.payloadSizeBytes === "number" ? body.payloadSizeBytes : 0;
+  let payloadSizeBytes = 0;
   const updatedAt = typeof body?.updatedAt === "string" && body.updatedAt ? body.updatedAt : new Date().toISOString();
 
   if (
@@ -103,14 +105,10 @@ export async function PUT(request: Request) {
   ) return NextResponse.json({ error: "Bibliothèque invalide." }, { status: 400 });
 
   try {
-    const chunksResponse = await supabaseRestFetch(
-      `/dromap_personal_library_chunks?owner_id=eq.${encodeURIComponent(auth.user.id)}&revision=eq.${encodeURIComponent(revision)}&select=chunk_index&order=chunk_index.asc`,
-      auth.accessToken,
-      { method: "GET" },
+    payloadSizeBytes = await measureStoredPayload(
+      `/dromap_personal_library_chunks?owner_id=eq.${encodeURIComponent(auth.user.id)}&revision=eq.${encodeURIComponent(revision)}`,
+      auth.accessToken, chunkCount, encoding,
     );
-    const chunks = await parseJsonResponse<Array<{ chunk_index?: unknown }>>(chunksResponse);
-    const complete = chunksResponse.ok && Array.isArray(chunks) && chunks.length === chunkCount && chunks.every((row, index) => row.chunk_index === index);
-    if (!complete) return NextResponse.json({ error: "La bibliothèque n’a pas été entièrement transférée." }, { status: 409 });
 
     let response: Response;
     if (expectedRevision === null) {
@@ -170,3 +168,6 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "La bibliothèque en ligne est momentanément indisponible." }, { status: 503 });
   }
 }
+
+export const GET = withRequestSecurity(handleGET);
+export const PUT = withRequestSecurity(handlePUT);

@@ -1,5 +1,8 @@
+import { checkAbuseLimit } from "@/lib/dromap/server/abuse-limit";
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
+import { getDromapBillingAccessForSession } from "@/lib/dromap/server/billing";
 import {
   displayNameFromUser,
   extractTokens,
@@ -18,7 +21,9 @@ type ProfileRow = {
   preferences?: unknown;
 };
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
+  const networkLimit = await checkAbuseLimit(request, "sign-in");
+  if (networkLimit) return networkLimit;
   if (!getSupabaseConfig()) {
     return NextResponse.json(
       { error: "Les comptes DroMap sont momentanément indisponibles." },
@@ -30,6 +35,11 @@ export async function POST(request: Request) {
     | { email?: unknown; password?: unknown }
     | null;
   const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+  if (email.length > 254) return NextResponse.json({ error: "Adresse e-mail invalide." }, { status: 400 });
+  if (email) {
+    const identityLimit = await checkAbuseLimit(request, "sign-in", email);
+    if (identityLimit) return identityLimit;
+  }
   const password = typeof body?.password === "string" ? body.password : "";
   if (!email || !password) {
     return NextResponse.json(
@@ -76,6 +86,10 @@ export async function POST(request: Request) {
       profile = null;
     }
 
+    const billingAccess = await getDromapBillingAccessForSession(
+      tokens.accessToken,
+      tokens.user.id,
+    );
     const firstName =
       typeof profile?.first_name === "string" && profile.first_name.trim()
         ? profile.first_name.trim()
@@ -102,6 +116,11 @@ export async function POST(request: Request) {
         firstName,
         lastName,
         preferences,
+        plan: billingAccess?.plan ?? "free",
+        singleMapMaxExportProjectIds:
+          billingAccess?.singleMapMaxExportProjectIds ?? [],
+        publicMapExportProjectIds:
+          billingAccess?.publicMapExportProjectIds ?? [],
       },
     });
     return setAuthCookies(response, tokens.accessToken, tokens.refreshToken, tokens.expiresIn);
@@ -112,3 +131,5 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const POST = withRequestSecurity(handlePOST);

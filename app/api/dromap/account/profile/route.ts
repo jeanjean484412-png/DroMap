@@ -1,3 +1,4 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
 import {
@@ -8,7 +9,7 @@ import {
   supabaseRestFetch,
 } from "@/lib/dromap/server/supabase-rest";
 
-export async function PATCH(request: Request) {
+async function handlePATCH(request: Request) {
   if (!getSupabaseConfig()) {
     return NextResponse.json(
       { error: "Les comptes DroMap sont momentanément indisponibles." },
@@ -83,3 +84,5 @@ export async function PATCH(request: Request) {
     );
   }
 }
+
+export const PATCH = withRequestSecurity(handlePATCH);

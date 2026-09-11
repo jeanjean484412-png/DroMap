@@ -10,9 +10,7 @@ import { useDromapProductStore } from "@/stores/dromap-product";
 import { DromapProductBootstrap } from "./product-bootstrap";
 import { DromapAuthShell } from "./auth-shell";
 
-function safeReturnTo(value: string | null) {
-  return value && value.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
-}
+import { safeReturnTo } from "@/lib/dromap/safe-return-to";
 
 function LoginForm() {
   const router = useRouter();
@@ -97,7 +95,7 @@ function LoginForm() {
             required
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
           />
         </label>
         <label className="block text-sm font-semibold text-slate-800">
@@ -108,11 +106,11 @@ function LoginForm() {
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
           />
         </label>
         <div className="flex justify-end">
-          <Link href="/forgot-password" className="text-sm font-semibold text-indigo-700 hover:text-indigo-600">
+          <Link href="/forgot-password" className="text-sm font-semibold text-teal-700 hover:text-teal-600">
             Mot de passe oublié ?
           </Link>
         </div>
@@ -122,7 +120,7 @@ function LoginForm() {
       </form>
       <p className="mt-5 text-center text-sm text-slate-600">
         Pas encore de compte ?{" "}
-        <Link href={`/signup?returnTo=${encodeURIComponent(returnTo)}`} className="font-bold text-indigo-700 hover:text-indigo-600">
+        <Link href={`/signup?returnTo=${encodeURIComponent(returnTo)}`} className="font-bold text-teal-700 hover:text-teal-600">
           Créer un compte
         </Link>
       </p>

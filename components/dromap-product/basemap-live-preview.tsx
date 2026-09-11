@@ -10,9 +10,9 @@ import {
   type DromapBasemapConfig,
   type DromapBasemapId,
 } from "@/lib/dromap/basemap";
-import { BasemapBoundariesLayer } from "@/app/editor/test/basemap-boundaries-layer";
-import { MapLibreBasemapLayer } from "@/app/editor/test/maplibre-basemap-layer";
-import { getBasemapViewportBounds } from "@/app/editor/test/basemap-viewport-bounds";
+import { BasemapBoundariesLayer } from "@/editor/basemap-boundaries-layer";
+import { MapLibreBasemapLayer } from "@/editor/maplibre-basemap-layer";
+import { getBasemapViewportBounds } from "@/editor/basemap-viewport-bounds";
 
 const CLASSIC_PREVIEW_BOUNDS = L.latLngBounds([42.2, -4.8], [51.2, 9.3]);
 

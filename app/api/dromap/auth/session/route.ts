@@ -1,5 +1,7 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
+import { getDromapBillingAccessForSession } from "@/lib/dromap/server/billing";
 import {
   clearAuthCookies,
   displayNameFromUser,
@@ -53,7 +55,7 @@ async function getProfile(accessToken: string, userId: string) {
   }
 }
 
-export async function GET() {
+async function handleGET() {
   if (!getSupabaseConfig()) {
     return NextResponse.json(
       {
@@ -105,6 +107,7 @@ export async function GET() {
     }
 
     const profile = await getProfile(activeAccessToken, user.id);
+    const billingAccess = await getDromapBillingAccessForSession(activeAccessToken, user.id);
     const displayName = profile?.displayName ?? displayNameFromUser(user);
     const response = NextResponse.json({
       configured: true,
@@ -116,6 +119,13 @@ export async function GET() {
         firstName: profile?.firstName ?? null,
         lastName: profile?.lastName ?? null,
         preferences: profile?.preferences ?? {},
+        // En cas d’indisponibilité du stockage de facturation, ne jamais
+        // accorder des droits premium par défaut.
+        plan: billingAccess?.plan ?? "free",
+        singleMapMaxExportProjectIds:
+          billingAccess?.singleMapMaxExportProjectIds ?? [],
+        publicMapExportProjectIds:
+          billingAccess?.publicMapExportProjectIds ?? [],
       },
     });
     if (refreshed && activeRefreshToken) {
@@ -134,3 +144,5 @@ export async function GET() {
     );
   }
 }
+
+export const GET = withRequestSecurity(handleGET);

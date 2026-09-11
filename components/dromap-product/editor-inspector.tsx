@@ -5,9 +5,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   LegendPanel,
   type LegendPanelMode,
-} from "@/app/editor/test/legend-panel";
-import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
-import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
+} from "@/editor/legend-panel";
+import { useEditorFeaturesStore } from "@/stores/editor-features";
+import { useEditorSelectionStore } from "@/stores/editor-selection";
 
 type InspectorTab = "selected" | "all" | "labels";
 
@@ -31,17 +31,28 @@ export function DromapEditorInspector({
     setCollapsedState(nextCollapsed);
     onCollapsedChange?.(nextCollapsed);
   }
-  const features = useEditorTestFeaturesStore((state) => state.features);
-  const selectedFeatureIds = useEditorTestSelectionStore(
+
+  useEffect(() => {
+    const mobileQuery = window.matchMedia("(max-width: 767px)");
+    if (mobileQuery.matches) setCollapsed(true);
+
+    const handleViewportChange = (event: MediaQueryListEvent) => {
+      if (event.matches) setCollapsed(true);
+    };
+    mobileQuery.addEventListener("change", handleViewportChange);
+    return () => mobileQuery.removeEventListener("change", handleViewportChange);
+  }, []);
+  const features = useEditorFeaturesStore((state) => state.features);
+  const selectedFeatureIds = useEditorSelectionStore(
     (state) => state.selectedFeatureIds,
   );
-  const selectedFeatureId = useEditorTestSelectionStore(
+  const selectedFeatureId = useEditorSelectionStore(
     (state) => state.selectedFeatureId,
   );
-  const selectedFromObjectsPanel = useEditorTestSelectionStore(
+  const selectedFromObjectsPanel = useEditorSelectionStore(
     (state) => state.selectedFromObjectsPanel,
   );
-  const mapSelectionRequestId = useEditorTestSelectionStore(
+  const mapSelectionRequestId = useEditorSelectionStore(
     (state) => state.mapSelectionRequestId,
   );
   const lastHandledMapSelectionRequestId = useRef(mapSelectionRequestId);
@@ -129,7 +140,7 @@ export function DromapEditorInspector({
       data-dromap-tour="inspector"
       data-dromap-product-inspector="true"
       data-collapsed="false"
-      className="relative z-30 flex h-full w-[25rem] min-w-[22rem] max-w-[31vw] shrink-0 flex-col border-l border-slate-200 bg-white"
+      className="relative z-30 flex h-full w-[min(25rem,calc(100vw-5rem))] min-w-0 max-w-none shrink-0 flex-col border-l border-slate-200 bg-white sm:w-[25rem] sm:min-w-[22rem] sm:max-w-[31vw]"
     >
       <div className="flex shrink-0 items-center gap-1 border-b border-slate-200 bg-slate-50 px-2 py-2">
         <div className="grid min-w-0 flex-1 grid-cols-3 gap-1" role="tablist" aria-label="Inspecteur de la carte">

@@ -1,15 +1,18 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { hasRecentRecoveryProof } from "@/lib/dromap/server/recovery-session";
 
 import {
   DROMAP_RECOVERY_COOKIE,
+  fetchSupabaseUser,
   getAuthenticatedRequestUser,
   getSupabaseConfig,
   supabaseAuthFetch,
   verifySupabasePassword,
 } from "@/lib/dromap/server/supabase-rest";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   if (!getSupabaseConfig()) {
     return NextResponse.json({ error: "Les comptes DroMap sont momentanément indisponibles." }, { status: 503 });
   }
@@ -29,7 +32,13 @@ export async function POST(request: Request) {
   }
 
   const cookieStore = await cookies();
-  const recoveryAuthorized = cookieStore.get(DROMAP_RECOVERY_COOKIE)?.value === "1";
+  const recoveryToken = cookieStore.get(DROMAP_RECOVERY_COOKIE)?.value;
+  let recoveryAuthorized = false;
+  if (recoveryToken && recoveryToken === auth.accessToken) {
+    const verified = await fetchSupabaseUser(recoveryToken);
+    recoveryAuthorized = verified.response.ok && verified.user?.id === auth.user.id &&
+      hasRecentRecoveryProof(recoveryToken, auth.user.id);
+  }
   const email = typeof auth.user.email === "string" ? auth.user.email.trim().toLowerCase() : "";
 
   if (!recoveryAuthorized) {
@@ -79,3 +88,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Le mot de passe ne peut pas être modifié pour le moment." }, { status: 503 });
   }
 }
+
+export const POST = withRequestSecurity(handlePOST);

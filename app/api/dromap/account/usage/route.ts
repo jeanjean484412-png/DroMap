@@ -1,3 +1,4 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
 import {
@@ -8,12 +9,12 @@ import {
 } from "@/lib/dromap/server/supabase-rest";
 
 type ProjectUsageRow = {
-  payload_size_bytes?: unknown;
   deleted_at?: unknown;
 };
 
-type LibraryUsageRow = {
-  payload_size_bytes?: unknown;
+type StorageUsageRow = {
+  project_bytes?: unknown;
+  library_bytes?: unknown;
 };
 
 function safeBytes(value: unknown) {
@@ -25,7 +26,7 @@ function safeBytes(value: unknown) {
   return 0;
 }
 
-export async function GET() {
+async function handleGET() {
   if (!getSupabaseConfig()) {
     return NextResponse.json(
       { error: "Les comptes DroMap sont momentanément indisponibles." },
@@ -37,20 +38,20 @@ export async function GET() {
   if (!auth) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
 
   try {
-    const [projectsResponse, libraryResponse] = await Promise.all([
+    const [projectsResponse, usageResponse] = await Promise.all([
       supabaseRestFetch(
-        `/dromap_projects?owner_id=eq.${encodeURIComponent(auth.user.id)}&select=payload_size_bytes,deleted_at`,
+        `/dromap_projects?owner_id=eq.${encodeURIComponent(auth.user.id)}&select=deleted_at`,
         auth.accessToken,
         { method: "GET" },
       ),
       supabaseRestFetch(
-        `/dromap_personal_library?owner_id=eq.${encodeURIComponent(auth.user.id)}&select=payload_size_bytes&limit=1`,
+        `/dromap_storage_usage?owner_id=eq.${encodeURIComponent(auth.user.id)}&select=project_bytes,library_bytes&limit=1`,
         auth.accessToken,
         { method: "GET" },
       ),
     ]);
 
-    if (!projectsResponse.ok) {
+    if (!projectsResponse.ok || !usageResponse.ok) {
       return NextResponse.json(
         { error: "L’utilisation du compte ne peut pas être calculée pour le moment." },
         { status: 502 },
@@ -58,20 +59,17 @@ export async function GET() {
     }
 
     const projectRows = (await parseJsonResponse<ProjectUsageRow[]>(projectsResponse)) ?? [];
-    const libraryRows = libraryResponse.ok
-      ? (await parseJsonResponse<LibraryUsageRow[]>(libraryResponse)) ?? []
-      : [];
+    const usageRows = (await parseJsonResponse<StorageUsageRow[]>(usageResponse)) ?? [];
 
     let activeProjects = 0;
     let trashedProjects = 0;
-    let projectBytes = 0;
+    const projectBytes = safeBytes(usageRows[0]?.project_bytes);
     for (const row of projectRows) {
-      projectBytes += safeBytes(row.payload_size_bytes);
       if (typeof row.deleted_at === "string" && row.deleted_at) trashedProjects += 1;
       else activeProjects += 1;
     }
 
-    const libraryBytes = safeBytes(libraryRows[0]?.payload_size_bytes);
+    const libraryBytes = safeBytes(usageRows[0]?.library_bytes);
     return NextResponse.json({
       activeProjects,
       trashedProjects,
@@ -86,3 +84,5 @@ export async function GET() {
     );
   }
 }
+
+export const GET = withRequestSecurity(handleGET);

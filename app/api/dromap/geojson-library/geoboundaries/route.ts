@@ -1,3 +1,5 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
+import { limitStream } from "@/lib/dromap/bounded-stream";
 const GEOBOUNDARIES_API_BASE =
   "https://www.geoboundaries.org/api/current/gbOpen";
 const METADATA_TIMEOUT_MS = 30_000;
@@ -210,19 +212,37 @@ function normalizeMetadata(value: unknown): GeoBoundariesMetadata {
 }
 
 async function fetchWithTimeout(url: string, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
+  const signal = AbortSignal.timeout(timeoutMs);
   try {
-    return await fetch(url, {
+    let response: Response | undefined;
+    for (let redirects = 0; redirects <= 5; redirects++) {
+      const target = new URL(url);
+      if (target.protocol !== "https:" || target.username || target.password || !DOWNLOAD_HOSTS.has(target.hostname)) throw new Error("Source non autorisée.");
+      response = await fetch(url, {
       cache: "no-store",
-      redirect: "follow",
-      signal: controller.signal,
+      redirect: "manual",
+      signal,
       headers: {
         Accept: "application/json, application/geo+json, text/html;q=0.9, */*;q=0.8",
         "User-Agent": "DroMap-GeoJSON-Library/1.0",
       },
-    });
+      });
+      if (response.status < 300 || response.status >= 400) break;
+      const location = response.headers.get("location");
+      await response.body?.cancel();
+      if (!location || redirects === 5) throw new Error("Redirection invalide.");
+      url = new URL(location, url).href;
+    }
+    if (!response) throw new Error("Réponse absente.");
+    const max = timeoutMs === DOWNLOAD_TIMEOUT_MS ? MAX_REMOTE_BYTES : 2 * 1024 * 1024;
+    if (Number(response.headers.get("content-length")) > max) {
+      await response.body?.cancel();
+      throw new Error("Fichier distant trop volumineux.");
+    }
+    const headers = new Headers(response.headers);
+    headers.delete("content-encoding");
+    headers.delete("content-length");
+    return new Response(response.body ? limitStream(response.body, max) : null, { status: response.status, headers });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(
@@ -234,8 +254,6 @@ async function fetchWithTimeout(url: string, timeoutMs: number) {
       "La source de données est momentanément indisponible. Réessaie dans quelques instants.",
       { cause: error },
     );
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -339,7 +357,7 @@ function getUnavailableMessage(iso: string, adm: AdmLevel, levels: AdmLevel[]) {
   return `${adm} n’est pas disponible pour ${iso}. Niveaux disponibles : ${levels.join(", ")}.`;
 }
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action") ?? "metadata";
   const iso = validateIso(url.searchParams.get("iso"));
@@ -455,9 +473,7 @@ export async function GET(request: Request) {
     return new Response(upstream.body, {
       status: 200,
       headers: {
-        "Content-Type":
-          upstream.headers.get("content-type") ??
-          "application/geo+json; charset=utf-8",
+        "Content-Type": "application/geo+json; charset=utf-8",
         "Content-Disposition": `inline; filename="${filename}"`,
         "Cache-Control": "no-store, max-age=0",
         "X-DroMap-GeoBoundaries-Source": sourceUrl,
@@ -482,3 +498,5 @@ export async function GET(request: Request) {
     );
   }
 }
+
+export const GET = withRequestSecurity(handleGET);

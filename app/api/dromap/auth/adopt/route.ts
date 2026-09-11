@@ -1,4 +1,6 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
+import { hasRecentRecoveryProof } from "@/lib/dromap/server/recovery-session";
 
 import {
   DROMAP_RECOVERY_COOKIE,
@@ -7,7 +9,7 @@ import {
   setAuthCookies,
 } from "@/lib/dromap/server/supabase-rest";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   if (!getSupabaseConfig()) {
     return NextResponse.json({ error: "Le service de compte n’est pas configuré." }, { status: 503 });
   }
@@ -29,13 +31,17 @@ export async function POST(request: Request) {
     if (!authResponse.ok || !user) {
       return NextResponse.json({ error: "Ce lien a expiré ou n’est plus valide." }, { status: 401 });
     }
+    if (purpose === "recovery" && !hasRecentRecoveryProof(accessToken, user.id)) {
+      return NextResponse.json({ error: "Ce lien a expiré ou n’est plus valide." }, { status: 401 });
+    }
     const response = setAuthCookies(
       NextResponse.json({ authenticated: true }),
       accessToken,
       refreshToken,
       expiresIn,
     );
-    response.cookies.set(DROMAP_RECOVERY_COOKIE, purpose === "recovery" ? "1" : "", {
+    // Le JWT signé remplace le booléen falsifiable. Il sera revérifié à l'usage.
+    response.cookies.set(DROMAP_RECOVERY_COOKIE, purpose === "recovery" ? accessToken : "", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
@@ -47,3 +53,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Validation du lien impossible." }, { status: 503 });
   }
 }
+
+export const POST = withRequestSecurity(handlePOST);

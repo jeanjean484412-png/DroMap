@@ -1,6 +1,8 @@
 "use client";
 
 import { create } from "zustand";
+import { createScopedProjectCache } from "@/lib/dromap/scoped-project-cache";
+import { createLatestIndexedWriter } from "@/lib/dromap/latest-indexed-writer";
 
 import {
   createDefaultProjectSetup,
@@ -9,6 +11,8 @@ import {
   type DromapInitialLayerChoice,
   type DromapProject,
   type DromapProjectSetup,
+  type DromapPublicSourceAttribution,
+  type DromapProjectAiMessage,
   type DromapProjectStatus,
   type DromapSetupStep,
   type DromapUserMode,
@@ -16,7 +20,9 @@ import {
 import { DEFAULT_DROMAP_BASEMAP_ID, type DromapBasemapId } from "@/lib/dromap/basemap";
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
 import type { DromapEditorProjectSnapshot } from "@/lib/dromap/editor-project-persistence";
+import { resolveDromapPreferences } from "@/lib/dromap/preferences";
 import { normalizeDromapMapView, type DromapMapView } from "@/lib/dromap/map-view";
+import { normalizeDromapAccountPlan, type DromapAccountPlan } from "@/lib/dromap/plans";
 import {
   getDromapSession,
   signOutDromapAccount,
@@ -58,16 +64,23 @@ type ProductStoragePayload = {
   accountFirstName?: string | null;
   accountLastName?: string | null;
   accountPreferences?: Record<string, unknown>;
+  accountPlan?: DromapAccountPlan;
+  singleMapMaxExportProjectIds?: string[];
+  publicMapExportProjectIds?: string[];
   activeProjectId: string | null;
   projects: DromapProject[];
 };
 
 type CreateProjectOptions = {
+  id?: string;
   name?: string;
   replaceGuestProject?: boolean;
   setupComplete?: boolean;
+  initialBasemapId?: DromapBasemapId;
   snapshot?: DromapEditorProjectSnapshot | null;
   importedFileName?: string | null;
+  quickStartLayerChoice?: "empty" | "none";
+  sourceAttribution?: DromapPublicSourceAttribution | null;
 };
 
 type SignOutResult = { ok: true } | { ok: false; error: string };
@@ -81,6 +94,9 @@ type DromapProductState = {
   accountFirstName: string | null;
   accountLastName: string | null;
   accountPreferences: Record<string, unknown>;
+  accountPlan: DromapAccountPlan;
+  singleMapMaxExportProjectIds: string[];
+  publicMapExportProjectIds: string[];
   accountBackendConfigured: boolean | null;
   lastSyncError: string | null;
   activeProjectId: string | null;
@@ -92,6 +108,7 @@ type DromapProductState = {
   refreshAccountSession: () => Promise<boolean>;
   signOutAccount: () => Promise<SignOutResult>;
   forgetAccountLocally: () => void;
+  syncProjectNow: (projectId: string) => Promise<boolean>;
   syncAllProjects: () => Promise<boolean>;
   refreshRemoteProjects: () => Promise<boolean>;
   loadProject: (projectId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
@@ -101,6 +118,11 @@ type DromapProductState = {
   setActiveProjectId: (projectId: string | null) => void;
   createProject: (options?: CreateProjectOptions) => string | null;
   duplicateProject: (projectId: string) => Promise<string | null>;
+  setProjectSourceAttribution: (
+    projectId: string,
+    patch: Partial<Pick<DromapPublicSourceAttribution, "position" | "mapPosition" | "hidden">>,
+  ) => void;
+  setProjectAiConversation: (projectId: string, messages: DromapProjectAiMessage[]) => void;
   renameProject: (projectId: string, name: string) => void;
   updateProjectSetup: (projectId: string, patch: Partial<DromapProjectSetup>) => void;
   setSetupStep: (projectId: string, step: DromapSetupStep) => void;
@@ -141,6 +163,12 @@ function cloneValue<T>(value: T): T {
 
 function normalizeUserMode(value: unknown): DromapUserMode {
   return value === "authenticated" ? "authenticated" : "guest";
+}
+
+function getQuickStartBasemapId(preferences: Record<string, unknown>): DromapBasemapId {
+  const value = preferences.quickStartBasemapId;
+  if (value === "openfreemap-positron" || value === "blank-white") return value;
+  return DEFAULT_DROMAP_BASEMAP_ID;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -188,6 +216,37 @@ function normalizeSetup(value: unknown): DromapProjectSetup {
   };
 }
 
+function normalizeProjectAiConversation(value: unknown): DromapProjectAiMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(isRecord)
+    .map((item, index): DromapProjectAiMessage | null => {
+      const role =
+        item.role === "user" ||
+        item.role === "assistant" ||
+        item.role === "system" ||
+        item.role === "error"
+          ? item.role
+          : null;
+      const text = typeof item.text === "string" ? item.text.trim() : "";
+      if (!role || !text) return null;
+      return {
+        id:
+          typeof item.id === "string" && item.id.trim()
+            ? item.id
+            : `ai-message-${index}-${Date.now()}`,
+        role,
+        text: text.slice(0, 20_000),
+        createdAt:
+          typeof item.createdAt === "string" && item.createdAt
+            ? item.createdAt
+            : nowIso(),
+      };
+    })
+    .filter((item): item is DromapProjectAiMessage => Boolean(item))
+    .slice(-100);
+}
+
 function normalizeProject(value: unknown, index: number): DromapProject | null {
   if (!isRecord(value)) return null;
 
@@ -233,6 +292,37 @@ function normalizeProject(value: unknown, index: number): DromapProject | null {
       typeof value.thumbnailDataUrl === "string" ? value.thumbnailDataUrl : null,
     importedFileName:
       typeof value.importedFileName === "string" ? value.importedFileName : null,
+    sourceAttribution:
+      isRecord(value.sourceAttribution) &&
+      value.sourceAttribution.kind === "public-map" &&
+      typeof value.sourceAttribution.publicationSlug === "string" &&
+      typeof value.sourceAttribution.creatorName === "string"
+        ? {
+            kind: "public-map",
+            publicationSlug: value.sourceAttribution.publicationSlug,
+            creatorName: value.sourceAttribution.creatorName,
+            allowRemoval: value.sourceAttribution.allowRemoval === true,
+            position:
+              value.sourceAttribution.position === "top-left" ||
+              value.sourceAttribution.position === "top-right" ||
+              value.sourceAttribution.position === "bottom-right"
+                ? value.sourceAttribution.position
+                : "bottom-left",
+            mapPosition:
+              isRecord(value.sourceAttribution.mapPosition) &&
+              typeof value.sourceAttribution.mapPosition.x === "number" &&
+              Number.isFinite(value.sourceAttribution.mapPosition.x) &&
+              typeof value.sourceAttribution.mapPosition.y === "number" &&
+              Number.isFinite(value.sourceAttribution.mapPosition.y)
+                ? {
+                    x: Math.max(0, Math.min(1, value.sourceAttribution.mapPosition.x)),
+                    y: Math.max(0, Math.min(1, value.sourceAttribution.mapPosition.y)),
+                  }
+                : null,
+            hidden: value.sourceAttribution.allowRemoval === true && value.sourceAttribution.hidden === true,
+          }
+        : null,
+    aiConversation: normalizeProjectAiConversation(value.aiConversation),
     contentLoaded:
       typeof value.contentLoaded === "boolean"
         ? value.contentLoaded
@@ -292,6 +382,13 @@ function normalizeStoragePayload(value: unknown): ProductStoragePayload | null {
     accountFirstName: typeof value.accountFirstName === "string" ? value.accountFirstName : null,
     accountLastName: typeof value.accountLastName === "string" ? value.accountLastName : null,
     accountPreferences: isRecord(value.accountPreferences) ? value.accountPreferences : {},
+    accountPlan: normalizeDromapAccountPlan(value.accountPlan),
+    singleMapMaxExportProjectIds: Array.isArray(value.singleMapMaxExportProjectIds)
+      ? Array.from(new Set(value.singleMapMaxExportProjectIds.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim())))
+      : [],
+    publicMapExportProjectIds: Array.isArray(value.publicMapExportProjectIds)
+      ? Array.from(new Set(value.publicMapExportProjectIds.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim())))
+      : [],
     activeProjectId,
     projects,
   };
@@ -366,6 +463,13 @@ type ProjectCacheRecord = {
   cachedAt: string;
 };
 
+const legacyProjectCacheOwners = new Map<string, string>();
+function projectCacheScope() {
+  const owner = useDromapProductStore.getState().accountUserId;
+  return owner ? `user:${owner}` : "guest";
+}
+const projectContentCache = createScopedProjectCache(openProductDatabase, PRODUCT_DATABASE_PROJECT_CACHE_STORE, projectCacheScope, legacyProjectCacheOwners);
+
 function createProjectMetadataRecord(project: DromapProject): DromapProject {
   return {
     ...project,
@@ -381,15 +485,8 @@ function createProjectMetadataRecord(project: DromapProject): DromapProject {
 
 async function readProjectCache(projectId: string): Promise<ProjectCacheRecord | null> {
   if (typeof window === "undefined" || typeof indexedDB === "undefined") return null;
-  let database: IDBDatabase | null = null;
   try {
-    database = await openProductDatabase();
-    const value = await new Promise<unknown>((resolve, reject) => {
-      const transaction = database!.transaction(PRODUCT_DATABASE_PROJECT_CACHE_STORE, "readonly");
-      const request = transaction.objectStore(PRODUCT_DATABASE_PROJECT_CACHE_STORE).get(projectId);
-      request.onsuccess = () => resolve(request.result as unknown);
-      request.onerror = () => reject(request.error ?? new Error("Lecture du cache projet impossible."));
-    });
+    const value = await projectContentCache.read(projectId);
     if (!isRecord(value) || !isRecord(value.project)) return null;
     const project = normalizeProject(value.project, 0);
     if (!project) return null;
@@ -400,49 +497,29 @@ async function readProjectCache(projectId: string): Promise<ProjectCacheRecord |
     };
   } catch {
     return null;
-  } finally {
-    database?.close();
   }
 }
 
 async function writeProjectCache(project: DromapProject) {
   if (typeof window === "undefined" || typeof indexedDB === "undefined" || project.contentLoaded === false) return;
-  let database: IDBDatabase | null = null;
   try {
-    database = await openProductDatabase();
     const record: ProjectCacheRecord = {
       project: cloneValue({ ...project, contentLoaded: true }),
       remoteRevision: project.remoteRevision ?? null,
       cachedAt: nowIso(),
     };
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database!.transaction(PRODUCT_DATABASE_PROJECT_CACHE_STORE, "readwrite");
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error ?? new Error("Écriture du cache projet impossible."));
-      transaction.objectStore(PRODUCT_DATABASE_PROJECT_CACHE_STORE).put(record, project.id);
-    });
+    await projectContentCache.write(project.id, record);
   } catch (error) {
     console.warn("DroMap: cache projet IndexedDB impossible", error);
-  } finally {
-    database?.close();
   }
 }
 
 async function deleteProjectCache(projectId: string) {
   if (typeof window === "undefined" || typeof indexedDB === "undefined") return;
-  let database: IDBDatabase | null = null;
   try {
-    database = await openProductDatabase();
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database!.transaction(PRODUCT_DATABASE_PROJECT_CACHE_STORE, "readwrite");
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error ?? new Error("Suppression du cache projet impossible."));
-      transaction.objectStore(PRODUCT_DATABASE_PROJECT_CACHE_STORE).delete(projectId);
-    });
+    await projectContentCache.remove(projectId);
   } catch {
     // Le cache ne doit jamais bloquer la suppression métier.
-  } finally {
-    database?.close();
   }
 }
 
@@ -457,6 +534,9 @@ function createStoragePayload(state: DromapProductState): ProductStoragePayload 
     accountFirstName: state.accountFirstName,
     accountLastName: state.accountLastName,
     accountPreferences: state.accountPreferences,
+    accountPlan: state.accountPlan,
+    singleMapMaxExportProjectIds: state.singleMapMaxExportProjectIds,
+    publicMapExportProjectIds: state.publicMapExportProjectIds,
     activeProjectId: state.activeProjectId,
     projects: state.projects.map(createProjectMetadataRecord),
   };
@@ -475,24 +555,15 @@ function persistLocalStorage(payload: ProductStoragePayload) {
   }
 }
 
+const writeLatestProductState = createLatestIndexedWriter(openProductDatabase, PRODUCT_DATABASE_STORE, PRODUCT_DATABASE_KEY);
+
 async function persistIndexedDatabase(payload: ProductStoragePayload) {
   if (typeof window === "undefined" || typeof indexedDB === "undefined") return false;
-  let database: IDBDatabase | null = null;
   try {
-    database = await openProductDatabase();
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database!.transaction(PRODUCT_DATABASE_STORE, "readwrite");
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error ?? new Error("Écriture IndexedDB impossible."));
-      transaction.onabort = () => reject(transaction.error ?? new Error("Écriture IndexedDB annulée."));
-      transaction.objectStore(PRODUCT_DATABASE_STORE).put(cloneValue(payload), PRODUCT_DATABASE_KEY);
-    });
-    return true;
+    return await writeLatestProductState(cloneValue(payload));
   } catch (error) {
     console.warn("DroMap: sauvegarde IndexedDB impossible", error);
     return false;
-  } finally {
-    database?.close();
   }
 }
 
@@ -544,21 +615,46 @@ function createProjectRecord(
 ): DromapProject {
   const timestamp = nowIso();
   const setupComplete = options.setupComplete === true;
+  const setup = createDefaultProjectSetup(options.initialBasemapId ?? DEFAULT_DROMAP_BASEMAP_ID);
+
+  // Un projet déjà complet doit toujours avoir une configuration cohérente
+  // avec son snapshot. Cela vaut pour les imports et les copies de cartes
+  // publiques, sans modifier le contenu cartographique du snapshot.
+  if (setupComplete && options.snapshot) {
+    setup.currentStep = 4;
+    setup.completedSteps = [1, 2, 3, 4];
+    setup.basemapId = options.snapshot.basemapId ?? setup.basemapId;
+    setup.workspaceBounds = options.snapshot.workspaceBounds ?? null;
+    setup.workspaceView = normalizeDromapMapView(options.snapshot.mapView);
+    setup.layerChoice = null;
+  } else if (setupComplete) {
+    // Un projet créé en démarrage rapide reproduit « Passer les étapes ».
+    setup.currentStep = 4;
+    setup.completedSteps = [1, 2, 3, 4];
+    setup.workspaceBounds = null;
+    setup.workspaceView = null;
+    setup.layerChoice = {
+      kind: options.quickStartLayerChoice === "none" ? "none" : "empty",
+    };
+  }
+
   return {
-    id: createDromapProjectId(),
+    id: options.id ?? createDromapProjectId(),
     name: options.name?.trim() || "Projet sans titre",
     creatorName: state.accountName,
     createdAt: timestamp,
     updatedAt: timestamp,
     lastSavedAt: options.snapshot ? timestamp : null,
     deletedAt: null,
-    status: setupComplete ? "saved" : "setup-incomplete",
+    status: setupComplete ? (options.snapshot ? "saved" : "editing") : "setup-incomplete",
     setupComplete,
-    setup: createDefaultProjectSetup(DEFAULT_DROMAP_BASEMAP_ID),
+    setup,
     editorSnapshot: options.snapshot ? cloneValue(options.snapshot) : null,
     pendingChanges: 0,
     thumbnailDataUrl: null,
     importedFileName: options.importedFileName ?? null,
+    sourceAttribution: options.sourceAttribution ? cloneValue(options.sourceAttribution) : null,
+    aiConversation: [],
     contentLoaded: true,
     remoteRevision: null,
     remoteChunkCount: null,
@@ -662,11 +758,13 @@ async function loadProjectForSync(
   get: () => DromapProductState,
   set: (partial: Partial<DromapProductState> | ((state: DromapProductState) => Partial<DromapProductState>)) => void,
 ) {
+  const ownerScope = projectCacheScope();
   const current = get().projects.find((project) => project.id === projectId);
   if (!current) return null;
   if (current.contentLoaded !== false) return current;
 
   const cached = await readProjectCache(projectId);
+  if (projectCacheScope() !== ownerScope) return null;
   if (cached) {
     if (current.remoteRevision && cached.remoteRevision !== current.remoteRevision) {
       throw new RemoteProjectConflictError(
@@ -719,6 +817,7 @@ async function loadProjectForSync(
   if (current.remoteRevision) {
     try {
       const remote = await fetchRemoteProject(current);
+      if (projectCacheScope() !== ownerScope) return null;
       const merged = {
         ...remote,
         name: current.name,
@@ -756,9 +855,10 @@ async function synchronizeSingleProjectOnce(
   try {
     let manifest: RemoteProjectManifest;
     if (metadataOnly && project.remoteRevision) {
-      manifest = await patchRemoteProjectMetadata(project, project.remoteRevision);
+      manifest = await patchRemoteProjectMetadata(project, project.remoteRevision, project.remoteUpdatedAt ?? null, state.accountUserId ?? undefined);
     } else {
       project = (await loadProjectForSync(projectId, get, set)) ?? undefined;
+      if (get().accountUserId !== state.accountUserId) return false;
       if (!project) throw new Error("La copie locale complète du projet n’est pas disponible.");
       const projectForRemote: DromapProject = {
         ...project,
@@ -769,8 +869,9 @@ async function synchronizeSingleProjectOnce(
               : "setup-incomplete"
             : project.status,
       };
-      manifest = await putRemoteProject(projectForRemote, project.remoteRevision ?? null);
+      manifest = await putRemoteProject(projectForRemote, project.remoteRevision ?? null, project.remoteUpdatedAt ?? null, state.accountUserId ?? undefined);
     }
+    if (get().accountUserId !== state.accountUserId) return false;
 
     const synchronizedUpdatedAt = project.updatedAt;
     remoteMetadataOnly.delete(projectId);
@@ -804,6 +905,7 @@ async function synchronizeSingleProjectOnce(
     persistState(get());
     return true;
   } catch (error) {
+    if (get().accountUserId !== state.accountUserId) return false;
     if (error instanceof RemoteProjectConflictError && error.current) {
       const currentRemote = error.current;
       const local = get().projects.find((item) => item.id === projectId) ?? null;
@@ -829,6 +931,7 @@ async function synchronizeSingleProjectOnce(
 
       try {
         const remote = await fetchRemoteProject(currentRemote);
+        if (get().accountUserId !== state.accountUserId) return false;
         const loaded = { ...remote, contentLoaded: true } satisfies DromapProject;
         set((current) => ({
           lastSyncError: null,
@@ -980,6 +1083,9 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   accountFirstName: null,
   accountLastName: null,
   accountPreferences: {},
+  accountPlan: "tester",
+  singleMapMaxExportProjectIds: [],
+  publicMapExportProjectIds: [],
   accountBackendConfigured: null,
   lastSyncError: null,
   activeProjectId: null,
@@ -996,6 +1102,8 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
     bootstrapPromise = (async () => {
       const stored = await readStorage();
       if (stored) {
+        const scope = stored.accountUserId ? `user:${stored.accountUserId}` : "guest";
+        for (const project of stored.projects) legacyProjectCacheOwners.set(project.id, scope);
         set({
           userMode: stored.userMode,
           accountName: stored.accountName,
@@ -1004,6 +1112,9 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
           accountFirstName: stored.accountFirstName ?? null,
           accountLastName: stored.accountLastName ?? null,
           accountPreferences: stored.accountPreferences ?? {},
+          accountPlan: stored.accountPlan ?? "tester",
+          singleMapMaxExportProjectIds: stored.singleMapMaxExportProjectIds ?? [],
+          publicMapExportProjectIds: stored.publicMapExportProjectIds ?? [],
           activeProjectId: stored.activeProjectId,
           projects: stored.projects,
         });
@@ -1017,6 +1128,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       } else if (!session.error && session.configured && get().userMode === "authenticated") {
         const current = get();
         if (current.accountUserId) {
+          await projectContentCache.clearOwner(`user:${current.accountUserId}`).catch(() => null);
           // Une vraie session de compte a expiré ou a été supprimée : ne pas exposer les projets privés après déconnexion.
           set({
             userMode: "guest",
@@ -1026,6 +1138,9 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
             accountFirstName: null,
             accountLastName: null,
             accountPreferences: {},
+            accountPlan: "tester",
+            singleMapMaxExportProjectIds: [],
+            publicMapExportProjectIds: [],
             activeProjectId: null,
             projects: [],
           });
@@ -1039,6 +1154,9 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
             accountFirstName: null,
             accountLastName: null,
             accountPreferences: {},
+            accountPlan: "tester",
+            singleMapMaxExportProjectIds: [],
+            publicMapExportProjectIds: [],
           });
         }
       } else if (!session.configured && get().userMode === "authenticated") {
@@ -1051,6 +1169,9 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
           accountFirstName: null,
           accountLastName: null,
           accountPreferences: {},
+          accountPlan: "tester",
+          singleMapMaxExportProjectIds: [],
+          publicMapExportProjectIds: [],
         });
       }
 
@@ -1068,9 +1189,18 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
 
   activateAuthenticatedAccount: async (account) => {
     const previous = get();
+    // Rattacher seulement le travail invité présent avant cette connexion.
+    // Charger son cache sous l'identité invitée avant de changer de compte.
+    const previousScope = projectCacheScope();
+    if (previous.userMode === "guest") {
+      for (const project of previous.projects) {
+        if (project.contentLoaded === false) await get().loadProject(project.id);
+        if (projectCacheScope() !== previousScope) return;
+      }
+    }
     const canReuseLocalProjects =
       previous.userMode === "guest" || previous.accountUserId === account.userId;
-    const localProjects = (canReuseLocalProjects ? previous.projects : []).map((project) => ({
+    const localProjects = (canReuseLocalProjects ? get().projects : []).map((project) => ({
       ...project,
       creatorName:
         previous.userMode === "guest" &&
@@ -1087,6 +1217,13 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       accountFirstName: account.firstName ?? null,
       accountLastName: account.lastName ?? null,
       accountPreferences: account.preferences ?? {},
+      accountPlan: normalizeDromapAccountPlan(account.plan),
+      singleMapMaxExportProjectIds: Array.from(
+        new Set(account.singleMapMaxExportProjectIds ?? []),
+      ),
+      publicMapExportProjectIds: Array.from(
+        new Set(account.publicMapExportProjectIds ?? []),
+      ),
       accountBackendConfigured: true,
       projects: localProjects,
       lastSyncError: null,
@@ -1098,6 +1235,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
     void (async () => {
       try {
         const remoteProjects = await fetchRemoteProjectSummaries();
+        if (get().accountUserId !== account.userId) return;
         const remoteById = new Map(remoteProjects.map((project) => [project.id, project]));
         const merged = mergeProjectLists(remoteProjects, get().projects);
         const activeProjectId =
@@ -1110,6 +1248,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
         // Les projets locaux plus récents (dont le projet invité rattaché au compte)
         // partent en arrière-plan : la connexion n'attend plus leur transfert complet.
         for (const localProject of localProjects) {
+          if (get().accountUserId !== account.userId) return;
           const remoteProject = remoteById.get(localProject.id);
           if (!remoteProject) {
             queueRemoteProjectSync(localProject.id, get, set, 80);
@@ -1125,6 +1264,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
           }
         }
       } catch (error) {
+        if (get().accountUserId !== account.userId) return;
         set({
           lastSyncError:
             error instanceof Error ? error.message : "Chargement des projets en ligne impossible.",
@@ -1151,6 +1291,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   },
 
   signOutAccount: async () => {
+    const ownerScope = projectCacheScope();
     if (get().userMode === "authenticated") {
       const synced = await get().syncAllProjects();
       if (!synced) {
@@ -1192,17 +1333,22 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       accountFirstName: null,
       accountLastName: null,
       accountPreferences: {},
+      accountPlan: "tester",
+      singleMapMaxExportProjectIds: [],
+      publicMapExportProjectIds: [],
       activeProjectId: null,
       projects: [],
       projectConflicts: {},
       lastSyncError: null,
     });
-    persistState(get());
+    await persistStateDurably(get());
+    await projectContentCache.clearOwner(ownerScope).catch(() => null);
     return { ok: true };
   },
 
 
   forgetAccountLocally: () => {
+    const ownerScope = projectCacheScope();
     const projectIdsToForget = get().projects.map((project) => project.id);
     if (typeof window !== "undefined") {
       for (const timer of remoteSyncTimers.values()) window.clearTimeout(timer);
@@ -1219,12 +1365,25 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       accountFirstName: null,
       accountLastName: null,
       accountPreferences: {},
+      accountPlan: "tester",
+      singleMapMaxExportProjectIds: [],
+      publicMapExportProjectIds: [],
       activeProjectId: null,
       projects: [],
       projectConflicts: {},
       lastSyncError: null,
     });
     persistState(get());
+    void projectContentCache.clearOwner(ownerScope).catch(() => null);
+  },
+
+  syncProjectNow: async (projectId) => {
+    if (get().userMode !== "authenticated") return true;
+    get().purgeExpiredTrash();
+    const project = get().projects.find((item) => item.id === projectId);
+    if (!project || isDromapTrashExpired(project)) return false;
+    cancelQueuedRemoteProjectSync(projectId);
+    return synchronizeSingleProject(projectId, get, set);
   },
 
   syncAllProjects: async () => {
@@ -1364,11 +1523,13 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   },
 
   loadProject: async (projectId) => {
-    let current = get().projects.find((project) => project.id === projectId);
+    const ownerScope = projectCacheScope();
+    const current = get().projects.find((project) => project.id === projectId);
     if (!current) return { ok: false, error: "Projet introuvable." };
     if (current.contentLoaded !== false) return { ok: true };
 
     const cached = await readProjectCache(projectId);
+    if (projectCacheScope() !== ownerScope) return { ok: false, error: "Connexion requise." };
     const knownRemoteRevision = current.remoteRevision ?? null;
 
     const applyCached = async (cache: ProjectCacheRecord) => {
@@ -1422,12 +1583,14 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
     if (knownRemoteRevision) {
       try {
         const remote = await fetchRemoteProject(current);
+        if (projectCacheScope() !== ownerScope) return { ok: false, error: "Connexion requise." };
         const loaded = { ...remote, contentLoaded: true } satisfies DromapProject;
         set((state) => ({ projects: updateProject(state.projects, projectId, () => loaded) }));
         await writeProjectCache(loaded);
         persistState(get());
         return { ok: true };
       } catch (error) {
+        if (projectCacheScope() !== ownerScope) return { ok: false, error: "Connexion requise." };
         if (cached) {
           await applyCached(cached);
           set({ lastSyncError: "Mode hors ligne : la copie enregistrée sur cet appareil a été ouverte." });
@@ -1449,11 +1612,13 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   },
 
   resolveProjectConflict: async (projectId, choice) => {
+    const ownerId = get().accountUserId;
     const conflict = get().projectConflicts[projectId];
     if (!conflict) return true;
     try {
       if (choice === "remote") {
         const remote = await fetchRemoteProject(conflict.remote);
+        if (get().accountUserId !== ownerId) return false;
         const loaded = { ...remote, contentLoaded: true } satisfies DromapProject;
         set((state) => {
           const conflicts = { ...state.projectConflicts };
@@ -1472,6 +1637,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       let local = get().projects.find((project) => project.id === projectId) ?? null;
       if (!local || local.contentLoaded === false) {
         const cached = await readProjectCache(projectId);
+        if (get().accountUserId !== ownerId) return false;
         local = cached?.project ?? null;
       }
       if (!local) throw new Error("La copie locale du projet n’est plus disponible.");
@@ -1479,7 +1645,9 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
         { ...local, contentLoaded: true, remoteUpdatedAt: conflict.remote.updatedAt },
         conflict.remote.revision,
         conflict.remote.updatedAt,
+        ownerId ?? undefined,
       );
+      if (get().accountUserId !== ownerId) return false;
       const resolved = {
         ...local,
         ...manifestFields(manifest),
@@ -1565,6 +1733,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
 
   createProject: (options = {}) => {
     const state = get();
+    if (options.id && state.projects.some(project => project.id === options.id)) return null;
     const activeProjects = state.projects.filter((project) => project.status !== "trashed");
     if (
       state.userMode === "guest" &&
@@ -1574,7 +1743,23 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       return null;
     }
 
-    const project = createProjectRecord(state, options);
+    const resolvedPreferences = resolveDromapPreferences(state.accountPreferences);
+    const shouldSkipSetup =
+      options.setupComplete === undefined &&
+      options.snapshot == null &&
+      resolvedPreferences.skipProjectSetup;
+    const effectiveOptions: CreateProjectOptions = shouldSkipSetup
+      ? {
+          ...options,
+          setupComplete: true,
+          initialBasemapId: getQuickStartBasemapId(state.accountPreferences),
+          quickStartLayerChoice: resolvedPreferences.quickStartCreateLayer1
+            ? "empty"
+            : "none",
+        }
+      : options;
+
+    const project = createProjectRecord(state, effectiveOptions);
     const nextProjects =
       state.userMode === "guest" && options.replaceGuestProject === true
         ? [...state.projects.filter((existing) => existing.status === "trashed"), project]
@@ -1613,6 +1798,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       deletedAt: null,
       status: source.setupComplete ? "saved" : "setup-incomplete",
       pendingChanges: 0,
+      aiConversation: [],
       contentLoaded: true,
       remoteRevision: null,
       remoteChunkCount: null,
@@ -1625,6 +1811,55 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
     persistState(get());
     queueRemoteProjectSync(copy.id, get, set, 0);
     return copy.id;
+  },
+
+  setProjectSourceAttribution: (projectId, patch) => {
+    set((state) => ({
+      projects: updateProject(state.projects, projectId, (project) => {
+        const current = project.sourceAttribution;
+        if (!current || current.kind !== "public-map") return project;
+        const hidden = current.allowRemoval
+          ? patch.hidden ?? current.hidden
+          : false;
+        return {
+          ...project,
+          sourceAttribution: {
+            ...current,
+            position: patch.position ?? current.position,
+            mapPosition:
+              patch.mapPosition !== undefined
+                ? patch.mapPosition
+                  ? {
+                      x: Math.max(0, Math.min(1, patch.mapPosition.x)),
+                      y: Math.max(0, Math.min(1, patch.mapPosition.y)),
+                    }
+                  : null
+                : current.mapPosition ?? null,
+            hidden,
+          },
+          updatedAt: nowIso(),
+        };
+      }),
+    }));
+    schedulePersist(get);
+    // Le crédit fait partie du projet exportable : sa position libre doit être
+    // enregistrée dans les chunks du projet, pas seulement dans les métadonnées.
+    queueRemoteProjectSync(projectId, get, set, 120);
+  },
+
+  setProjectAiConversation: (projectId, messages) => {
+    const normalized = normalizeProjectAiConversation(messages);
+    set((state) => ({
+      projects: updateProject(state.projects, projectId, (project) => ({
+        ...project,
+        aiConversation: cloneValue(normalized),
+        updatedAt: nowIso(),
+      })),
+    }));
+    schedulePersist(get);
+    // La discussion appartient au projet : on la synchronise dans les chunks du projet
+    // sans incrémenter l'historique ni le compteur de modifications cartographiques.
+    queueRemoteProjectSync(projectId, get, set, 350);
   },
 
   renameProject: (projectId, name) => {

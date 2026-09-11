@@ -258,12 +258,6 @@ const FRANCE_COUNTRY_DEFINITION = {
   fallbackLabel: "France",
 } satisfies CountryBasemapDefinition;
 
-const CARTO_SUBDOMAINS = ["a", "b", "c", "d"];
-
-function getCartoSubdomain(zoom: number, x: number, y: number) {
-  return CARTO_SUBDOMAINS[Math.abs(x + y + zoom) % CARTO_SUBDOMAINS.length];
-}
-
 function country(isoA2: string, isoA3: string, fallbackLabel: string) {
   return { isoA2, isoA3, fallbackLabel } satisfies CountryBasemapDefinition;
 }
@@ -781,17 +775,19 @@ function createCountryNeighborContextLayer(
 
 const STATIC_BASEMAPS: DromapBasemapConfig[] = [
   {
+    // ID historique conservé pour rouvrir les anciens projets sans continuer
+    // à consommer les serveurs de tuiles publics OSM en production.
     id: "osm",
-    kind: "tile",
-    label: "Standard",
-    description: "Fond OpenStreetMap actuel, avec noms et routes.",
-    tileUrl: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    kind: "maplibre",
+    label: "Standard (compatibilité)",
+    description:
+      "Ancien fond Standard, désormais servi via OpenFreeMap pour éviter la dépendance aux tuiles publiques OSM.",
+    styleUrl: "https://tiles.openfreemap.org/styles/liberty",
     attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 19,
+      '&copy; <a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 20,
+    exportQualityMode: "vector",
     exportBackground: "#f8fafc",
-    getExportTileUrl: (zoom, x, y) =>
-      `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`,
   },
 
   {
@@ -900,76 +896,57 @@ const STATIC_BASEMAPS: DromapBasemapConfig[] = [
     },
   },
   {
+    // Les quatre identifiants CARTO sont gardés uniquement pour compatibilité
+    // avec les projets historiques. Ils ne contactent plus cartocdn.com :
+    // l'offre gratuite CARTO est aujourd'hui réservée au non-commercial.
     id: "carto-light",
-    kind: "tile",
-    label: "Clair",
-    description: "Fond clair plus discret, avec labels.",
-    tileUrl: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-    screenTileUrl:
-      "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+    kind: "maplibre",
+    label: "Clair (compatibilité)",
+    description: "Ancien fond Clair, migré vers OpenFreeMap Positron.",
+    styleUrl: "https://tiles.openfreemap.org/styles/positron",
     attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      '&copy; <a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 20,
+    exportQualityMode: "vector",
     exportBackground: "#f8fafc",
-    getExportTileUrl: (zoom, x, y) => {
-      const subdomain = getCartoSubdomain(zoom, x, y);
-      return `https://${subdomain}.basemaps.cartocdn.com/light_all/${zoom}/${x}/${y}.png`;
-    },
   },
   {
     id: "carto-no-labels",
-    kind: "tile",
-    label: "Sans textes",
-    description: "Fond clair sans noms de villes ni labels cartographiques.",
-    tileUrl:
-      "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png",
-    screenTileUrl:
-      "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}@2x.png",
+    kind: "maplibre",
+    label: "Sans textes (compatibilité)",
+    description:
+      "Ancien fond CARTO sans textes, migré vers OpenFreeMap Positron. Les textes peuvent être masqués dans le rendu final.",
+    styleUrl: "https://tiles.openfreemap.org/styles/positron",
     attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      '&copy; <a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 20,
+    exportQualityMode: "vector",
     exportBackground: "#f8fafc",
-    getExportTileUrl: (zoom, x, y) => {
-      const subdomain = getCartoSubdomain(zoom, x, y);
-      return `https://${subdomain}.basemaps.cartocdn.com/light_nolabels/${zoom}/${x}/${y}.png`;
-    },
   },
   {
     id: "carto-voyager",
-    kind: "tile",
-    label: "Voyager",
-    description:
-      "Fond classique lisible avec couleurs douces, routes et labels.",
-    tileUrl:
-      "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-    screenTileUrl:
-      "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png",
+    kind: "maplibre",
+    label: "Voyager (compatibilité)",
+    description: "Ancien fond Voyager, migré vers OpenFreeMap Liberty.",
+    styleUrl: "https://tiles.openfreemap.org/styles/liberty",
     attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      '&copy; <a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 20,
+    exportQualityMode: "vector",
     exportBackground: "#f8fafc",
-    getExportTileUrl: (zoom, x, y) => {
-      const subdomain = getCartoSubdomain(zoom, x, y);
-      return `https://${subdomain}.basemaps.cartocdn.com/rastertiles/voyager/${zoom}/${x}/${y}.png`;
-    },
   },
   {
     id: "carto-voyager-no-labels",
-    kind: "tile",
-    label: "Voyager sans textes",
-    description: "Fond Voyager sans labels, pratique pour une carte annotée.",
-    tileUrl:
-      "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png",
-    screenTileUrl:
-      "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}@2x.png",
+    kind: "maplibre",
+    label: "Voyager sans textes (compatibilité)",
+    description:
+      "Ancien fond Voyager sans textes, migré vers OpenFreeMap Liberty. Les textes peuvent être masqués dans le rendu final.",
+    styleUrl: "https://tiles.openfreemap.org/styles/liberty",
     attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      '&copy; <a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 20,
+    exportQualityMode: "vector",
     exportBackground: "#f8fafc",
-    getExportTileUrl: (zoom, x, y) => {
-      const subdomain = getCartoSubdomain(zoom, x, y);
-      return `https://${subdomain}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/${zoom}/${x}/${y}.png`;
-    },
   },
   {
     id: "blank-white",
@@ -1414,6 +1391,10 @@ export function getDromapBasemapExportQualityMode(
     return basemap.exportQualityMode;
   }
 
+  // Les fonds blancs/territoriaux sont composés d’un aplat et de frontières
+  // vectorielles DroMap : ils peuvent être rerendus proprement à n’importe
+  // quelle définition, exactement comme un fond vectoriel.
+  if (basemap.kind === "solid") return "vector";
   return basemap.kind === "maplibre" ? "vector" : "standard-only";
 }
 

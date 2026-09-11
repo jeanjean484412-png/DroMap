@@ -33,10 +33,10 @@ const eslintConfig = defineConfig([
 
   {
     files: [
-      "app/editor/test/geojson-layers-renderer.tsx",
-      "app/editor/test/geojson-leaflet-rendering.ts",
-      "app/editor/test/geojson-layer-style.ts",
-      "app/editor/test/export-*.{ts,tsx}",
+      "editor/geojson-layers-renderer.tsx",
+      "editor/geojson-leaflet-rendering.ts",
+      "editor/geojson-layer-style.ts",
+      "editor/export-*.{ts,tsx}",
       "app/**/render/**/*.{ts,tsx}",
       "lib/dromap/project-thumbnail.ts",
       "components/dromap-product/dashboard-project-export-dialog.tsx"

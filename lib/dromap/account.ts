@@ -1,3 +1,5 @@
+import type { DromapAccountPlan } from "@/lib/dromap/plans";
+
 export type DromapAccountSession = {
   userId: string;
   email: string;
@@ -5,6 +7,9 @@ export type DromapAccountSession = {
   firstName: string | null;
   lastName: string | null;
   preferences: Record<string, unknown>;
+  plan: DromapAccountPlan;
+  singleMapMaxExportProjectIds: string[];
+  publicMapExportProjectIds: string[];
 };
 
 export type DromapSessionResult = {
@@ -102,12 +107,13 @@ export async function signUpDromapAccount(
   firstName: string,
   lastName: string,
   returnTo = "/dashboard",
+  termsVersion?: string,
 ) {
   const response = await fetch("/api/dromap/auth/sign-up", {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, firstName, lastName, returnTo }),
+    body: JSON.stringify({ email, password, firstName, lastName, returnTo, termsVersion }),
   });
   return readApiJson<{
     authenticated: boolean;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { DromapProductBootstrap } from "./product-bootstrap";
@@ -10,21 +10,28 @@ import { DromapProjectEditorTopbar } from "./project-editor-topbar";
 import { DromapProjectInfoDialog } from "./project-info-dialog";
 import { DromapEditorTour } from "./editor-tour";
 import { DromapButton } from "@/components/dromap-ui/button";
-import { EditorSurface } from "@/app/editor/test/editor-surface";
+import { EditorSurface } from "@/editor/editor-surface";
 import {
   createBlankDromapEditorProjectSnapshot,
   createDromapEditorProjectSnapshot,
   restoreDromapEditorProjectSnapshot,
   type DromapEditorProjectSnapshot,
 } from "@/lib/dromap/editor-project-persistence";
-import type { DromapProject } from "@/lib/dromap/product";
-import { createDromapLayer } from "@/stores/editor-test-layers";
-import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
-import { useEditorTestCustomMarkersStore } from "@/stores/editor-test-custom-markers";
-import { useEditorTestMapViewStore } from "@/stores/editor-test-map-view";
-import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
-import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
-import { useEditorTestExportStore } from "@/stores/editor-test-export";
+import { getDromapCapabilities, type DromapProject } from "@/lib/dromap/product";
+import { createDromapLayer } from "@/stores/editor-layers";
+import { useEditorBasemapStore } from "@/stores/editor-basemap";
+import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
+import { useEditorMapViewStore } from "@/stores/editor-map-view";
+import { useEditorSelectionStore } from "@/stores/editor-selection";
+import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
+import { useEditorExportStore } from "@/stores/editor-export";
+import { useEditorFeaturesStore } from "@/stores/editor-features";
+import {
+  beginEditorHistorySession,
+  completeEditorHistorySession,
+  endEditorHistorySession,
+  runWithoutEditorHistory,
+} from "@/stores/editor-history-coordinator";
 import { useDromapProductStore } from "@/stores/dromap-product";
 
 function cloneValue<T>(value: T): T {
@@ -53,11 +60,11 @@ function clearTransientMapNavigationRequests() {
    * Ces demandes sont des commandes transitoires, pas des données de projet.
    * Elles doivent être supprimées avant de monter la carte de l’éditeur.
    */
-  useEditorTestBasemapStore.setState({
+  useEditorBasemapStore.setState({
     basemapFitRequestId: 0,
   });
 
-  useEditorTestSelectionStore.setState({
+  useEditorSelectionStore.setState({
     focusedSelectionRequest: null,
     workspaceRecenterRequest: null,
     mapBoundsFitRequest: null,
@@ -274,7 +281,7 @@ type EditorContentProps = {
   initialView?: "editor" | "render";
 };
 
-function LoadedEditorContent({
+function EditorContent({
   projectId,
   initialView = "editor",
 }: EditorContentProps) {
@@ -283,28 +290,70 @@ function LoadedEditorContent({
     state.projects.find((item) => item.id === projectId),
   );
   const userMode = useDromapProductStore((state) => state.userMode);
+  const accountPlan = useDromapProductStore((state) => state.accountPlan);
   const saveProjectSnapshot = useDromapProductStore(
     (state) => state.saveProjectSnapshot,
   );
+  const loadProject = useDromapProductStore((state) => state.loadProject);
   const setActiveProjectId = useDromapProductStore(
     (state) => state.setActiveProjectId,
   );
-  const workspaceBasemapBaseZoom = useEditorTestWorkspaceStore(
+  const workspaceBasemapBaseZoom = useEditorWorkspaceStore(
     (state) => state.workspaceBasemapBaseZoom,
   );
-  const currentMapView = useEditorTestMapViewStore(
+  const currentMapView = useEditorMapViewStore(
     (state) => state.currentView,
   );
   const initializedProjectRef = useRef<string | null>(null);
+  const loadingProjectRef = useRef<string | null>(null);
   const renderPanelOpenedRef = useRef(false);
+  const renderPanelWasVisibleRef = useRef(false);
+  const isExportPanelOpen = useEditorExportStore(
+    (state) => state.isExportPanelOpen,
+  );
   const [ready, setReady] = useState(false);
   const [mapPresentationReady, setMapPresentationReady] = useState(false);
   const [waitingForWorkspaceValidation, setWaitingForWorkspaceValidation] =
     useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useLayoutEffect(() => {
+    // Changer de projet ouvre une nouvelle session d'historique AVANT les effets
+    // enfants. L'enregistrement reste suspendu jusqu'à la restauration complète
+    // du snapshot : aucun effet tardif du projet précédent ne peut donc injecter
+    // sa zone, ses calques ou ses objets dans Ctrl+Z du nouveau projet.
+    beginEditorHistorySession(projectId);
+    useEditorFeaturesStore.getState().resetHistory();
+    return () => {
+      useEditorFeaturesStore.getState().resetHistory();
+      endEditorHistorySession(projectId);
+    };
+  }, [projectId]);
+
   useEffect(() => {
     if (!project || initializedProjectRef.current === project.id) return;
+
+    // Les métadonnées du projet sont volontairement légères au bootstrap :
+    // le snapshot complet vit dans IndexedDB (ou est récupéré depuis Supabase).
+    // Sur un rafraîchissement dur, il faut donc charger ce contenu AVANT de
+    // construire/restaurer le snapshot de l'éditeur. Sans cette étape, un
+    // editorSnapshot null était interprété comme un nouveau projet vide, alors
+    // qu'une navigation SPA conservait encore les objets en mémoire.
+    if (project.contentLoaded === false) {
+      if (loadingProjectRef.current === project.id) return;
+      loadingProjectRef.current = project.id;
+      setReady(false);
+      setMapPresentationReady(false);
+      setError(null);
+
+      void loadProject(project.id).then((result) => {
+        loadingProjectRef.current = null;
+        if (!result.ok) {
+          setError(result.error || "Le contenu enregistré du projet n’a pas pu être chargé.");
+        }
+      });
+      return;
+    }
 
     if (project.status === "trashed") {
       router.replace("/trash");
@@ -320,8 +369,11 @@ function LoadedEditorContent({
       setReady(false);
       setMapPresentationReady(false);
       setError(null);
-      const customMarkersStore = useEditorTestCustomMarkersStore.getState();
-      const customMarkerLibraryEnabled = userMode === "authenticated";
+      const customMarkersStore = useEditorCustomMarkersStore.getState();
+      const customMarkerLibraryEnabled = getDromapCapabilities(
+        userMode,
+        accountPlan,
+      ).canSaveCustomMarkersToLibrary;
       customMarkersStore.setLibraryPersistenceEnabled(
         customMarkerLibraryEnabled,
       );
@@ -345,7 +397,14 @@ function LoadedEditorContent({
       // rerender synchrone réexécute l'initialisation du même projet.
       initializedProjectRef.current = project.id;
       setWaitingForWorkspaceValidation(requiresEditorWorkspaceValidation);
-      restoreDromapEditorProjectSnapshot(snapshot);
+      runWithoutEditorHistory(() => {
+        restoreDromapEditorProjectSnapshot(snapshot);
+      });
+      // La restauration terminée devient la baseline immuable de cette ouverture.
+      // Ctrl+Z/Ctrl+Y ne commencent à enregistrer qu'à partir de la première
+      // vraie action utilisateur effectuée dans CE projet.
+      useEditorFeaturesStore.getState().resetHistory();
+      completeEditorHistorySession(projectId);
       setActiveProjectId(project.id);
 
       // La carte doit être montée pour que MapViewController puisse consommer
@@ -353,6 +412,8 @@ function LoadedEditorContent({
       // On n'enregistre donc plus un snapshot intermédiaire avant ce montage.
       setReady(true);
     } catch (initializationError) {
+      endEditorHistorySession(projectId);
+      useEditorFeaturesStore.getState().resetHistory();
       setError(
         initializationError instanceof Error
           ? initializationError.message
@@ -361,10 +422,22 @@ function LoadedEditorContent({
     }
   }, [
     project,
+    loadProject,
     router,
     setActiveProjectId,
+    accountPlan,
     userMode,
   ]);
+
+
+  useEffect(() => {
+    // Garde-fou : une fois l’éditeur réellement prêt, l’historique de CE projet
+    // doit forcément accepter les nouvelles actions utilisateur. Cela évite qu’un
+    // chargement asynchrone laisse Ctrl+Z/Ctrl+Y désactivés alors que la carte est
+    // déjà utilisable. La pile reste vide grâce au reset effectué après restauration.
+    if (!ready) return;
+    completeEditorHistorySession(projectId);
+  }, [projectId, ready]);
 
   useEffect(() => {
     if (
@@ -408,7 +481,7 @@ function LoadedEditorContent({
 
     renderPanelOpenedRef.current = true;
     const timeoutId = window.setTimeout(() => {
-      useEditorTestExportStore.getState().openExportPanel();
+      useEditorExportStore.getState().openExportPanel();
     }, 120);
 
     return () => window.clearTimeout(timeoutId);
@@ -418,6 +491,16 @@ function LoadedEditorContent({
     ready,
     waitingForWorkspaceValidation,
   ]);
+
+  useEffect(() => {
+    if (initialView !== "render" || !project) return;
+    if (isExportPanelOpen) {
+      renderPanelWasVisibleRef.current = true;
+      return;
+    }
+    if (!renderPanelWasVisibleRef.current) return;
+    router.replace(`/projects/${project.id}/editor`, { scroll: false });
+  }, [initialView, isExportPanelOpen, project, router]);
 
   const handleMapPresentationReady = useCallback(() => {
     setMapPresentationReady(true);
@@ -429,7 +512,7 @@ function LoadedEditorContent({
         <div>
           <h1 className="text-xl font-black text-slate-950">Projet introuvable</h1>
           <DromapButton className="mt-4" onClick={() => router.push("/dashboard")}>
-            Retour au tableau de bord
+            Menu principal
           </DromapButton>
         </div>
       </div>
@@ -443,7 +526,7 @@ function LoadedEditorContent({
           <h1 className="text-xl font-black text-slate-950">Chargement impossible</h1>
           <p className="mt-2 text-sm leading-6 text-red-700">{error}</p>
           <DromapButton className="mt-4" onClick={() => router.push("/dashboard")}>
-            Retour au tableau de bord
+            Menu principal
           </DromapButton>
         </div>
       </div>
@@ -491,62 +574,6 @@ function LoadedEditorContent({
       </DromapProjectAutosaveProvider>
     </DromapProductRuntimeProvider>
   );
-}
-
-function EditorContent({ projectId, initialView = "editor" }: EditorContentProps) {
-  const router = useRouter();
-  const project = useDromapProductStore((state) =>
-    state.projects.find((item) => item.id === projectId),
-  );
-  const loadProject = useDromapProductStore((state) => state.loadProject);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!project || project.contentLoaded !== false) return;
-    let cancelled = false;
-    setLoadError(null);
-    void loadProject(projectId).then((result) => {
-      if (!cancelled && !result.ok) setLoadError(result.error);
-    });
-    return () => { cancelled = true; };
-  }, [loadProject, project, projectId]);
-
-  if (!project) {
-    return (
-      <div className="grid h-screen place-items-center bg-slate-50 p-6 text-center">
-        <div>
-          <h1 className="text-xl font-black text-slate-950">Projet introuvable</h1>
-          <DromapButton className="mt-4" onClick={() => router.push("/dashboard")}>
-            Retour au tableau de bord
-          </DromapButton>
-        </div>
-      </div>
-    );
-  }
-
-  if (loadError) {
-    return (
-      <div className="grid h-screen place-items-center bg-slate-50 p-6 text-center">
-        <div className="max-w-lg rounded-2xl border border-red-200 bg-white p-6 shadow-sm">
-          <h1 className="text-xl font-black text-slate-950">Chargement impossible</h1>
-          <p className="mt-2 text-sm leading-6 text-red-700">{loadError}</p>
-          <DromapButton className="mt-4" onClick={() => router.push("/dashboard")}>
-            Retour au tableau de bord
-          </DromapButton>
-        </div>
-      </div>
-    );
-  }
-
-  if (project.contentLoaded === false) {
-    return (
-      <div className="grid h-screen place-items-center bg-slate-50 text-sm text-slate-600">
-        Ouverture du projet…
-      </div>
-    );
-  }
-
-  return <LoadedEditorContent projectId={projectId} initialView={initialView} />;
 }
 
 export function DromapProjectEditorClient({

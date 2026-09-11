@@ -1,3 +1,4 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
 import {
@@ -7,7 +8,7 @@ import {
   supabaseAuthFetch,
 } from "@/lib/dromap/server/supabase-rest";
 
-export async function POST() {
+async function handlePOST() {
   const { accessToken } = await readAuthCookies();
   if (getSupabaseConfig() && accessToken) {
     try {
@@ -21,3 +22,5 @@ export async function POST() {
   }
   return clearAuthCookies(NextResponse.json({ ok: true }));
 }
+
+export const POST = withRequestSecurity(handlePOST);

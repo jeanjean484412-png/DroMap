@@ -1,0 +1,118 @@
+"use client";
+
+import { useEffect } from "react";
+import L from "leaflet";
+import { useMap } from "react-leaflet";
+
+import { deactivateGeomanModes } from "@/lib/dromap/geoman-toolbar";
+import type { DroMapFeature } from "@/lib/dromap/feature";
+import { useEditorFeaturesStore } from "@/stores/editor-features";
+import { useEditorModeStore } from "@/stores/editor-mode";
+import { useEditorSelectionStore } from "@/stores/editor-selection";
+import { useEditorTextEditStore } from "@/stores/editor-text-edit";
+import { useEditorToolStore } from "@/stores/editor-tool";
+import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
+import { applyDrawingPresetToFeature } from "@/stores/editor-drawing-options";
+
+function createTextFeature(
+  latLng: L.LatLng,
+  textReferenceZoom: number,
+): DroMapFeature {
+  const feature: DroMapFeature = {
+    type: "Feature",
+    id: crypto.randomUUID(),
+    geometry: {
+      type: "Point",
+      coordinates: [latLng.lng, latLng.lat],
+    },
+    properties: {
+      type: "text",
+      label: "Texte",
+      style: {
+        color: "#111827",
+        opacity: 1,
+        fontSize: 22,
+        textBold: false,
+        textItalic: false,
+        textReferenceZoom,
+        textRotation: 0,
+        textBackgroundEnabled: false,
+        textBackgroundColor: "#ffffff",
+        textBackgroundOpacity: 0.85,
+        textBorderEnabled: false,
+        textBorderColor: "#111827",
+        textBorderWidth: 2,
+        textOutlineEnabled: true,
+        textOutlineColor: "#ffffff",
+        textOutlineWidth: 1.5,
+      },
+      meta: { version: 1 },
+    },
+  };
+
+  return applyDrawingPresetToFeature(feature);
+}
+
+export function TextToolLayer() {
+  const map = useMap();
+
+  const currentMode = useEditorModeStore((state) => state.currentMode);
+  const activeTool = useEditorToolStore((state) => state.activeTool);
+  const addFeatureWithHistory = useEditorFeaturesStore(
+    (state) => state.addFeatureWithHistory,
+  );
+  const setSelectedFeatureId = useEditorSelectionStore(
+    (state) => state.setSelectedFeatureId,
+  );
+  const startEditingTextFeature = useEditorTextEditStore(
+    (state) => state.startEditingTextFeature,
+  );
+  const resetActiveTool = useEditorToolStore(
+    (state) => state.resetActiveTool,
+  );
+
+  useEffect(() => {
+    if (currentMode !== "edit" || activeTool !== "text") {
+      return;
+    }
+
+    deactivateGeomanModes(map);
+
+    const container = map.getContainer();
+    const previousCursor = container.style.cursor;
+
+    container.style.cursor = "text";
+
+    const handleMapClick = (event: L.LeafletMouseEvent) => {
+      const baseZoom =
+        useEditorWorkspaceStore.getState().workspaceBasemapBaseZoom;
+      const referenceZoom =
+        typeof baseZoom === "number" && Number.isFinite(baseZoom)
+          ? baseZoom
+          : map.getZoom();
+      const feature = createTextFeature(event.latlng, referenceZoom);
+
+      addFeatureWithHistory(feature);
+      setSelectedFeatureId(feature.id);
+      resetActiveTool();
+      startEditingTextFeature(feature.id);
+    };
+
+    map.on("click", handleMapClick);
+
+    return () => {
+      map.off("click", handleMapClick);
+      container.style.cursor = previousCursor;
+    };
+  }, [
+    map,
+    currentMode,
+    activeTool,
+    addFeatureWithHistory,
+    resetActiveTool,
+    setSelectedFeatureId,
+    startEditingTextFeature,
+  ]);
+
+  return null;
+}

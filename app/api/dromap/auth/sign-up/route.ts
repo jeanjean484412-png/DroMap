@@ -1,5 +1,9 @@
+import { checkAbuseLimit } from "@/lib/dromap/server/abuse-limit";
+import { safeReturnTo } from "@/lib/dromap/safe-return-to";
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
+import { DROMAP_PRIVACY_VERSION, DROMAP_TERMS_VERSION } from "@/lib/dromap/legal-public";
 import {
   extractTokens,
   getSupabaseConfig,
@@ -13,7 +17,9 @@ function passwordLooksValid(password: string) {
   return password.length >= 8;
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
+  const networkLimit = await checkAbuseLimit(request, "sign-up");
+  if (networkLimit) return networkLimit;
   if (!getSupabaseConfig()) {
     return NextResponse.json(
       { error: "La création de compte est momentanément indisponible." },
@@ -29,9 +35,15 @@ export async function POST(request: Request) {
         lastName?: unknown;
         displayName?: unknown;
         returnTo?: unknown;
+        termsVersion?: unknown;
       }
     | null;
   const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+  if (email.length > 254) return NextResponse.json({ error: "Adresse e-mail invalide." }, { status: 400 });
+  if (email) {
+    const identityLimit = await checkAbuseLimit(request, "sign-up", email);
+    if (identityLimit) return identityLimit;
+  }
   const password = typeof body?.password === "string" ? body.password : "";
   const firstName =
     typeof body?.firstName === "string" ? body.firstName.trim().slice(0, 80) : "";
@@ -42,10 +54,7 @@ export async function POST(request: Request) {
   const displayName =
     [firstName, lastName].filter(Boolean).join(" ") || legacyDisplayName || "Utilisateur DroMap";
   const requestedReturnTo = typeof body?.returnTo === "string" ? body.returnTo : "/dashboard";
-  const returnTo =
-    requestedReturnTo.startsWith("/") && !requestedReturnTo.startsWith("//")
-      ? requestedReturnTo
-      : "/dashboard";
+  const returnTo = safeReturnTo(requestedReturnTo);
 
   if (!email || !password) {
     return NextResponse.json(
@@ -77,6 +86,9 @@ export async function POST(request: Request) {
             display_name: displayName,
             first_name: firstName || null,
             last_name: lastName || null,
+            dromap_terms_version: DROMAP_TERMS_VERSION,
+            dromap_terms_accepted_at: new Date().toISOString(),
+            dromap_privacy_version_acknowledged: DROMAP_PRIVACY_VERSION,
           },
         }),
       },
@@ -109,6 +121,9 @@ export async function POST(request: Request) {
           firstName: firstName || null,
           lastName: lastName || null,
           preferences: {},
+          plan: "free",
+          singleMapMaxExportProjectIds: [],
+          publicMapExportProjectIds: [],
         },
       });
       return setAuthCookies(response, tokens.accessToken, tokens.refreshToken, tokens.expiresIn);
@@ -126,3 +141,5 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const POST = withRequestSecurity(handlePOST);

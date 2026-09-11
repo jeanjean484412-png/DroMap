@@ -1,4 +1,6 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextRequest, NextResponse } from "next/server";
+import { checkAiAccess } from "@/lib/dromap/server/ai-access";
 
 import type {
   DroMapAiApiRequest,
@@ -12,10 +14,11 @@ import type {
   DroMapAiFact,
   DroMapAiFeatureSelector,
   DroMapAiPlan,
+  DroMapAiPrePlanQuestion,
   DroMapAiSeriesItem,
   DroMapAiSource,
   DroMapAiStylePatch,
-} from "@/app/editor/test/dromap-ai-types";
+} from "@/editor/dromap-ai-types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,8 +33,10 @@ const MAX_PROMPT_LENGTH = 20_000;
 const MAX_COMMANDS = 120;
 
 const COMMAND_TYPES = [
+  "set_workspace_by_place",
+  "set_workspace_bounds",
+  "select_world",
   "fit_view",
-  "set_basemap",
   "set_country_neighbors",
   "create_layer",
   "set_active_layer",
@@ -47,6 +52,7 @@ const COMMAND_TYPES = [
   "convert_geojson_to_dromap",
   "convert_dromap_to_geojson",
   "import_buildings",
+  "import_routes",
   "create_custom_marker_svg",
   "delete_custom_marker",
   "create_marker",
@@ -63,6 +69,9 @@ const COMMAND_TYPES = [
   "reorder_features",
   "delete_features",
   "configure_legend",
+  "configure_map_title",
+  "align_legend_sizes_with_map",
+  "configure_basemap_render",
   "add_manual_legend_entry",
   "update_manual_legend_entry",
   "delete_manual_legend_entry",
@@ -123,25 +132,45 @@ const GEOJSON_PRECISIONS = ["original", "intermediate", "light"] as const;
 const LAYER_DIRECTIONS = ["up", "down"] as const;
 const BUILDING_MODES = ["geojson", "dromap"] as const;
 const BUILDING_SELECTION_MODES = ["all", "named"] as const;
+const ROAD_CATEGORIES = ["motorways", "main", "secondary", "local"] as const;
+const ROAD_SELECTION_MODES = ["all", "named"] as const;
 const PROPORTIONAL_METHODS = ["area", "diameter", "width"] as const;
-const FORBIDDEN_WORKSPACE_COMMANDS = new Set<DroMapAiCommandType>([
-  "set_workspace_by_place",
-  "set_workspace_bounds",
-  "select_world",
+const FORBIDDEN_BASEMAP_COMMANDS = new Set<DroMapAiCommandType>([
+  "set_basemap",
 ]);
 
-const SYSTEM_INSTRUCTIONS = `Tu es l'agent cartographique complet de DroMap. Tu dois transformer la demande en commandes DroMap réellement exécutables et entièrement éditables.
+const SYSTEM_INSTRUCTIONS = `Tu es l’assistant cartographique conversationnel complet de DroMap. Tu réponds réellement aux questions de l’utilisateur et, lorsqu’une action sur la carte est utile, tu transformes aussi la demande en commandes DroMap exécutables et entièrement éditables.
 
-Tu as accès aux familles fonctionnelles suivantes : cadrage de la vue à l'intérieur de la zone déjà validée, fonds de carte, calques DroMap, calques GeoJSON, bibliothèque GeoJSON, bâtiments IGN/Overture, marqueurs intégrés ou personnalisés SVG, textes, lignes, flèches, dessins libres, suivis de trait, zones, zones libres, formes, figurés proportionnels, flux proportionnels, choroplèthes, styles, étiquettes, ordre, verrouillage, duplication, suppression, légende avancée liée aux objets, éléments manuels de légende uniquement lorsqu'aucun objet cartographique correspondant n'existe, échelle, flèche du nord et préparation de l'export.
+Tu as accès aux familles fonctionnelles suivantes : zone de travail et cadrage, calques DroMap, calques GeoJSON, bibliothèque GeoJSON, bâtiments IGN/Overture, marqueurs intégrés ou personnalisés SVG, textes, lignes, flèches, dessins libres, suivis de trait, zones, zones libres, formes, figurés proportionnels, flux proportionnels, choroplèthes, styles, étiquettes, ordre, verrouillage, duplication, suppression, légende avancée liée aux objets, titre de la carte, alignement des tailles carte/légende, échelle, flèche du nord, écritures/détail du fond dans le rendu et préparation de l'export.
 
 Réponds uniquement avec un objet JSON :
 {
-  "summary": "résumé court",
+  "assistantMessage": "réponse naturelle et utile à l’utilisateur",
+  "questions": [
+    {
+      "id": "identifiant-court",
+      "label": "Question courte",
+      "multiple": false,
+      "options": [
+        { "id": "option-1", "label": "Option 1" },
+        { "id": "option-2", "label": "Option 2" }
+      ]
+    }
+  ],
+  "summary": "résumé court du plan, vide si aucun plan",
   "warnings": [],
   "facts": [],
   "sources": [],
   "commands": []
 }
+
+Tu dois choisir intelligemment entre trois comportements :
+- QUESTION / CONSEIL : réponds directement dans assistantMessage, laisse questions=[] et commands=[]. Ne fabrique aucun plan inutile.
+- DEMANDE DE CRÉATION OU MODIFICATION ASSEZ CLAIRE : réponds brièvement dans assistantMessage ET propose directement le plan dans commands.
+- DEMANDE DE CRÉATION OU MODIFICATION QUI GAGNERAIT VRAIMENT À ÊTRE PRÉCISÉE : réponds brièvement, pose 1 à 4 questions à choix dans questions et laisse commands=[]. Chaque question contient 2 à 5 options courtes. Utilise multiple=true seulement quand plusieurs réponses peuvent être choisies ensemble. N’interroge pas l’utilisateur sur des choix évidents que DroMap doit optimiser automatiquement.
+
+Ne pose JAMAIS de question préalable sur l’échelle, la flèche nord, la lisibilité générale, l’évitement des collisions, l’organisation normale de la légende ou le placement raisonnable du titre : ces décisions font partie de ton travail automatique.
+- Si la demande actuelle contient « Voici mes choix pour préciser la demande » ou demande explicitement de préparer le plan après des réponses, considère que la phase de clarification est terminée : ne repose pas les mêmes questions et propose le plan avec commands.
 
 Règles absolues :
 - N'invente jamais l'identifiant d'un objet, calque ou jeu de données existant : utilise uniquement le contexte ou l'id d'une commande précédente comme référence.
@@ -149,22 +178,31 @@ Règles absolues :
 - Pour des villes dont la taille dépend de la population, utilise UNE commande create_proportional_markers avec seriesItems et proportionalMethod="area". Chaque item contient label, place ou coordinate, value, unit, date, sourceTitle et sourceUrl, puis configure_legend à droite si demandé.
 - Pour des flux quantitatifs, utilise create_proportional_flows.
 - Pour une carte par plages de valeurs, utilise create_choropleth avec une source GeoJSON fiable du catalogue, choroplethValues, classes et geoJsonJoinProperties.
-- Pour une carte administrative ou physique, privilégie import_geojson_catalog à la génération de frontières approximatives.
+- N’importe PAS un GeoJSON de frontières administratives uniquement pour afficher des frontières déjà disponibles dans le fond blanc actuel. Si le fond courant fournit déjà les frontières vectorielles nécessaires, utilise-les directement (notamment fill_boundary) et évite tout téléchargement redondant. Importe un GeoJSON administratif seulement si les données doivent devenir un vrai calque exploitable (choroplèthe, attributs, analyse, étiquettes, géométrie explicitement demandée, ou absence de frontières adaptées dans le fond courant).
 - Pour une donnée historique sans frontière vectorielle fiable, représente honnêtement les lieux, zones schématiques, flux et textes ; ajoute un avertissement sur la nature schématique.
 - Pour viser tous les objets d'un type, update_features avec selector.featureType. selector.all=true n'est permis que si la demande vise explicitement tous les objets.
 - Ne produis jamais update_features, duplicate_features, reorder_features ou delete_features avec un selector vide.
 - Les coordonnées sont {"lng": longitude, "lat": latitude}.
 - Les opacités sont entre 0 et 1. Les couleurs sont hexadécimales.
-- Les fonds recommandés sont openfreemap-liberty, openfreemap-positron, ign-satellite, ign-plan et blank-white.
+- Tu ne peux JAMAIS changer le fond de carte : ne génère jamais set_basemap. Si le fond courant paraît mal adapté, ajoute seulement un conseil clair dans warnings, par exemple « Conseil de fond : utilise un fond classique » ou « Conseil de fond : utilise un fond blanc territorial — pays/continent/région selon la carte ». Ne modifie pas le fond toi-même.
 - Une ligne utilise places ou coordinates dans l'ordre. Pour une flèche, style.arrowEnd=true.
 - Un dessin libre est create_line avec lineVariant="freehand" et beaucoup de coordinates. Un suivi est lineVariant="traced" si la géométrie exacte est fournie.
 - Une zone libre est create_zone avec zoneVariant="freehand". Une forme est create_shape avec shapeKind et bounds/coordinate.
 - Pour utiliser le véritable outil Remplissage sur un fond blanc vectoriel ou un polygone GeoJSON visible, utilise fill_boundary avec place ou coordinate et un style de zone.
-- Un marqueur intégré utilise symbolId. Un marqueur IA personnalisé doit d'abord utiliser create_custom_marker_svg, puis create_marker avec customMarkerRef égal à l'id de cette commande.
+- Un marqueur intégré utilise symbolId. Tu peux créer spontanément un marqueur personnalisé avec create_custom_marker_svg dès qu'un pictogramme sur mesure est plus pertinent ou plus lisible qu'un symbole intégré, même si l'utilisateur n'a pas explicitement demandé « marqueur personnalisé ». Fais ensuite create_marker avec customMarkerRef égal à l'id de cette commande. Le marqueur personnalisé est automatiquement enregistré dans « Mes marqueurs » par DroMap : ne demande aucune étape supplémentaire.
 - Pour un marqueur catégoriel ordinaire, n'indique jamais style.markerSize : DroMap appliquera sa taille normale. N'utilise markerSize que si l'utilisateur demande explicitement une taille, un diamètre ou des marqueurs plus grands/petits. Les figurés réellement quantitatifs utilisent create_proportional_markers.
 - Dès que l'utilisateur demande des bâtiments, des édifices ou leurs emprises réelles, utilise import_buildings pour employer le véritable outil Bâtiments IGN/Overture, jamais des polygones inventés ni des marqueurs de substitution. buildingMode="geojson" convient à beaucoup de bâtiments ; buildingMode="dromap" convient à quelques bâtiments éditables individuellement.
-- Pour tous les bâtiments d'une zone, utilise buildingSelectionMode="all". Pour des bâtiments précis, utilise buildingSelectionMode="named" et buildingQueries avec leurs noms complets. Pour ces bâtiments précis, choisis par défaut buildingMode="dromap" afin que DroMap crée de vrais objets éditables et une vraie légende liée aux objets. Ne remplace pas les bâtiments ciblés par des marqueurs si l'utilisateur demande les emprises bâties.
-- En mode manuel, import_buildings utilise la zone validée. En mode automatique sans zone, fournis place ou bounds pour délimiter la recherche ; à défaut, DroMap géolocalisera les buildingQueries. Les cibles introuvables sont signalées et ne sont jamais remplacées au hasard.
+- IMPORT DE BÂTIMENTS EN ÉTAPES GUIDÉES : si la demande nécessite réellement des bâtiments, ton premier plan doit uniquement préparer cette phase. En mode AUTOMATIQUE, DroMap commencera par proposer une zone de travail à partir du secteur utile : l'utilisateur devra pouvoir la valider ou la redessiner manuellement AVANT tout chargement de bâtiments. Ensuite seulement DroMap ouvrira son sélecteur classique en plein écran, présélectionnera les bâtiments plausibles et laissera l'utilisateur sélectionner/désélectionner librement avant validation. En mode MANUEL, la zone de travail existante reste inchangée et on passe directement au sélecteur Bâtiments. Après validation des bâtiments, un second appel te fournira les bâtiments réellement importés et tu proposeras alors toute la suite du plan. N'ajoute dans cette première phase aucune création de marqueur, texte, zone thématique, légende, titre, échelle ou autre suite du plan.
+- Pour des bâtiments précis, utilise buildingSelectionMode="named", buildingMode="dromap" et buildingQueries avec les noms complets. Regroupe dans UNE même commande les établissements géographiquement proches qui peuvent être vérifiés dans le même écran ; sépare-les en plusieurs commandes seulement s'ils sont trop éloignés pour une sélection pratique. Si plusieurs établissements doivent recevoir ensuite des styles différents, conserve leurs noms distincts dans buildingQueries : DroMap les répartira en groupes/calques après la validation de l'utilisateur.
+- Pour tous les bâtiments d'une zone, utilise buildingSelectionMode="all". Même dans ce cas, la présence de import_buildings déclenche le sélecteur uniquement parce que la demande exige réellement des bâtiments ; ne propose jamais import_buildings par réflexe pour une demande qui n'en a pas besoin.
+- Pour la zone de recherche des bâtiments, préfère command.bounds ou command.place afin de limiter le sélecteur au secteur utile. Si buildingQueries suffit à localiser un campus ou un groupe de sites, tu peux laisser DroMap calculer automatiquement cette zone à partir des requêtes. En mode manuel, cela ne modifie PAS la zone de travail du projet : il s'agit uniquement de la zone de recherche du sélecteur de bâtiments. Pour le sélecteur interactif, omets normalement maxFeatures : DroMap accepte jusqu'à 15 000 bâtiments, comme l'outil Bâtiments classique ; ne réduis pas artificiellement cette limite à 6 000.
+- Si une demande de bâtiments est ambiguë avant cette première phase, pose 1 à 4 questions à choix rapides avant le plan : par exemple « bâtiments principaux ou ensemble du campus ? », « inclure les annexes proches ? », « quels établissements parmi cette liste ? ». Utilise multiple=true dès que plusieurs réponses peuvent être cochées. Ne pose pas ces questions si la demande est déjà suffisamment précise.
+- Lors de la PHASE 2 après validation des bâtiments, ne propose plus aucune commande import_buildings et ne redemande pas les mêmes précisions : considère les bâtiments présents dans le contexte comme validés par l'utilisateur, puis construis la suite du plan autour d'eux.
+- Dès que l'utilisateur demande d'importer, sélectionner ou afficher les routes réelles présentes dans une zone, utilise import_routes et le véritable import Routes de DroMap ; ne recrée pas le réseau avec une multitude de create_line. Les routes restent toujours dans UN calque GeoJSON géré par l'import Routes.
+- IMPORT DE ROUTES EN ÉTAPES GUIDÉES : le premier plan contenant import_routes est une phase interactive dédiée. En mode AUTOMATIQUE, DroMap propose d'abord une zone compatible avec le niveau de détail demandé ; l'utilisateur peut l'ajuster puis doit la valider avant l'analyse. En mode MANUEL, la zone existante reste inchangée. Ensuite DroMap analyse les routes, réouvre le même sélecteur que l'import manuel et laisse l'utilisateur sélectionner/désélectionner librement. Si un calque Routes existe déjà, ses routes sont présélectionnées et une route désélectionnée est réellement retirée du calque lors de la validation. Après validation, un second appel construit la suite du plan sans réimporter les routes ni redéfinir la zone.
+- import_routes accepte roadCategories parmi ["motorways","main","secondary","local"]. Tu peux en combiner plusieurs. Utilise roadSelectionMode="all" pour importer tout le niveau demandé dans la zone, ou roadSelectionMode="named" avec roadQueries pour viser des axes précis (par exemple A6, A7, N7). Si l'utilisateur ne précise pas le niveau, choisis le niveau le plus raisonnable et évite "local" à grande échelle.
+- La zone autorisée dépend de la catégorie la plus détaillée : les autoroutes peuvent couvrir un pays entier, alors que les petites routes exigent une emprise beaucoup plus petite. En mode automatique, propose donc une zone réaliste et compatible avec les catégories.
+- Lors de la PHASE 2 après validation des routes, ne propose plus aucune commande import_routes et ne redéfinis pas la zone. Le nom du calque Routes renvoyé dans la continuation est fiable : utilise geoJsonLayerRef/layerName ou configure_geojson_layer pour le styliser et l'organiser dans la légende si nécessaire.
 - Ordre impératif : crée/importes d'abord tous les marqueurs, zones, traits, GeoJSON et bâtiments ; configure ensuite la légende.
 - Pour tout élément qui existe réellement sur la carte, utilise sa légende automatique. Configure son libellé via legendLabel lors de la création, puis sa section/son ordre via configure_feature_legend avec orderRefs ou selector.
 - Dès que la carte contient plusieurs familles de figurés ou plusieurs thèmes, crée toi-même des sous-légendes explicites avec configure_feature_legend. Utilise des intitulés complets et pédagogiques, par exemple « Bars par note Google » et « Moyens de déplacement ».
@@ -173,8 +211,16 @@ Règles absolues :
 - N'utilise jamais add_manual_legend_entry pour recopier un marqueur, une ligne, une zone, un bâtiment ou une donnée GeoJSON déjà présents sur la carte : cela dédouble la légende et rompt le lien avec l'objet.
 - Les entrées manuelles sont réservées aux clés de lecture sans objet source, notamment les classes d'un choroplèthe ou une note purement explicative.
 - create_proportional_markers et create_proportional_flows génèrent déjà des entrées automatiques aux tailles exactes : ne crée aucune entrée manuelle supplémentaire.
-- Le mode de zone est fourni dans CONTEXTE DROMAP ACTUEL. En mode manual, la zone déjà validée est immuable. En mode automatic, crée d’abord les objets et données utiles sans fabriquer de commande de zone : DroMap calculera ensuite la zone autour du résultat avec une marge.
-- Ne génère jamais set_workspace_by_place, set_workspace_bounds ou select_world. fit_view ne remplace jamais directement la zone : le moteur DroMap gère le cadrage et la validation automatique au bon moment.
+- En mode MANUEL, la zone de travail appartient entièrement à l’utilisateur : ne génère JAMAIS set_workspace_by_place, set_workspace_bounds ni select_world, même si une autre zone te semblerait meilleure. Tu peux seulement recadrer la vue avec fit_view sans modifier la zone.
+- En mode AUTOMATIQUE, tu peux utiliser set_workspace_by_place, set_workspace_bounds ou select_world quand cela améliore réellement le résultat, ou laisser DroMap calculer la zone autour des objets créés.
+- fit_view ne remplace pas la zone de travail : utilise une commande de zone si tu veux réellement changer l'emprise du projet.
+- Même si l’utilisateur ne parle pas de légende, vérifie toujours la lisibilité de la légende après les créations/modifications : titre pertinent, groupes cohérents, ordre logique, libellés explicites et position adaptée. Utilise configure_feature_legend après la création des objets et configure_legend pour l’apparence générale.
+- Tu peux placer la légende SUR la carte avec legendPosition="map" quand cela améliore la composition. Utilise legendMapPosition pour choisir sa position libre normalisée si utile.
+- Utilise align_legend_sizes_with_map lorsque la correspondance visuelle entre figurés de légende et objets de carte est importante, notamment pour les marqueurs ou textes de tailles différentes.
+- L’échelle et la flèche du nord sont des invariants de composition appliqués automatiquement par DroMap. Par défaut, NE LES AJOUTE PAS toi-même au plan visible et NE LES MENTIONNE PAS dans assistantMessage, summary ou les explications : le serveur les active silencieusement. Ne génère configure_scale ou configure_north_arrow que si l’utilisateur demande explicitement de les modifier, déplacer, masquer ou réactiver. Elles sont des éléments de composition, JAMAIS des entrées de légende.
+- Tu peux agir sur le titre de la carte avec configure_map_title : choisis automatiquement un titre utile lorsqu’une carte complète est créée et que son sujet est clair ; évite d’inventer un titre pour une simple micro-modification.
+- La composition finale est de ta responsabilité même si l’utilisateur ne la mentionne pas : organise automatiquement titre et légende en tenant compte de l’espace réservé aux éléments cartographiques automatiques. N’oblige jamais l’utilisateur à rappeler cette règle et ne verbalise pas les réglages automatiques d’échelle/nord.
+- Tu peux régler les écritures du fond et son niveau de détail dans le rendu avec configure_basemap_render, sans jamais changer le fond lui-même.
 - La position de légende à droite se voit dans Préparer l'export. Ne génère pas automatiquement open_export_preview : le panneau Assistant IA possède désormais son propre bouton « Voir le rendu ».
 - N'ajoute que les champs utiles. Le serveur complétera les autres champs.
 `;
@@ -191,7 +237,8 @@ Règles absolues :
 - Modifie uniquement la commande ciblée.
 - Conserve exactement son identifiant id, car d'autres étapes peuvent y faire référence.
 - Ne crée aucune commande supplémentaire.
-- Ne modifie pas la zone de travail.
+- En mode MANUEL, ne transforme jamais l’étape en set_workspace_by_place, set_workspace_bounds ou select_world et ne modifie pas la zone de travail. En mode AUTOMATIQUE, ces commandes restent possibles si l’étape ciblée concerne la zone.
+- Ne transforme jamais une étape en set_basemap et ne change jamais le fond de carte.
 - Garde tous les champs utiles de la commande actuelle qui ne sont pas concernés par la demande.
 - La commande renvoyée doit respecter la référence DroMap fournie.
 - N'ajoute aucun texte en dehors du JSON.`;
@@ -199,10 +246,13 @@ Règles absolues :
 const COMMAND_REFERENCE = `RÉFÉRENCE COMPACTE DES COMMANDES
 Chaque commande contient au minimum {"id":"identifiant-unique","type":"...","explanation":"..."}. Les champs absents sont ignorés.
 
-Vue et cadrage
+Zone, vue et cadrage
+- set_workspace_by_place : place, paddingRatio? ; crée/remplace la zone autour du lieu
+- set_workspace_bounds : bounds={south,west,north,east} ; crée/remplace précisément la zone
+- select_world : sélectionne le monde entier
 - fit_view : bounds? ou coordinate? ou selector? ; zoom?
-- set_basemap : basemapId
 - set_country_neighbors : active
+Le fond de carte n’est jamais modifié par l’IA.
 
 Calques DroMap
 - create_layer : layerName
@@ -211,7 +261,7 @@ Calques DroMap
 - reorder_layer : layerRef, layerDirection="up"|"down"
 - delete_layer : layerRef
 
-GeoJSON et bâtiments
+GeoJSON, bâtiments et routes
 - import_geojson_catalog : geoJsonCatalogId, layerName?, geoJsonPrecision="original"|"intermediate"|"light"
 - import_geojson_url : geoJsonUrl HTTPS, layerName?, geoJsonPrecision?
 - create_geojson_layer : geoJsonData (FeatureCollection GeoJSON), layerName?, geoJsonPrecision?
@@ -220,7 +270,8 @@ GeoJSON et bâtiments
 - delete_geojson_layer : geoJsonLayerRef
 - convert_geojson_to_dromap : geoJsonLayerRef, layerName?
 - convert_dromap_to_geojson : layerRef (uniquement un calque provenant d'un GeoJSON)
-- import_buildings : buildingMode="geojson"|"dromap", buildingSelectionMode="all"|"named", buildingQueries?=[noms exacts], place? ou bounds? pour la zone de recherche automatique, layerName?, maxFeatures?. En mode named, DroMap filtre d'abord par nom puis utilise la géolocalisation du lieu pour retrouver l'emprise correspondante.
+- import_buildings : buildingMode="geojson"|"dromap", buildingSelectionMode="all"|"named", buildingQueries?=[noms exacts], place? ou bounds? pour limiter la zone de recherche, layerName?, maxFeatures?. Cette commande déclenche la phase de sélection interactive : DroMap récupère les empreintes IGN/Overture, présélectionne spatialement les candidats plausibles puis ouvre le sélecteur classique pour validation humaine avant tout import définitif.
+- import_routes : roadCategories=["motorways"|"main"|"secondary"|"local", ...], roadSelectionMode="all"|"named", roadQueries?=[références ou noms d’axes], place? ou bounds? pour la zone utile, layerName?. Cette commande déclenche la phase interactive Routes : zone validée → analyse → sélection humaine → réconciliation du calque GeoJSON Routes existant ou création d’un unique calque.
 
 Marqueurs, textes, traits et zones
 - create_custom_marker_svg : label, customMarkerSvg (SVG autonome et sûr)
@@ -248,14 +299,17 @@ selector = {featureIds?,labelContains?,legendLabelContains?,layerName?,featureTy
 - delete_features : selector obligatoire
 
 Légende et éléments cartographiques
-- configure_legend : legendTitle?, legendPosition="left"|"right"|"bottom"|"map", exportFormat="auto"|"16-9"|"4-3"|"a4-landscape"|"a4-portrait"|"square", legendBackgroundColor?, legendSideWidth?, legendBottomHeight?, legendTitleFontSize?, legendItemFontSize?, legendSectionTitleFontSize?, legendSymbolSize?, legendItemGap?, legendLabelGap?, legendSectionGap?, legendMapBorderEnabled?, legendMapBorderColor?, legendMapBorderWidth?, legendMapBorderRadius?, legendMapPadding?
+- configure_legend : legendTitle?, legendPosition="left"|"right"|"bottom"|"map", legendMapPosition?={x,y}, legendMapTitlePosition?={x,y}, exportFormat="auto"|"16-9"|"4-3"|"a4-landscape"|"a4-portrait"|"square", legendBackgroundColor?, legendSideWidth?, legendBottomHeight?, legendTitleFontSize?, legendItemFontSize?, legendSectionTitleFontSize?, legendSymbolSize?, legendItemGap?, legendLabelGap?, legendLabelLineHeight?, legendSectionGap?, legendMapBorderEnabled?, legendMapBorderColor?, legendMapBorderWidth?, legendMapBorderRadius?, legendMapPadding?
+- configure_map_title : mapTitle?, mapTitlePosition?={x,y}, mapTitleFontSize?, mapTitleColor?
+- align_legend_sizes_with_map : aucune option obligatoire ; aligne les tailles visuelles des figurés automatiques sur leurs objets de carte
+- configure_basemap_render : showBasemapLabels?, basemapDetailDelta? entre -1 et +1 ; agit uniquement sur le rendu, jamais sur le choix du fond
 - add_manual_legend_entry : label, section?, manualLegendSymbol="marker"|"line"|"arrow"|"zone"|"text", symbolId?, style?
 - update_manual_legend_entry : manualLegendEntryId, label?, section?, manualLegendSymbol?, symbolId?, style?
 - delete_manual_legend_entry : manualLegendEntryId
 - configure_legend_group : legendGroupKey, label?, section?, hidden?, orderRefs? (seulement si la clé exacte est fournie dans le contexte)
 - configure_feature_legend : orderRefs=[ids de commandes de création ou ids d'objets] et/ou selector ; label? seulement pour un groupe unique ; section?, hidden?. Cette commande résout les vraies clés automatiques après création des objets et crée automatiquement la sous-légende nommée par section si elle n'existe pas encore. Utilise le titre complet, sans abréviation.
-- configure_scale : active?, scaleStyle="bar"|"alternating"|"line"|"boxed", scalePosition="top-left"|"top-right"|"bottom-left"|"bottom-right"
-- configure_north_arrow : active?, northStyle="classic"|"simple"|"compass"|"needle", northPosition comme ci-dessus
+- configure_scale : active?, scaleStyle="bar"|"alternating"|"line"|"boxed", scalePosition="top-left"|"top-right"|"bottom-left"|"bottom-right", scaleMapPosition?={x,y}
+- configure_north_arrow : active?, northStyle="classic"|"simple"|"compass"|"needle", northPosition comme ci-dessus, northMapPosition?={x,y}
 - configure_map_labels : allMapLabelsEnabled?, geoJsonMapLabelsEnabled?, mapLabelScale? (0.5 à 2.5). allMapLabelsEnabled affiche tous les noms saisis ; geoJsonMapLabelsEnabled seulement les objets issus de GeoJSON.
 - select_feature : selector ou layerRef contenant l'id d'une commande de création
 - clear_selection
@@ -322,6 +376,17 @@ function normalizeCoordinate(value: unknown): DroMapAiCoordinate | null {
   return {
     lng: clamp(lng, -360, 360),
     lat: clamp(lat, -85.05112878, 85.05112878),
+  };
+}
+
+function normalizeMapPosition(value: unknown) {
+  if (!isRecord(value)) return null;
+  const x = asNumber(value.x);
+  const y = asNumber(value.y);
+  if (x === null || y === null) return null;
+  return {
+    x: clamp(x, 0, 1),
+    y: clamp(y, 0, 1),
   };
 }
 
@@ -561,6 +626,9 @@ function blankCommand(
     buildingMode: null,
     buildingSelectionMode: null,
     buildingQueries: [],
+    roadCategories: [],
+    roadSelectionMode: null,
+    roadQueries: [],
     maxFeatures: null,
     seriesItems: [],
     proportionalMethod: null,
@@ -570,6 +638,8 @@ function blankCommand(
     choroplethValues: [],
     legendTitle: null,
     legendPosition: null,
+    legendMapPosition: null,
+    legendMapTitlePosition: null,
     exportFormat: null,
     legendBackgroundColor: null,
     legendSideWidth: null,
@@ -580,12 +650,19 @@ function blankCommand(
     legendSymbolSize: null,
     legendItemGap: null,
     legendLabelGap: null,
+    legendLabelLineHeight: null,
     legendSectionGap: null,
     legendMapBorderEnabled: null,
     legendMapBorderColor: null,
     legendMapBorderWidth: null,
     legendMapBorderRadius: null,
     legendMapPadding: null,
+    mapTitle: null,
+    mapTitlePosition: null,
+    mapTitleFontSize: null,
+    mapTitleColor: null,
+    showBasemapLabels: null,
+    basemapDetailDelta: null,
     section: null,
     manualLegendEntryId: null,
     manualLegendSymbol: null,
@@ -594,8 +671,10 @@ function blankCommand(
     orderRefs: [],
     scaleStyle: null,
     scalePosition: null,
+    scaleMapPosition: null,
     northStyle: null,
     northPosition: null,
+    northMapPosition: null,
     mapLabelsEnabled: null,
     allMapLabelsEnabled: null,
     geoJsonMapLabelsEnabled: null,
@@ -682,6 +761,12 @@ function normalizeCommand(
       BUILDING_SELECTION_MODES,
     ),
     buildingQueries: asStringArray(value.buildingQueries, 80),
+    roadCategories: asStringArray(value.roadCategories, 4).filter(
+      (category): category is (typeof ROAD_CATEGORIES)[number] =>
+        (ROAD_CATEGORIES as readonly string[]).includes(category),
+    ),
+    roadSelectionMode: asEnum(value.roadSelectionMode, ROAD_SELECTION_MODES),
+    roadQueries: asStringArray(value.roadQueries, 80),
     maxFeatures: asNumber(value.maxFeatures),
     seriesItems: normalizeSeriesItems(value.seriesItems),
     proportionalMethod: asEnum(value.proportionalMethod, PROPORTIONAL_METHODS),
@@ -691,6 +776,8 @@ function normalizeCommand(
     choroplethValues: normalizeChoroplethValues(value.choroplethValues),
     legendTitle: asNullableString(value.legendTitle),
     legendPosition: asEnum(value.legendPosition, LEGEND_POSITIONS),
+    legendMapPosition: normalizeMapPosition(value.legendMapPosition),
+    legendMapTitlePosition: normalizeMapPosition(value.legendMapTitlePosition),
     exportFormat: asEnum(value.exportFormat, EXPORT_FORMATS),
     legendBackgroundColor: asNullableString(value.legendBackgroundColor),
     legendSideWidth: asNumber(value.legendSideWidth),
@@ -701,12 +788,19 @@ function normalizeCommand(
     legendSymbolSize: asNumber(value.legendSymbolSize),
     legendItemGap: asNumber(value.legendItemGap),
     legendLabelGap: asNumber(value.legendLabelGap),
+    legendLabelLineHeight: asNumber(value.legendLabelLineHeight),
     legendSectionGap: asNumber(value.legendSectionGap),
     legendMapBorderEnabled: asBoolean(value.legendMapBorderEnabled),
     legendMapBorderColor: asNullableString(value.legendMapBorderColor),
     legendMapBorderWidth: asNumber(value.legendMapBorderWidth),
     legendMapBorderRadius: asNumber(value.legendMapBorderRadius),
     legendMapPadding: asNumber(value.legendMapPadding),
+    mapTitle: asNullableString(value.mapTitle),
+    mapTitlePosition: normalizeMapPosition(value.mapTitlePosition),
+    mapTitleFontSize: asNumber(value.mapTitleFontSize),
+    mapTitleColor: asNullableString(value.mapTitleColor),
+    showBasemapLabels: asBoolean(value.showBasemapLabels),
+    basemapDetailDelta: asNumber(value.basemapDetailDelta),
     section: asNullableString(value.section),
     manualLegendEntryId: asNullableString(value.manualLegendEntryId),
     manualLegendSymbol: asEnum(value.manualLegendSymbol, MANUAL_LEGEND_SYMBOLS),
@@ -715,8 +809,10 @@ function normalizeCommand(
     orderRefs: asStringArray(value.orderRefs, 1000),
     scaleStyle: asEnum(value.scaleStyle, SCALE_STYLES),
     scalePosition: asEnum(value.scalePosition, MAP_ELEMENT_POSITIONS),
+    scaleMapPosition: normalizeMapPosition(value.scaleMapPosition),
     northStyle: asEnum(value.northStyle, NORTH_STYLES),
     northPosition: asEnum(value.northPosition, MAP_ELEMENT_POSITIONS),
+    northMapPosition: normalizeMapPosition(value.northMapPosition),
     mapLabelsEnabled: asBoolean(value.mapLabelsEnabled),
     allMapLabelsEnabled: asBoolean(value.allMapLabelsEnabled),
     geoJsonMapLabelsEnabled: asBoolean(value.geoJsonMapLabelsEnabled),
@@ -888,6 +984,62 @@ function normalizePlan(value: unknown): DroMapAiPlan {
     sources: normalizeSources(source.sources),
     commands,
   };
+}
+
+function normalizePrePlanQuestions(value: unknown): DroMapAiPrePlanQuestion[] {
+  if (!Array.isArray(value)) return [];
+  const seenIds = new Set<string>();
+  const result: DroMapAiPrePlanQuestion[] = [];
+
+  for (const [index, rawQuestion] of value.slice(0, 4).entries()) {
+    if (!isRecord(rawQuestion)) continue;
+    const label = asNullableString(rawQuestion.label)?.slice(0, 220);
+    if (!label) continue;
+    const rawId = asNullableString(rawQuestion.id) ?? `question-${index + 1}`;
+    let id = normalizeKey(rawId).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!id) id = `question-${index + 1}`;
+    if (seenIds.has(id)) id = `${id}-${index + 1}`;
+
+    const options = (Array.isArray(rawQuestion.options) ? rawQuestion.options : [])
+      .slice(0, 5)
+      .flatMap((rawOption, optionIndex) => {
+        if (!isRecord(rawOption)) return [];
+        const optionLabel = asNullableString(rawOption.label)?.slice(0, 140);
+        if (!optionLabel) return [];
+        const optionRawId =
+          asNullableString(rawOption.id) ?? `option-${optionIndex + 1}`;
+        const optionId =
+          normalizeKey(optionRawId)
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "") || `option-${optionIndex + 1}`;
+        return [{ id: optionId, label: optionLabel }];
+      });
+
+    if (options.length < 2) continue;
+    seenIds.add(id);
+    result.push({
+      id,
+      label,
+      multiple: rawQuestion.multiple === true,
+      options,
+    });
+  }
+
+  return result;
+}
+
+function normalizeAssistantInteraction(value: unknown) {
+  const source = isRecord(value) ? value : {};
+  const plan = normalizePlan(source);
+  const questions = normalizePrePlanQuestions(source.questions);
+  const assistantMessage =
+    asNullableString(source.assistantMessage)?.slice(0, 6_000) ??
+    (plan.commands.length
+      ? plan.summary
+      : questions.length
+        ? "J’ai besoin de quelques précisions rapides avant de préparer le plan."
+        : "Je peux t’aider sur cette question.");
+  return { plan, questions, assistantMessage };
 }
 
 function extractGenerateContentText(payload: unknown): string {
@@ -1528,6 +1680,18 @@ async function buildPopulationMarkerFastPath(
   };
 }
 
+function compactConversationForModel(value: unknown) {
+  if (!Array.isArray(value)) return [] as Array<{ role: "user" | "assistant"; text: string }>;
+  return value
+    .flatMap((item) => {
+      if (!isRecord(item)) return [];
+      const role = item.role === "assistant" ? "assistant" : item.role === "user" ? "user" : null;
+      const text = compactText(item.text, 2_500);
+      return role && text ? [{ role, text }] : [];
+    })
+    .slice(-24);
+}
+
 function compactProjectContextForModel(
   context: Record<string, unknown>,
   prompt: string,
@@ -1567,6 +1731,8 @@ function compactProjectContextForModel(
     workspaceBounds: context.workspaceBounds ?? null,
     workspaceValidated: context.workspaceValidated === true,
     currentZoom: context.currentZoom ?? null,
+    workspaceBasemapZoom: context.workspaceBasemapZoom ?? null,
+    workspaceBasemapBaseZoom: context.workspaceBasemapBaseZoom ?? null,
     activeLayerId: context.activeLayerId ?? null,
     layers: Array.isArray(context.layers) ? context.layers : [],
     geoJsonLayers: Array.isArray(context.geoJsonLayers)
@@ -1974,26 +2140,123 @@ async function runFreeResearch(
   return dedupeResearchBundle(merged);
 }
 
-function removeWorkspaceMutationCommands(
+function removeForbiddenBasemapCommands(plan: DroMapAiPlan) {
+  const removed = plan.commands.filter((command) =>
+    FORBIDDEN_BASEMAP_COMMANDS.has(command.type),
+  );
+  if (!removed.length) return;
+  plan.commands = plan.commands.filter(
+    (command) => !FORBIDDEN_BASEMAP_COMMANDS.has(command.type),
+  );
+  plan.warnings.unshift(
+    "Le fond de carte n’a pas été modifié par l’IA. Si nécessaire, elle peut seulement conseiller un fond classique ou un fond blanc territorial adapté.",
+  );
+}
+
+const WORKSPACE_COMMAND_TYPES = new Set<DroMapAiCommandType>([
+  "set_workspace_by_place",
+  "set_workspace_bounds",
+  "select_world",
+]);
+
+function enforceWorkspaceModeOnPlan(
   plan: DroMapAiPlan,
   workspaceMode: "manual" | "automatic",
 ) {
+  if (workspaceMode !== "manual") return;
   const removed = plan.commands.filter((command) =>
-    FORBIDDEN_WORKSPACE_COMMANDS.has(command.type),
+    WORKSPACE_COMMAND_TYPES.has(command.type),
   );
-
-  if (!removed.length) {
-    return;
-  }
-
+  if (!removed.length) return;
   plan.commands = plan.commands.filter(
-    (command) => !FORBIDDEN_WORKSPACE_COMMANDS.has(command.type),
+    (command) => !WORKSPACE_COMMAND_TYPES.has(command.type),
   );
-  plan.warnings.unshift(
-    workspaceMode === "manual"
-      ? "La zone manuelle est contrôlée uniquement par l'utilisateur : les commandes IA qui tentaient de la modifier ont été supprimées."
-      : "En mode automatique, DroMap calcule lui-même la zone après la création des objets : les commandes de zone directes produites par l'IA ont été supprimées.",
+}
+
+function restrictPlanToRouteSelectionPhase(plan: DroMapAiPlan) {
+  const routeCommands = plan.commands.filter(
+    (command) => command.type === "import_routes",
   );
+  if (!routeCommands.length) return false;
+
+  plan.commands = routeCommands.map((command) => ({
+    ...command,
+    roadCategories: command.roadCategories.length
+      ? command.roadCategories
+      : ["motorways", "main"],
+    roadSelectionMode:
+      command.roadSelectionMode ??
+      (command.roadQueries.length ? "named" : "all"),
+  }));
+  plan.summary =
+    "Préparer la zone utile puis vérifier les routes à conserver dans le sélecteur DroMap.";
+  plan.warnings = [
+    "Aucune route ne sera ajoutée sans validation : DroMap ouvrira le sélecteur Routes et réconciliera le même calque GeoJSON, y compris pour retirer des routes déjà importées.",
+    ...plan.warnings,
+  ].slice(0, 80);
+  return true;
+}
+
+function enforceRouteContinuationOnPlan(plan: DroMapAiPlan) {
+  const removedRouteCommands = plan.commands.filter(
+    (command) => command.type === "import_routes",
+  ).length;
+  const removedWorkspaceCommands = plan.commands.filter((command) =>
+    WORKSPACE_COMMAND_TYPES.has(command.type),
+  ).length;
+  plan.commands = plan.commands.filter(
+    (command) =>
+      command.type !== "import_routes" &&
+      !WORKSPACE_COMMAND_TYPES.has(command.type),
+  );
+  if (removedRouteCommands || removedWorkspaceCommands) {
+    plan.warnings.unshift(
+      "Les routes ont déjà été validées par l’utilisateur : la suite du plan ne réimporte pas les routes et ne redéfinit pas la zone de travail.",
+    );
+  }
+}
+
+function restrictPlanToBuildingSelectionPhase(plan: DroMapAiPlan) {
+  const buildingCommands = plan.commands.filter(
+    (command) => command.type === "import_buildings",
+  );
+  if (!buildingCommands.length) return false;
+
+  plan.commands = buildingCommands.map((command) => ({
+    ...command,
+    buildingMode:
+      command.buildingSelectionMode === "all"
+        ? (command.buildingMode ?? "geojson")
+        : "dromap",
+  }));
+  plan.summary =
+    buildingCommands.length > 1
+      ? "Préparer la zone utile puis vérifier les bâtiments à importer dans le sélecteur DroMap."
+      : "Préparer la zone utile puis vérifier les bâtiments à importer dans le sélecteur DroMap.";
+  plan.warnings = [
+    "Aucun bâtiment ne sera importé automatiquement : DroMap ouvrira le sélecteur classique pour te laisser confirmer précisément les bonnes emprises.",
+    ...plan.warnings,
+  ].slice(0, 80);
+  return true;
+}
+
+function enforceBuildingContinuationOnPlan(plan: DroMapAiPlan) {
+  const removedBuildingCommands = plan.commands.filter(
+    (command) => command.type === "import_buildings",
+  ).length;
+  const removedWorkspaceCommands = plan.commands.filter((command) =>
+    WORKSPACE_COMMAND_TYPES.has(command.type),
+  ).length;
+  plan.commands = plan.commands.filter(
+    (command) =>
+      command.type !== "import_buildings" &&
+      !WORKSPACE_COMMAND_TYPES.has(command.type),
+  );
+  if (removedBuildingCommands || removedWorkspaceCommands) {
+    plan.warnings.unshift(
+      "Les bâtiments ont déjà été validés par l’utilisateur : la suite du plan ne réimporte pas les bâtiments et ne redéfinit pas la zone de travail.",
+    );
+  }
 }
 
 function ensurePopulationProportionalPlan(prompt: string, plan: DroMapAiPlan) {
@@ -2124,32 +2387,34 @@ function removeUnrequestedCategoricalMarkerSizes(
   }
 }
 
-function ensureLegendAndViewCommands(prompt: string, plan: DroMapAiPlan) {
+function removeCompositionElementsFromManualLegend(plan: DroMapAiPlan) {
+  const forbiddenLabels = new Set([
+    "echelle",
+    "echelle cartographique",
+    "barre d echelle",
+    "scale",
+    "scale bar",
+    "fleche nord",
+    "fleche du nord",
+    "north arrow",
+  ]);
+
+  plan.commands = plan.commands.filter((command) => {
+    if (command.type !== "add_manual_legend_entry") return true;
+    const label = normalizeKey(asNullableString(command.label) ?? "");
+    if (!forbiddenLabels.has(label)) return true;
+    // Élément de composition automatique : suppression silencieuse de toute
+    // tentative de l'ajouter comme entrée de légende.
+    return false;
+  });
+}
+
+function ensureLegendAndViewCommands(
+  prompt: string,
+  plan: DroMapAiPlan,
+  context: Record<string, unknown>,
+) {
   const normalizedPrompt = normalizeKey(prompt);
-  const wantsLegend = /legende/.test(normalizedPrompt);
-  if (
-    wantsLegend &&
-    !plan.commands.some((command) => command.type === "configure_legend")
-  ) {
-    const command = normalizeCommand(
-      {
-        id: "legende-ia",
-        type: "configure_legend",
-        explanation: "Configurer la légende demandée.",
-        legendTitle: "Légende",
-        legendPosition: /droite|right/.test(normalizedPrompt)
-          ? "right"
-          : /gauche|left/.test(normalizedPrompt)
-            ? "left"
-            : /bas|bottom/.test(normalizedPrompt)
-              ? "bottom"
-              : "right",
-      },
-      plan.commands.length,
-      plan.warnings,
-    );
-    if (command) plan.commands.push(command);
-  }
   const createsSpatialObjects = plan.commands.some((command) =>
     [
       "create_marker",
@@ -2167,6 +2432,185 @@ function ensureLegendAndViewCommands(prompt: string, plan: DroMapAiPlan) {
       "import_buildings",
     ].includes(command.type),
   );
+  const changesCartography =
+    createsSpatialObjects ||
+    plan.commands.some((command) =>
+      [
+        "update_features",
+        "duplicate_features",
+        "delete_features",
+        "configure_feature_legend",
+        "configure_legend_group",
+      ].includes(command.type),
+    );
+  const wantsLegend = /legende/.test(normalizedPrompt);
+  const legendContext = isRecord(context.legend) ? context.legend : {};
+
+  if (
+    (changesCartography || wantsLegend) &&
+    !plan.commands.some((command) => command.type === "configure_legend")
+  ) {
+    const currentPosition = asEnum(legendContext.position, LEGEND_POSITIONS);
+    const command = normalizeCommand(
+      {
+        id: "legende-ia",
+        type: "configure_legend",
+        explanation:
+          "Organiser la légende pour que le résultat reste lisible et cohérent.",
+        legendTitle:
+          asNullableString(legendContext.title) &&
+          normalizeKey(legendContext.title) !== "legende"
+            ? asNullableString(legendContext.title)
+            : "Légende",
+        legendPosition: /sur la carte|dans la carte|legende sur/.test(normalizedPrompt)
+          ? "map"
+          : /droite|right/.test(normalizedPrompt)
+            ? "right"
+            : /gauche|left/.test(normalizedPrompt)
+              ? "left"
+              : /bas|bottom/.test(normalizedPrompt)
+                ? "bottom"
+                : currentPosition ?? "right",
+      },
+      plan.commands.length,
+      plan.warnings,
+    );
+    if (command) plan.commands.push(command);
+  }
+
+  const legendCommand = plan.commands.find(
+    (command) => command.type === "configure_legend",
+  );
+  if (legendCommand?.legendPosition === "map" && !legendCommand.legendMapPosition) {
+    legendCommand.legendMapPosition = { x: 0.78, y: 0.72 };
+  }
+
+  const existingMapTitle = asNullableString(legendContext.mapTitle);
+  const looksLikeFullMapRequest =
+    createsSpatialObjects &&
+    ((asNumber(context.featureCount) ?? 0) === 0 ||
+      /(?:cree|crée|creer|créer|prepare|prépare|construis|realise|réalise).{0,20}(?:carte|plan)/.test(
+        normalizedPrompt,
+      ));
+  if (
+    looksLikeFullMapRequest &&
+    !existingMapTitle &&
+    !plan.commands.some((command) => command.type === "configure_map_title")
+  ) {
+    const fallbackTitle =
+      plan.summary
+        .replace(/^(?:plan|carte|création|creation)\s*[:—-]\s*/i, "")
+        .trim()
+        .slice(0, 110) || "Carte";
+    const command = normalizeCommand(
+      {
+        id: "titre-carte-ia",
+        type: "configure_map_title",
+        explanation: "Ajouter automatiquement un titre clair à la composition.",
+        mapTitle: fallbackTitle,
+        mapTitlePosition: { x: 0.5, y: 0.07 },
+      },
+      plan.commands.length,
+      plan.warnings,
+    );
+    if (command) plan.commands.push(command);
+  }
+
+  const mapTitleCommand = plan.commands.find(
+    (command) => command.type === "configure_map_title",
+  );
+  if (mapTitleCommand && !mapTitleCommand.mapTitlePosition) {
+    mapTitleCommand.mapTitlePosition = { x: 0.5, y: 0.07 };
+  }
+
+  const explicitlyDisablesScale =
+    /(sans|retire|supprime|desactive|masque).{0,30}(echelle|échelle)/.test(
+      normalizedPrompt,
+    );
+  if (
+    changesCartography &&
+    !explicitlyDisablesScale &&
+    !plan.commands.some((command) => command.type === "configure_scale")
+  ) {
+    const command = normalizeCommand(
+      {
+        id: "echelle-ia",
+        type: "configure_scale",
+        explanation: "Afficher l’échelle cartographique par défaut.",
+        active: true,
+        scalePosition: "bottom-left",
+      },
+      plan.commands.length,
+      plan.warnings,
+    );
+    if (command) plan.commands.push(command);
+  }
+
+  const existingScaleCommand = plan.commands.find(
+    (command) => command.type === "configure_scale",
+  );
+  if (existingScaleCommand && !existingScaleCommand.scalePosition && !existingScaleCommand.scaleMapPosition) {
+    existingScaleCommand.scalePosition = "bottom-left";
+  }
+
+  const explicitlyDisablesNorth =
+    /(sans|retire|supprime|desactive|masque).{0,40}(nord|fleche du nord|flèche du nord)/.test(
+      normalizedPrompt,
+    );
+  if (
+    changesCartography &&
+    !explicitlyDisablesNorth &&
+    !plan.commands.some((command) => command.type === "configure_north_arrow")
+  ) {
+    const command = normalizeCommand(
+      {
+        id: "nord-ia",
+        type: "configure_north_arrow",
+        explanation: "Afficher la flèche du nord par défaut.",
+        active: true,
+        northPosition: "top-right",
+      },
+      plan.commands.length,
+      plan.warnings,
+    );
+    if (command) plan.commands.push(command);
+  }
+
+  const existingNorthCommand = plan.commands.find(
+    (command) => command.type === "configure_north_arrow",
+  );
+  if (existingNorthCommand && !existingNorthCommand.northPosition && !existingNorthCommand.northMapPosition) {
+    existingNorthCommand.northPosition = "top-right";
+  }
+
+  const hasMarkerLikeObjects = plan.commands.some((command) =>
+    [
+      "create_marker",
+      "create_text",
+      "create_proportional_markers",
+      "update_features",
+    ].includes(command.type),
+  );
+  if (
+    changesCartography &&
+    hasMarkerLikeObjects &&
+    !plan.commands.some(
+      (command) => command.type === "align_legend_sizes_with_map",
+    )
+  ) {
+    const command = normalizeCommand(
+      {
+        id: "alignement-legende-carte-ia",
+        type: "align_legend_sizes_with_map",
+        explanation:
+          "Aligner les tailles des figurés de légende avec les objets correspondants sur la carte.",
+      },
+      plan.commands.length,
+      plan.warnings,
+    );
+    if (command) plan.commands.push(command);
+  }
+
   if (
     createsSpatialObjects &&
     !plan.commands.some((command) => command.type === "fit_view")
@@ -2183,6 +2627,7 @@ function ensureLegendAndViewCommands(prompt: string, plan: DroMapAiPlan) {
     if (fit) plan.commands.push(fit);
   }
 
+  // Le panneau Assistant IA possède son propre aperçu temporaire.
   plan.commands = plan.commands.filter(
     (command) => command.type !== "open_export_preview",
   );
@@ -2209,6 +2654,8 @@ async function reviseSinglePlanStep(
   }
 
   const normalizedPlan = normalizePlan(revision.plan);
+  removeForbiddenBasemapCommands(normalizedPlan);
+  enforceWorkspaceModeOnPlan(normalizedPlan, workspaceMode);
   const requestedIndex = Number.isInteger(revision.commandIndex)
     ? revision.commandIndex
     : -1;
@@ -2238,6 +2685,9 @@ MODE DE ZONE : ${workspaceMode === "automatic" ? "AUTOMATIQUE" : "MANUEL"}
 
 CONTEXTE DROMAP ACTUEL :
 ${JSON.stringify(compactProjectContextForModel(body.context, instruction))}
+
+HISTORIQUE DE DISCUSSION DU PROJET :
+${JSON.stringify(compactConversationForModel(body.conversation))}
 
 PLAN GLOBAL — résumé :
 ${normalizedPlan.summary}
@@ -2306,9 +2756,18 @@ Retourne uniquement le JSON demandé avec une commande complète.`;
     );
   }
 
-  if (FORBIDDEN_WORKSPACE_COMMANDS.has(revisedCommand.type)) {
+  if (FORBIDDEN_BASEMAP_COMMANDS.has(revisedCommand.type)) {
     throw Object.assign(
-      new Error("Une étape du plan ne peut pas être transformée en modification de zone."),
+      new Error("L’IA ne peut pas transformer une étape en changement de fond de carte."),
+      { status: 422 },
+    );
+  }
+  if (
+    workspaceMode === "manual" &&
+    WORKSPACE_COMMAND_TYPES.has(revisedCommand.type)
+  ) {
+    throw Object.assign(
+      new Error("En sélection manuelle, l’IA ne peut pas ajouter ni modifier une étape de zone de travail."),
       { status: 422 },
     );
   }
@@ -2322,13 +2781,20 @@ Retourne uniquement le JSON demandé avec une commande complète.`;
 
   return {
     plan: normalizedPlan,
+    assistantMessage:
+      isRecord(parsed) && asNullableString(parsed.message)
+        ? asNullableString(parsed.message) ?? "Étape ajustée."
+        : "Étape ajustée.",
+    questions: [],
     model: result.model,
     grounded: false,
     revisedCommandId: revisedCommand.id,
   };
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
+  const accessError = await checkAiAccess();
+  if (accessError) return accessError;
   try {
     const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (!apiKey)
@@ -2350,6 +2816,14 @@ export async function POST(request: NextRequest) {
       );
     const workspaceMode =
       body.workspaceMode === "automatic" ? "automatic" : "manual";
+    const buildingContinuation =
+      body.buildingContinuation && isRecord(body.buildingContinuation)
+        ? body.buildingContinuation
+        : null;
+    const routeContinuation =
+      body.routeContinuation && isRecord(body.routeContinuation)
+        ? body.routeContinuation
+        : null;
     if (
       workspaceMode === "manual" &&
       (body.context.workspaceValidated !== true ||
@@ -2390,14 +2864,32 @@ export async function POST(request: NextRequest) {
           ? "google"
           : "free");
 
-    const fastPathPlan = await buildPopulationMarkerFastPath(
-      prompt,
-      body.context,
-      workspaceMode,
-    );
+    const conversation = compactConversationForModel(body.conversation);
+    const researchQuery = conversation.length
+      ? [
+          ...conversation
+            .filter((turn) => turn.role === "user")
+            .slice(-4)
+            .map((turn) => turn.text),
+          prompt,
+        ].join("\n")
+      : prompt;
+    const fastPathPlan = conversation.length
+      ? null
+      : await buildPopulationMarkerFastPath(
+          prompt,
+          body.context,
+          workspaceMode,
+        );
     if (fastPathPlan && fastPathPlan.commands.length) {
+      removeForbiddenBasemapCommands(fastPathPlan);
+      enforceWorkspaceModeOnPlan(fastPathPlan, workspaceMode);
+      ensureLegendAndViewCommands(prompt, fastPathPlan, body.context);
+      removeCompositionElementsFromManualLegend(fastPathPlan);
       const response: DroMapAiApiResponse = {
         plan: fastPathPlan,
+        assistantMessage: fastPathPlan.summary,
+        questions: [],
         model: "DroMap démographie directe (Wikidata)",
         grounded: true,
       };
@@ -2412,16 +2904,16 @@ export async function POST(request: NextRequest) {
     };
     let grounded = false;
 
-    if (researchMode !== "off" && shouldResearch(prompt)) {
+    if (researchMode !== "off" && shouldResearch(researchQuery)) {
       try {
         if (researchMode === "google") {
-          const googleResearch = await researchPrompt(apiKey, model, prompt);
+          const googleResearch = await researchPrompt(apiKey, model, researchQuery);
           research = {
             ...googleResearch,
             corpus: [],
           };
         } else {
-          research = await runFreeResearch(apiKey, model, prompt);
+          research = await runFreeResearch(apiKey, model, researchQuery);
         }
         grounded =
           research.facts.length > 0 ||
@@ -2448,7 +2940,13 @@ export async function POST(request: NextRequest) {
       })),
     };
 
-    const planningInput = `${COMMAND_REFERENCE}\n\nMODE DE ZONE : ${workspaceMode === "automatic" ? "AUTOMATIQUE — aucune zone préalable ; DroMap la calculera après création des objets" : "MANUEL — la zone existante est validée et immuable"}\n\nCONTEXTE DROMAP ACTUEL :\n${JSON.stringify(compactProjectContextForModel(body.context, prompt))}\n\nRECHERCHE FACTUELLE :\n${JSON.stringify(planningResearch)}\n\nDEMANDE UTILISATEUR :\n${prompt}\n\nProduis maintenant le JSON final. Utilise uniquement les faits nécessaires. Place les sources et faits effectivement utilisés dans sources/facts.`;
+    const buildingContinuationNote = buildingContinuation
+      ? `\n\nPHASE 2 APRÈS SÉLECTION MANUELLE DES BÂTIMENTS :\nL’utilisateur a déjà vérifié les bâtiments dans le sélecteur DroMap et les a importés. Ne propose AUCUNE commande import_buildings et ne redéfinis pas la zone de travail. Construis maintenant toute la suite du plan en utilisant les bâtiments réellement présents dans le contexte. Les noms de calques créés ci-dessous sont des références fiables : utilise notamment selector.layerName pour appliquer les couleurs, libellés, visibilité ou organisation de légende aux bons groupes de bâtiments, au lieu d'essayer de retrouver leurs noms dans IGN/Overture une seconde fois. Sélections validées :\n${JSON.stringify(buildingContinuation)}\n`
+      : "";
+    const routeContinuationNote = routeContinuation
+      ? `\n\nPHASE 2 APRÈS SÉLECTION MANUELLE DES ROUTES :\nL’utilisateur a déjà vérifié les routes dans le sélecteur DroMap et le calque GeoJSON Routes a été réconcilié avec sa sélection réelle. Ne propose AUCUNE commande import_routes et ne redéfinis pas la zone de travail. Utilise le nom du calque renvoyé pour la suite (style, légende, visibilité). Sélections validées :\n${JSON.stringify(routeContinuation)}\n`
+      : "";
+    const planningInput = `${COMMAND_REFERENCE}\n\nMODE DE ZONE : ${workspaceMode === "automatic" ? "AUTOMATIQUE — l’IA peut définir directement une zone ou laisser DroMap la calculer autour du résultat" : "MANUEL — la zone est fixée par l’utilisateur. AUCUNE commande set_workspace_by_place, set_workspace_bounds ou select_world ne doit apparaître."}${buildingContinuationNote}${routeContinuationNote}\n\nCONTEXTE DROMAP ACTUEL :\n${JSON.stringify(compactProjectContextForModel(body.context, prompt))}\n\nHISTORIQUE DE DISCUSSION DU PROJET :\n${JSON.stringify(conversation)}\n\nRECHERCHE FACTUELLE :\n${JSON.stringify(planningResearch)}\n\nDEMANDE UTILISATEUR ACTUELLE :\n${routeContinuation ? asString(routeContinuation.originalPrompt) || prompt : buildingContinuation ? asString(buildingContinuation.originalPrompt) || prompt : prompt}\n\nUtilise l’historique pour comprendre les références comme « pareil », « ajoute aussi », « comme avant », les choix déjà faits et les corrections précédentes. La demande actuelle reste prioritaire. Produis maintenant le JSON final. Utilise uniquement les faits nécessaires. Place les sources et faits effectivement utilisés dans sources/facts.`;
     const result = await callGemini(apiKey, {
       model,
       system_instruction: SYSTEM_INSTRUCTIONS,
@@ -2467,8 +2965,47 @@ export async function POST(request: NextRequest) {
       },
       store: false,
     });
-    const plan = normalizePlan(parseJsonText(result.text));
-    removeWorkspaceMutationCommands(plan, workspaceMode);
+    const interaction = normalizeAssistantInteraction(parseJsonText(result.text));
+    const plan = interaction.plan;
+    removeForbiddenBasemapCommands(plan);
+    enforceWorkspaceModeOnPlan(plan, workspaceMode);
+
+    if (buildingContinuation) {
+      enforceBuildingContinuationOnPlan(plan);
+    }
+    if (routeContinuation) {
+      enforceRouteContinuationOnPlan(plan);
+    }
+
+    if (
+      !buildingContinuation &&
+      !routeContinuation &&
+      interaction.questions.length > 0 &&
+      plan.commands.some(
+        (command) =>
+          command.type === "import_buildings" || command.type === "import_routes",
+      )
+    ) {
+      const response: DroMapAiApiResponse = {
+        plan: null,
+        assistantMessage: interaction.assistantMessage,
+        questions: interaction.questions,
+        model: result.model,
+        grounded,
+      };
+      return NextResponse.json(response);
+    }
+
+    if (!plan.commands.length) {
+      const response: DroMapAiApiResponse = {
+        plan: null,
+        assistantMessage: interaction.assistantMessage,
+        questions: buildingContinuation || routeContinuation ? [] : interaction.questions,
+        model: result.model,
+        grounded,
+      };
+      return NextResponse.json(response);
+    }
 
     if (research.summary && !grounded) plan.warnings.unshift(research.summary);
 
@@ -2495,13 +3032,30 @@ export async function POST(request: NextRequest) {
 
     ensurePopulationProportionalPlan(prompt, plan);
     removeUnrequestedCategoricalMarkerSizes(prompt, plan);
-    ensureLegendAndViewCommands(prompt, plan);
-
-    if (!plan.commands.length)
-      throw new Error("Gemini n'a produit aucune commande DroMap exploitable.");
+    const isRouteSelectionPhase = routeContinuation
+      ? false
+      : restrictPlanToRouteSelectionPhase(plan);
+    const isBuildingSelectionPhase =
+      isRouteSelectionPhase || buildingContinuation
+        ? false
+        : restrictPlanToBuildingSelectionPhase(plan);
+    if (!isBuildingSelectionPhase && !isRouteSelectionPhase) {
+      ensureLegendAndViewCommands(prompt, plan, body.context);
+      removeCompositionElementsFromManualLegend(plan);
+    }
 
     const response: DroMapAiApiResponse = {
       plan,
+      assistantMessage: isRouteSelectionPhase
+        ? workspaceMode === "automatic"
+          ? "Cette demande nécessite des routes réelles. Je commence par proposer une zone compatible avec le niveau de détail choisi : tu pourras la valider ou l'ajuster. Ensuite DroMap analysera les routes et ouvrira le sélecteur classique avant que je prépare la suite du plan."
+          : "Cette demande nécessite des routes réelles. Ta zone manuelle reste inchangée : DroMap va analyser les routes puis ouvrir le sélecteur classique. Les routes déjà importées seront présélectionnées et tu pourras aussi en retirer avant validation."
+        : isBuildingSelectionPhase
+          ? workspaceMode === "automatic"
+            ? "Cette demande nécessite des bâtiments réels. Je commence par proposer la zone de travail : tu pourras la valider ou l'ajuster manuellement. Ensuite seulement DroMap ouvrira le sélecteur classique des bâtiments, puis je préparerai toute la suite du plan après ta validation."
+            : "Cette demande nécessite des bâtiments réels. Ta zone manuelle reste inchangée : DroMap va ouvrir le sélecteur classique des bâtiments, avec une présélection IA que tu pourras corriger librement. Après validation, je préparerai automatiquement toute la suite du plan."
+          : interaction.assistantMessage,
+      questions: [],
       model: result.model,
       grounded,
     };
@@ -2524,3 +3078,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: message }, { status });
   }
 }
+
+export const POST = withRequestSecurity(handlePOST);

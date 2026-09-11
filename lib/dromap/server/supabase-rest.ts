@@ -1,3 +1,4 @@
+import "server-only";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
@@ -236,7 +237,8 @@ export function setAuthCookies(
   response.cookies.set(
     DROMAP_REFRESH_COOKIE,
     refreshToken,
-    cookieOptions(60 * 60 * 24 * 180),
+    // Rolling browser persistence; absolute lifetime/revocation is managed by Auth.
+    cookieOptions(60 * 60 * 24 * 30),
   );
   return response;
 }
@@ -244,10 +246,11 @@ export function setAuthCookies(
 export function clearAuthCookies(response: NextResponse) {
   response.cookies.set(DROMAP_ACCESS_COOKIE, "", cookieOptions(0));
   response.cookies.set(DROMAP_REFRESH_COOKIE, "", cookieOptions(0));
+  response.cookies.set(DROMAP_RECOVERY_COOKIE, "", cookieOptions(0));
   return response;
 }
 
-export async function getAuthenticatedRequestUser() {
+export async function getAuthenticatedRequestUser(expectedOwnerId?: string | null) {
   const { accessToken } = await readAuthCookies();
   if (!accessToken) return null;
 
@@ -256,10 +259,11 @@ export async function getAuthenticatedRequestUser() {
   // réduit fortement la latence sans changer les droits : les appels REST
   // Supabase continuent d'utiliser le JWT original et restent protégés par RLS.
   const cachedUser = readCachedAuthenticatedUser(accessToken);
-  if (cachedUser) return { accessToken, user: cachedUser };
+  if (cachedUser) return expectedOwnerId && cachedUser.id !== expectedOwnerId ? null : { accessToken, user: cachedUser };
 
   const { response, user } = await fetchSupabaseUser(accessToken);
   if (!response.ok || !user) return null;
+  if (expectedOwnerId && user.id !== expectedOwnerId) return null;
   cacheAuthenticatedUser(accessToken, user);
   return { accessToken, user };
 }

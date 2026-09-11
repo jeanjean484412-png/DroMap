@@ -5,12 +5,12 @@ import { useEffect, useMemo, useState } from "react";
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
 import { getProjectStatusLabel } from "@/lib/dromap/product";
 import { useDromapProductStore } from "@/stores/dromap-product";
-import { useEditorTestCustomMarkersStore } from "@/stores/editor-test-custom-markers";
-import { useEditorTestExportStore } from "@/stores/editor-test-export";
-import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
-import { useEditorTestGeoJsonLayersStore } from "@/stores/editor-test-geojson-layers";
-import { useEditorTestLayersStore } from "@/stores/editor-test-layers";
-import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
+import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
+import { useEditorExportStore } from "@/stores/editor-export";
+import { useEditorFeaturesStore } from "@/stores/editor-features";
+import { useEditorGeoJsonLayersStore } from "@/stores/editor-geojson-layers";
+import { useEditorLayersStore } from "@/stores/editor-layers";
+import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
 
 function formatDate(value: string | null) {
   if (!value) return "—";
@@ -32,27 +32,27 @@ export function DromapProjectInfoDialog({ projectId }: { projectId: string }) {
     state.projects.find((item) => item.id === projectId),
   );
   const userMode = useDromapProductStore((state) => state.userMode);
-  const features = useEditorTestFeaturesStore((state) => state.features);
-  const layers = useEditorTestLayersStore((state) => state.layers);
-  const geoJsonLayers = useEditorTestGeoJsonLayersStore(
+  const features = useEditorFeaturesStore((state) => state.features);
+  const layers = useEditorLayersStore((state) => state.layers);
+  const geoJsonLayers = useEditorGeoJsonLayersStore(
     (state) => state.geoJsonLayers,
   );
-  const customMarkers = useEditorTestCustomMarkersStore(
+  const customMarkers = useEditorCustomMarkersStore(
     (state) => state.customMarkers,
   );
-  const workspaceBounds = useEditorTestWorkspaceStore(
+  const workspaceBounds = useEditorWorkspaceStore(
     (state) => state.workspaceBounds,
   );
-  const exportFormat = useEditorTestExportStore((state) => state.exportFormat);
+  const exportFormat = useEditorExportStore((state) => state.exportFormat);
 
   useEffect(() => {
     function handleOpen() {
       setOpen(true);
     }
 
-    window.addEventListener("dromap:p1-open-project-info", handleOpen);
+    window.addEventListener("dromap:open-project-info", handleOpen);
     return () =>
-      window.removeEventListener("dromap:p1-open-project-info", handleOpen);
+      window.removeEventListener("dromap:open-project-info", handleOpen);
   }, []);
 
   useEffect(() => {
@@ -95,7 +95,7 @@ export function DromapProjectInfoDialog({ projectId }: { projectId: string }) {
 
   return (
     <div
-      className="fixed inset-0 z-[6200] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[6200] flex items-center justify-center bg-slate-950/45 p-4"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) setOpen(false);
@@ -105,11 +105,11 @@ export function DromapProjectInfoDialog({ projectId }: { projectId: string }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="dromap-project-info-title"
-        className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+        className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg"
       >
         <header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
           <div>
-            <div className="text-xs font-black uppercase tracking-wide text-indigo-600">
+            <div className="text-xs font-black uppercase tracking-wide text-teal-600">
               Informations du projet
             </div>
             <h2 id="dromap-project-info-title" className="mt-1 text-xl font-black text-slate-950">
@@ -174,7 +174,7 @@ export function DromapProjectInfoDialog({ projectId }: { projectId: string }) {
             </div>
           </section>
 
-          <section className="mt-4 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 text-sm leading-6 text-indigo-950">
+          <section className="mt-4 rounded-2xl border border-teal-200 bg-teal-50 p-4 text-sm leading-6 text-teal-950">
             Les paramètres de fond, de zone, de niveau de détail, d’écritures, de légende, d’échelle, de flèche nord et de titre de carte font partie de la sauvegarde complète du projet.
           </section>
         </div>

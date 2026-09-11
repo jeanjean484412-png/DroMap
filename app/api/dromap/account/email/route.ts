@@ -1,3 +1,4 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
 import {
@@ -12,7 +13,7 @@ function normalizeEmail(value: unknown) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   if (!getSupabaseConfig()) {
     return NextResponse.json(
       { error: "Les comptes DroMap sont momentanément indisponibles." },
@@ -83,3 +84,5 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const POST = withRequestSecurity(handlePOST);

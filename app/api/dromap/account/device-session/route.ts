@@ -1,3 +1,4 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
 import {
@@ -37,7 +38,7 @@ async function readLease(ownerId: string, accessToken: string) {
   return response.ok && Array.isArray(rows) ? rows[0] ?? null : null;
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   if (!getSupabaseConfig()) return NextResponse.json({ error: "Compte indisponible." }, { status: 503 });
   const auth = await getAuthenticatedRequestUser();
   if (!auth) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
@@ -108,7 +109,7 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE(request: Request) {
+async function handleDELETE(request: Request) {
   const auth = await getAuthenticatedRequestUser();
   if (!auth) return NextResponse.json({ ok: true });
   const body = (await request.json().catch(() => null)) as { deviceId?: unknown } | null;
@@ -121,3 +122,6 @@ export async function DELETE(request: Request) {
   ).catch(() => null);
   return NextResponse.json({ ok: true });
 }
+
+export const POST = withRequestSecurity(handlePOST);
+export const DELETE = withRequestSecurity(handleDELETE);

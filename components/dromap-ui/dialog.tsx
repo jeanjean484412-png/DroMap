@@ -11,6 +11,7 @@ export function DromapDialog({
   footer,
   onClose,
   maxWidthClassName = "max-w-lg",
+  scrollable = false,
 }: {
   open: boolean;
   title: string;
@@ -19,6 +20,7 @@ export function DromapDialog({
   footer?: ReactNode;
   onClose: () => void;
   maxWidthClassName?: string;
+  scrollable?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -35,7 +37,7 @@ export function DromapDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[95000] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[95000] flex items-center justify-center bg-slate-950/45 p-4"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -45,9 +47,9 @@ export function DromapDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="dromap-dialog-title"
-        className={`w-full ${maxWidthClassName} overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl`}
+        className={`w-full ${maxWidthClassName} ${scrollable ? "flex max-h-[calc(100dvh-2rem)] flex-col" : ""} overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg`}
       >
-        <header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+        <header className={`flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4 ${scrollable ? "shrink-0" : ""}`}>
           <div>
             <h2 id="dromap-dialog-title" className="text-base font-black text-slate-950">
               {title}
@@ -65,9 +67,13 @@ export function DromapDialog({
             ×
           </button>
         </header>
-        {children ? <div className="px-5 py-5">{children}</div> : null}
+        {children ? (
+          <div className={scrollable ? "min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5" : "px-5 py-5"}>
+            {children}
+          </div>
+        ) : null}
         {footer ? (
-          <footer className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
+          <footer className={`flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4 ${scrollable ? "shrink-0" : ""}`}>
             {footer}
           </footer>
         ) : null}

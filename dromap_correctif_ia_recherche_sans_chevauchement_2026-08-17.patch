@@ -1,0 +1,26 @@
+diff -ruN a/app/editor/test/dromap-ai-panel.tsx b/app/editor/test/dromap-ai-panel.tsx
+--- a/app/editor/test/dromap-ai-panel.tsx	2026-08-17 10:54:51.631209613 +0000
++++ b/app/editor/test/dromap-ai-panel.tsx	2026-08-17 10:54:52.078392695 +0000
+@@ -717,7 +717,7 @@
+   }
+ 
+   const closedPositionClass = productRuntimeEnabled
+-    ? "fixed left-4 top-[4.5rem] z-[1300] md:left-[18rem] lg:left-[25rem]"
++    ? "fixed left-4 top-[8.75rem] z-[1300]"
+     : "fixed left-4 top-[4.5rem] z-[1300] md:left-[8.5rem] lg:left-[43rem] lg:top-4";
+   const openedPositionClass = productRuntimeEnabled
+     ? "fixed right-4 top-[4.5rem] z-[15000]"
+diff -ruN a/app/editor/test/place-search-control.tsx b/app/editor/test/place-search-control.tsx
+--- a/app/editor/test/place-search-control.tsx	2026-08-17 10:54:51.632022407 +0000
++++ b/app/editor/test/place-search-control.tsx	2026-08-17 10:54:52.078582796 +0000
+@@ -348,9 +348,7 @@
+       className={[
+         "pointer-events-none absolute top-4",
+         productRuntimeEnabled
+-          ? isOpen
+-            ? "left-1/2 -translate-x-1/2 lg:left-[33rem] lg:-translate-x-48"
+-            : "left-1/2 -translate-x-1/2 lg:left-[33rem] lg:translate-x-0"
++          ? "left-1/2 -translate-x-1/2"
+           : "left-1/2 -translate-x-1/2 lg:left-[53rem] lg:translate-x-0",
+       ].join(" ")}
+       style={{ zIndex: panelZIndex }}

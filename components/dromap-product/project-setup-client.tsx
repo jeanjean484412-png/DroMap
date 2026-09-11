@@ -1,16 +1,19 @@
 "use client";
 
+import { DromapLogoMark } from "@/components/dromap-product/dromap-brand";
+
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 import { DromapProductBootstrap } from "./product-bootstrap";
 import { DromapButton } from "@/components/dromap-ui/button";
-import { BasemapPreviewThumbnail } from "@/app/editor/test/basemap-controls";
-import GraphicZoomViewport from "@/app/editor/test/graphic-zoom-viewport";
-import { SavedLayersLibraryModal } from "@/app/editor/test/saved-layers-library-modal";
+import { BasemapPreviewThumbnail } from "@/editor/basemap-controls";
+import GraphicZoomViewport from "@/editor/graphic-zoom-viewport";
+import { SavedLayersLibraryModal } from "@/editor/saved-layers-library-modal";
 import { DromapDialog } from "@/components/dromap-ui/dialog";
 import {
+  DEFAULT_DROMAP_BASEMAP_ID,
   DROMAP_BASEMAP_MENU_SECTIONS,
   getDromapBasemapConfig,
   isDromapBasemapId,
@@ -28,21 +31,21 @@ import {
   parseGeoJsonTextToDromapGeoJsonLayer,
   remapSavedGeoJsonLayerToMap,
   type DromapGeoJsonPrecisionMode,
-} from "@/stores/editor-test-geojson-layers";
+} from "@/stores/editor-geojson-layers";
 import {
   createDefaultDromapLayer,
-  useEditorTestLayersStore,
-} from "@/stores/editor-test-layers";
-import { useEditorTestFeaturesStore } from "@/stores/editor-test-features";
-import { useEditorTestGeoJsonLayersStore } from "@/stores/editor-test-geojson-layers";
-import { useEditorTestBasemapStore } from "@/stores/editor-test-basemap";
-import { useEditorTestWorkspaceStore } from "@/stores/editor-test-workspace";
-import { useEditorTestModeStore } from "@/stores/editor-test-mode";
-import { useEditorTestSelectionStore } from "@/stores/editor-test-selection";
-import { useEditorTestMapViewStore } from "@/stores/editor-test-map-view";
+  useEditorLayersStore,
+} from "@/stores/editor-layers";
+import { useEditorFeaturesStore } from "@/stores/editor-features";
+import { useEditorGeoJsonLayersStore } from "@/stores/editor-geojson-layers";
+import { useEditorBasemapStore } from "@/stores/editor-basemap";
+import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
+import { useEditorModeStore } from "@/stores/editor-mode";
+import { useEditorSelectionStore } from "@/stores/editor-selection";
+import { useEditorMapViewStore } from "@/stores/editor-map-view";
 import { useDromapProductStore } from "@/stores/dromap-product";
 
-const SetupMap = dynamic(() => import("@/app/editor/test/test-map"), {
+const SetupMap = dynamic(() => import("@/editor/editor-map"), {
   ssr: false,
   loading: () => (
     <div className="grid h-full place-items-center bg-slate-100 text-sm text-slate-600">
@@ -307,7 +310,7 @@ function SetupBasemapPicker({
         onClick={() => chooseBasemap(choice)}
         className={`w-full rounded-xl border px-3 py-2 text-left transition ${
           selected
-            ? "border-indigo-300 bg-indigo-50 text-indigo-950 shadow-sm"
+            ? "border-teal-300 bg-teal-50 text-teal-950 shadow-sm"
             : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
         }`}
       >
@@ -331,7 +334,7 @@ function SetupBasemapPicker({
             </span>
           </span>
           {selected ? (
-            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-indigo-600 text-xs font-black text-white">
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-teal-600 text-xs font-black text-white">
               ✓
             </span>
           ) : null}
@@ -424,7 +427,7 @@ function SetupBasemapPicker({
         value={searchQuery}
         onChange={(event) => setSearchQuery(event.target.value)}
         placeholder="France, satellite, Europe, départements…"
-        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
       />
 
       {normalizedQuery ? (
@@ -449,7 +452,7 @@ function SetupBasemapPicker({
                 key={section.id}
                 className={`overflow-hidden rounded-2xl border bg-white transition ${
                   sectionContainsSelection
-                    ? "border-indigo-300 shadow-sm ring-2 ring-indigo-100"
+                    ? "border-teal-300 shadow-sm ring-2 ring-teal-100"
                     : "border-slate-200"
                 }`}
               >
@@ -470,7 +473,7 @@ function SetupBasemapPicker({
                       {section.description}
                     </span>
                     {sectionContainsSelection ? (
-                      <span className="mt-1 block text-xs font-semibold text-indigo-700">
+                      <span className="mt-1 block text-xs font-semibold text-teal-700">
                         Sélection actuelle : {selectedBasemap.label}
                       </span>
                     ) : null}
@@ -512,13 +515,13 @@ function SetupBasemapPicker({
         </div>
       )}
 
-      <div className="mt-4 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2.5">
+      <div className="mt-4 flex items-center gap-3 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2.5">
         <BasemapPreviewThumbnail basemapId={selectedBasemapId} compact />
         <div className="min-w-0">
-          <div className="text-xs font-bold uppercase tracking-wide text-indigo-700">
+          <div className="text-xs font-bold uppercase tracking-wide text-teal-700">
             Fond sélectionné
           </div>
-          <div className="truncate text-sm font-black text-indigo-950">
+          <div className="truncate text-sm font-black text-teal-950">
             {selectedBasemap.label}
           </div>
         </div>
@@ -583,10 +586,10 @@ function StepProgress({ step }: { step: number }) {
         return (
           <div key={label} className="min-w-0">
             <div
-              className={`h-1.5 rounded-full ${complete ? "bg-emerald-500" : active ? "bg-indigo-600" : "bg-slate-200"}`}
+              className={`h-1.5 rounded-full ${complete ? "bg-emerald-500" : active ? "bg-teal-600" : "bg-slate-200"}`}
             />
             <div
-              className={`mt-1.5 truncate text-xs font-semibold ${active ? "text-indigo-700" : complete ? "text-emerald-700" : "text-slate-400"}`}
+              className={`mt-1.5 truncate text-xs font-semibold ${active ? "text-teal-700" : complete ? "text-emerald-700" : "text-slate-400"}`}
             >
               {number}. {label}
             </div>
@@ -605,6 +608,7 @@ function SetupMapStep({
   onValidationChange,
   onBack,
   onContinue,
+  onSkip,
   canContinue,
 }: {
   projectId: string;
@@ -614,32 +618,33 @@ function SetupMapStep({
   onValidationChange: (validated: boolean) => void;
   onBack: () => void;
   onContinue: () => void;
+  onSkip: () => void;
   canContinue: boolean;
 }) {
-  const workspaceBounds = useEditorTestWorkspaceStore(
+  const workspaceBounds = useEditorWorkspaceStore(
     (state) => state.workspaceBounds,
   );
-  const workspaceBasemapBaseZoom = useEditorTestWorkspaceStore(
+  const workspaceBasemapBaseZoom = useEditorWorkspaceStore(
     (state) => state.workspaceBasemapBaseZoom,
   );
-  const setWorkspaceBounds = useEditorTestWorkspaceStore(
+  const setWorkspaceBounds = useEditorWorkspaceStore(
     (state) => state.setWorkspaceBounds,
   );
-  const clearWorkspaceBounds = useEditorTestWorkspaceStore(
+  const clearWorkspaceBounds = useEditorWorkspaceStore(
     (state) => state.clearWorkspaceBounds,
   );
-  const validateWorkspaceZone = useEditorTestWorkspaceStore(
+  const validateWorkspaceZone = useEditorWorkspaceStore(
     (state) => state.validateWorkspaceZone,
   );
-  const modifyWorkspaceZone = useEditorTestWorkspaceStore(
+  const modifyWorkspaceZone = useEditorWorkspaceStore(
     (state) => state.modifyWorkspaceZone,
   );
-  const currentMode = useEditorTestModeStore((state) => state.currentMode);
-  const currentView = useEditorTestMapViewStore((state) => state.currentView);
-  const requestMapFitToBounds = useEditorTestSelectionStore(
+  const currentMode = useEditorModeStore((state) => state.currentMode);
+  const currentView = useEditorMapViewStore((state) => state.currentView);
+  const requestMapFitToBounds = useEditorSelectionStore(
     (state) => state.requestMapFitToBounds,
   );
-  const setBasemapId = useEditorTestBasemapStore((state) => state.setBasemapId);
+  const setBasemapId = useEditorBasemapStore((state) => state.setBasemapId);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PlaceSearchResult[]>([]);
   const [searchStatus, setSearchStatus] = useState<string>(
@@ -651,13 +656,13 @@ function SetupMapStep({
   const allowSelectWholeWorld = canSelectWholeWorldFromSetup(basemapId);
 
   useEffect(() => {
-    useEditorTestFeaturesStore.getState().replaceFeatures([]);
-    useEditorTestLayersStore
+    useEditorFeaturesStore.getState().replaceFeatures([]);
+    useEditorLayersStore
       .getState()
       .setLayers([createDefaultDromapLayer()]);
-    useEditorTestGeoJsonLayersStore.getState().setGeoJsonLayers([]);
-    useEditorTestModeStore.getState().setCurrentMode("workspace-select");
-    useEditorTestMapViewStore.getState().setCurrentView(null);
+    useEditorGeoJsonLayersStore.getState().setGeoJsonLayers([]);
+    useEditorModeStore.getState().setCurrentMode("workspace-select");
+    useEditorMapViewStore.getState().setCurrentView(null);
     onValidationChange(false);
     setBasemapId(basemapId, { fit: true });
 
@@ -731,9 +736,9 @@ function SetupMapStep({
   }
 
   function selectBounds(bounds: WorkspaceBounds) {
-    useEditorTestMapViewStore.getState().setCurrentView(null);
+    useEditorMapViewStore.getState().setCurrentView(null);
     setWorkspaceBounds(bounds);
-    useEditorTestModeStore.getState().setCurrentMode("workspace-select");
+    useEditorModeStore.getState().setCurrentMode("workspace-select");
     onValidationChange(false);
     requestMapFitToBounds(bounds, { animate: false, maxZoom: 12 });
   }
@@ -747,7 +752,7 @@ function SetupMapStep({
     // zone, puis verrouille le niveau de détail du fond sur ce rendu final.
     // On efface la vue précédente afin de n'accepter comme vue sauvegardée que
     // celle produite après le fitBounds de validation.
-    useEditorTestMapViewStore.getState().setCurrentView(null);
+    useEditorMapViewStore.getState().setCurrentView(null);
     onValidationChange(false);
     validateWorkspaceZone();
   }
@@ -755,7 +760,7 @@ function SetupMapStep({
   function handleModifyWorkspace() {
     if (!workspaceBounds) return;
 
-    useEditorTestMapViewStore.getState().setCurrentView(null);
+    useEditorMapViewStore.getState().setCurrentView(null);
     onValidationChange(false);
     modifyWorkspaceZone();
   }
@@ -766,9 +771,9 @@ function SetupMapStep({
         <SetupMap />
       </GraphicZoomViewport>
 
-      <aside className="absolute bottom-4 left-4 top-4 z-[1300] flex w-[350px] max-w-[calc(100%-2rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white/97 shadow-2xl backdrop-blur">
+      <aside className="absolute bottom-4 left-4 top-4 z-[1300] flex w-[350px] max-w-[calc(100%-2rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
-          <div className="text-xs font-bold uppercase tracking-wide text-indigo-600">
+          <div className="text-xs font-bold uppercase tracking-wide text-teal-600">
             Étape 3 sur 4
           </div>
           <h1 className="mt-1 text-xl font-black text-slate-950">
@@ -798,7 +803,7 @@ function SetupMapStep({
                   if (event.key === "Enter") void searchPlace();
                 }}
                 placeholder="Paris, Bretagne, Arménie…"
-                className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
               />
               <DromapButton
                 onClick={() => void searchPlace()}
@@ -817,7 +822,7 @@ function SetupMapStep({
                   key={result.id}
                   type="button"
                   onClick={() => selectBounds(resultToWorkspaceBounds(result))}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-800 transition hover:border-indigo-300 hover:bg-indigo-50"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-800 transition hover:border-teal-300 hover:bg-teal-50"
                 >
                   {result.displayName}
                 </button>
@@ -883,8 +888,15 @@ function SetupMapStep({
 
         </div>
 
-        <div className="flex shrink-0 items-center gap-2 border-t border-slate-200 bg-white p-3">
+        <div className="flex shrink-0 items-center gap-2 border-t border-slate-200 bg-white p-3 shadow-[0_-8px_20px_rgba(15,23,42,0.06)]">
           <DromapButton onClick={onBack}>Retour</DromapButton>
+          <button
+            type="button"
+            onClick={onSkip}
+            className="shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800"
+          >
+            Passer les étapes
+          </button>
           <DromapButton
             fullWidth
             variant="primary"
@@ -896,7 +908,7 @@ function SetupMapStep({
         </div>
       </aside>
 
-      <div className="pointer-events-none absolute bottom-4 left-1/2 z-[1200] -translate-x-1/2 rounded-xl border border-slate-200 bg-white/95 px-4 py-2 text-xs font-semibold text-slate-700 shadow-lg backdrop-blur">
+      <div className="pointer-events-none absolute bottom-4 left-1/2 z-[1200] -translate-x-1/2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-lg">
         {!workspaceBounds
           ? allowSelectWholeWorld
             ? "Trace un rectangle ou choisis le monde entier"
@@ -912,13 +924,15 @@ function SetupMapStep({
   );
 }
 
-function LoadedSetupContent({ projectId }: { projectId: string }) {
+function SetupContent({ projectId }: { projectId: string }) {
   const router = useRouter();
   const project = useDromapProductStore((state) =>
     state.projects.find((item) => item.id === projectId),
   );
   const userMode = useDromapProductStore((state) => state.userMode);
+  const accountPlan = useDromapProductStore((state) => state.accountPlan);
   const renameProject = useDromapProductStore((state) => state.renameProject);
+  const updateProjectSetup = useDromapProductStore((state) => state.updateProjectSetup);
   const setSetupStep = useDromapProductStore((state) => state.setSetupStep);
   const completeSetupStep = useDromapProductStore(
     (state) => state.completeSetupStep,
@@ -977,29 +991,29 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const autoWorkspaceBasemapIdRef = useRef<DromapBasemapId | null>(null);
   const basemapWorkspaceRequestRef = useRef(0);
-  const loadSavedLayersFromStorage = useEditorTestLayersStore(
+  const loadSavedLayersFromStorage = useEditorLayersStore(
     (state) => state.loadSavedLayersFromStorage,
   );
-  const savedLayers = useEditorTestLayersStore((state) => state.savedLayers);
-  const loadSavedGeoJsonLayersFromStorage = useEditorTestGeoJsonLayersStore(
+  const savedLayers = useEditorLayersStore((state) => state.savedLayers);
+  const loadSavedGeoJsonLayersFromStorage = useEditorGeoJsonLayersStore(
     (state) => state.loadSavedGeoJsonLayersFromStorage,
   );
-  const savedGeoJsonLayers = useEditorTestGeoJsonLayersStore(
+  const savedGeoJsonLayers = useEditorGeoJsonLayersStore(
     (state) => state.savedGeoJsonLayers,
   );
-  const renameSavedLayer = useEditorTestLayersStore(
+  const renameSavedLayer = useEditorLayersStore(
     (state) => state.renameSavedLayer,
   );
-  const deleteSavedLayer = useEditorTestLayersStore(
+  const deleteSavedLayer = useEditorLayersStore(
     (state) => state.deleteSavedLayer,
   );
-  const renameSavedGeoJsonLayer = useEditorTestGeoJsonLayersStore(
+  const renameSavedGeoJsonLayer = useEditorGeoJsonLayersStore(
     (state) => state.renameSavedGeoJsonLayer,
   );
-  const deleteSavedGeoJsonLayer = useEditorTestGeoJsonLayersStore(
+  const deleteSavedGeoJsonLayer = useEditorGeoJsonLayersStore(
     (state) => state.deleteSavedGeoJsonLayer,
   );
-  const capabilities = getDromapCapabilities(userMode);
+  const capabilities = getDromapCapabilities(userMode, accountPlan);
   const selectedBasemap = getDromapBasemapConfig(selectedBasemapId);
 
   useEffect(() => {
@@ -1032,7 +1046,7 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
         <div>
           <h1 className="text-xl font-black text-slate-950">Projet introuvable</h1>
           <DromapButton className="mt-4" onClick={() => router.push("/dashboard")}>
-            Retour au tableau de bord
+            Menu principal
           </DromapButton>
         </div>
       </div>
@@ -1081,7 +1095,7 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
 
     try {
       const { getBasemapViewportBounds } = await import(
-        "@/app/editor/test/basemap-viewport-bounds"
+        "@/editor/basemap-viewport-bounds"
       );
       const basemap = getDromapBasemapConfig(nextBasemapId);
       const bounds = await getBasemapViewportBounds(basemap);
@@ -1141,7 +1155,7 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
   function persistWorkspaceDraft(options?: { requireValidatedView?: boolean }) {
     if (!workspaceDraft) return false;
 
-    const currentMapView = useEditorTestMapViewStore.getState().currentView;
+    const currentMapView = useEditorMapViewStore.getState().currentView;
     const requireValidatedView = options?.requireValidatedView === true;
 
     if (requireValidatedView && (!workspaceValidated || !currentMapView)) {
@@ -1267,6 +1281,41 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
     }
   }
 
+  function skipSetupAndOpenEditor() {
+    const finalName = nameDraft.trim() || "Projet sans titre";
+
+    // Le raccourci part volontairement d'une base neutre et prévisible :
+    // fond par défaut, aucune zone validée et un calque DroMap vide.
+    renameProject(activeProject.id, finalName);
+    updateProjectSetup(activeProject.id, {
+      currentStep: 4,
+      completedSteps: [1, 2, 3, 4],
+      basemapId: DEFAULT_DROMAP_BASEMAP_ID,
+      workspaceBounds: null,
+      workspaceView: null,
+      layerChoice: { kind: "empty" },
+    });
+
+    // Nettoyer aussi les stores cartographiques transitoires du parcours afin
+    // que l'éditeur ne récupère pas une zone ou un fond provisoire.
+    useEditorFeaturesStore.getState().replaceFeatures([]);
+    useEditorLayersStore.getState().setLayers([createDefaultDromapLayer()]);
+    useEditorGeoJsonLayersStore.getState().setGeoJsonLayers([]);
+    useEditorWorkspaceStore.setState({
+      workspaceBounds: null,
+      pendingFitToWorkspace: false,
+      workspaceBasemapZoom: null,
+      workspaceBasemapBaseZoom: null,
+      workspaceNavigationUnlocked: false,
+    });
+    useEditorModeStore.getState().setCurrentMode("workspace-select");
+    useEditorMapViewStore.getState().setCurrentView(null);
+    useEditorBasemapStore.getState().setBasemapId(DEFAULT_DROMAP_BASEMAP_ID, { fit: true });
+
+    completeProjectSetup(activeProject.id);
+    router.push(`/projects/${activeProject.id}/editor`);
+  }
+
   async function handleGeoJsonFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0] ?? null;
     event.currentTarget.value = "";
@@ -1292,17 +1341,19 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className={`flex flex-col bg-slate-50 text-slate-950 ${step === 3 ? "h-screen min-h-0 overflow-hidden" : "min-h-screen"}`}>
-      <header className="flex h-14 shrink-0 items-center border-b border-slate-200 bg-white px-3 shadow-sm">
-        <div className="flex w-full items-center justify-between gap-4">
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#f7f9f8] text-slate-950">
+      <header className="shrink-0 border-b border-slate-200 bg-white px-3 py-2 shadow-sm sm:flex sm:min-h-14 sm:items-center sm:py-0">
+        <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:flex sm:justify-between sm:gap-4">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-600 font-black text-white">D</div>
+            <span className="grid h-10 w-10 place-items-center rounded-xl border border-[#b9ddd7] bg-[#e9f6f3] sm:h-11 sm:w-11 sm:rounded-2xl">
+              <DromapLogoMark className="h-9 w-9 object-contain" />
+            </span>
             <div>
               <div className="font-black">DroMap</div>
               <div className="max-w-72 truncate text-xs text-slate-500">{activeProject.name}</div>
             </div>
           </div>
-          <div className="w-full max-w-md"><StepProgress step={step} /></div>
+          <div className="order-3 col-span-2 w-full sm:order-none sm:col-span-1 sm:max-w-md"><StepProgress step={step} /></div>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -1325,15 +1376,15 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
         </div>
       </header>
 
-      <main className={step === 3 ? "relative min-h-0 w-full flex-1 overflow-hidden" : "mx-auto flex w-full max-w-7xl flex-1 flex-col p-6"}>
+      <main className={step === 3 ? "relative min-h-0 w-full flex-1 overflow-hidden" : "mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-y-auto p-4 sm:p-6"}>
         {step === 1 ? (
-          <div className="mx-auto w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-            <div className="text-sm font-bold uppercase tracking-wide text-indigo-600">Étape 1 sur 4</div>
+          <div className="mx-auto w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+            <div className="text-sm font-bold uppercase tracking-wide text-teal-600">Étape 1 sur 4</div>
             <h1 className="mt-2 text-2xl font-black">Nommer le projet</h1>
             <p className="mt-2 text-sm leading-6 text-slate-600">
               « Projet sans titre » est accepté.
             </p>
-            <p className="mt-2 text-xs font-semibold text-indigo-700">
+            <p className="mt-2 text-xs font-semibold text-teal-700">
               Ce choix n’est pas définitif : vous pourrez modifier le nom du projet plus tard.
             </p>
             <label htmlFor="project-name" className="mt-7 block text-sm font-semibold text-slate-800">
@@ -1343,7 +1394,7 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
               id="project-name"
               value={nameDraft}
               onChange={(event) => setNameDraft(event.target.value)}
-              className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+              className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
               autoFocus
             />
           </div>
@@ -1352,14 +1403,14 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
         {step === 2 ? (
           <div className="mx-auto w-full max-w-4xl">
             <div className="mb-5">
-              <div className="text-sm font-bold uppercase tracking-wide text-indigo-600">Étape 2 sur 4</div>
+              <div className="text-sm font-bold uppercase tracking-wide text-teal-600">Étape 2 sur 4</div>
               <h1 className="mt-2 text-2xl font-black">Choisir le fond de carte</h1>
-              <p className="mt-2 text-xs font-semibold text-indigo-700">
+              <p className="mt-2 text-xs font-semibold text-teal-700">
                 Ce choix n’est pas définitif : vous pourrez modifier le fond de carte plus tard dans l’éditeur.
               </p>
             </div>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
               <SetupBasemapPicker
                 selectedBasemapId={selectedBasemapId}
                 onSelect={requestSetupBasemapSelect}
@@ -1369,7 +1420,7 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
                 <strong className="text-slate-900">{selectedBasemap.label}</strong> — {selectedBasemap.description}
               </div>
               {isPreparingBasemapWorkspace ? (
-                <p className="mx-auto mt-2 max-w-3xl text-xs font-semibold text-indigo-700">
+                <p className="mx-auto mt-2 max-w-3xl text-xs font-semibold text-teal-700">
                   Préparation automatique de la zone du fond blanc…
                 </p>
               ) : null}
@@ -1386,6 +1437,7 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
             onValidationChange={setWorkspaceValidated}
             onBack={goBack}
             onContinue={continueSetup}
+            onSkip={skipSetupAndOpenEditor}
             canContinue={canContinue}
           />
         ) : null}
@@ -1393,10 +1445,10 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
         {step === 4 ? (
           <div>
             <div className="mb-5">
-              <div className="text-sm font-bold uppercase tracking-wide text-indigo-600">Étape 4 sur 4</div>
+              <div className="text-sm font-bold uppercase tracking-wide text-teal-600">Étape 4 sur 4</div>
               <h1 className="mt-2 text-2xl font-black">Préparer les calques et les données</h1>
               <p className="mt-2 text-sm text-slate-600">Choisis une structure initiale. Aucun type de calque n’est obligatoire.</p>
-              <p className="mt-2 text-xs font-semibold text-indigo-700">
+              <p className="mt-2 text-xs font-semibold text-teal-700">
                 Ce choix n’est pas définitif : vous pourrez ajouter, retirer ou modifier les calques plus tard dans l’éditeur.
               </p>
             </div>
@@ -1413,7 +1465,7 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
               <button
                 type="button"
                 onClick={() => setLayerChoiceKind("empty")}
-                className={`rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:border-indigo-300 ${layerChoiceKind === "empty" ? "border-indigo-600 ring-4 ring-indigo-100" : "border-slate-200"}`}
+                className={`rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:border-teal-300 ${layerChoiceKind === "empty" ? "border-teal-600 ring-4 ring-teal-100" : "border-slate-200"}`}
               >
                 <h2 className="font-black">Créer un calque vide</h2>
                 <p className="mt-2 text-sm leading-6 text-slate-600">Commencer avec « Calque 1 », prêt à recevoir les nouveaux objets.</p>
@@ -1422,13 +1474,13 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
               <button
                 type="button"
                 onClick={() => setLayerChoiceKind("none")}
-                className={`rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:border-indigo-300 ${layerChoiceKind === "none" ? "border-indigo-600 ring-4 ring-indigo-100" : "border-slate-200"}`}
+                className={`rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:border-teal-300 ${layerChoiceKind === "none" ? "border-teal-600 ring-4 ring-teal-100" : "border-slate-200"}`}
               >
                 <h2 className="font-black">Commencer sans calque DroMap</h2>
                 <p className="mt-2 text-sm leading-6 text-slate-600">Autorise un projet composé uniquement de données GeoJSON ou l’ajout de calques plus tard.</p>
               </button>
 
-              <div className={`rounded-2xl border bg-white p-5 shadow-sm ${layerChoiceKind === "geojson" ? "border-indigo-600 ring-4 ring-indigo-100" : "border-slate-200"}`}>
+              <div className={`rounded-2xl border bg-white p-5 shadow-sm ${layerChoiceKind === "geojson" ? "border-teal-600 ring-4 ring-teal-100" : "border-slate-200"}`}>
                 <h2 className="font-black">Importer un GeoJSON</h2>
                 <p className="mt-2 text-sm leading-6 text-slate-600">Le fichier reste un calque léger et pourra être transformé en objets DroMap plus tard.</p>
                 <label className="mt-4 block text-xs font-semibold text-slate-700" htmlFor="setup-geojson-precision">Précision d’affichage</label>
@@ -1453,7 +1505,7 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
                 {geoJsonError ? <div className="mt-3 text-xs text-red-700">{geoJsonError}</div> : null}
               </div>
 
-              <div className={`rounded-2xl border bg-white p-5 shadow-sm ${layerChoiceKind === "saved" ? "border-indigo-600 ring-4 ring-indigo-100" : "border-slate-200"}`}>
+              <div className={`rounded-2xl border bg-white p-5 shadow-sm ${layerChoiceKind === "saved" ? "border-teal-600 ring-4 ring-teal-100" : "border-slate-200"}`}>
                 <h2 className="font-black">Utiliser un calque enregistré {capabilities.canSaveLayersToLibrary ? "" : "🔒"}</h2>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
                   {capabilities.canSaveLayersToLibrary
@@ -1481,9 +1533,9 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
                 ) : (
                   <DromapButton
                     className="mt-4"
-                    onClick={() => router.push(`/signup?returnTo=${encodeURIComponent(`/projects/${projectId}/setup`)}`)}
+                    onClick={() => router.push("/signup")}
                   >
-                    Créer un compte
+                    Activer le compte de test
                   </DromapButton>
                 )}
               </div>
@@ -1493,13 +1545,20 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
       </main>
 
       {step !== 3 ? (
-        <footer className="border-t border-slate-200 bg-white px-6 py-4">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+        <footer className="shrink-0 border-t border-slate-200 bg-white px-3 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-8px_20px_rgba(15,23,42,0.06)] sm:px-6 sm:py-4">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 sm:gap-4">
             <DromapButton onClick={goBack}>{step === 1 ? "Quitter" : "Retour"}</DromapButton>
-            <div className="text-xs text-slate-500">
-              {userMode === "guest"
-                ? "Le brouillon est enregistré automatiquement sur cet appareil."
-                : "Le brouillon est enregistré automatiquement et synchronisé avec ton compte."}
+            <div className="hidden min-w-0 flex-1 items-center justify-center gap-3 sm:flex">
+              <button
+                type="button"
+                onClick={skipSetupAndOpenEditor}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800"
+              >
+                Passer les étapes
+              </button>
+              <div className="hidden text-xs text-slate-500 md:block">
+                Le brouillon est enregistré automatiquement sur cet appareil.
+              </div>
             </div>
             <DromapButton variant="primary" onClick={continueSetup} disabled={!canContinue}>
               {step === 4 ? "Commencer à créer la carte" : "Continuer"}
@@ -1598,62 +1657,6 @@ function LoadedSetupContent({ projectId }: { projectId: string }) {
       />
     </div>
   );
-}
-
-function SetupContent({ projectId }: { projectId: string }) {
-  const router = useRouter();
-  const project = useDromapProductStore((state) =>
-    state.projects.find((item) => item.id === projectId),
-  );
-  const loadProject = useDromapProductStore((state) => state.loadProject);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!project || project.contentLoaded !== false) return;
-    let cancelled = false;
-    setLoadError(null);
-    void loadProject(projectId).then((result) => {
-      if (!cancelled && !result.ok) setLoadError(result.error);
-    });
-    return () => { cancelled = true; };
-  }, [loadProject, project, projectId]);
-
-  if (!project) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-slate-50 p-6 text-center">
-        <div>
-          <h1 className="text-xl font-black text-slate-950">Projet introuvable</h1>
-          <DromapButton className="mt-4" onClick={() => router.push("/dashboard")}>
-            Retour au tableau de bord
-          </DromapButton>
-        </div>
-      </div>
-    );
-  }
-
-  if (loadError) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-slate-50 p-6 text-center">
-        <div className="max-w-lg rounded-2xl border border-red-200 bg-white p-6 shadow-sm">
-          <h1 className="text-xl font-black text-slate-950">Chargement impossible</h1>
-          <p className="mt-2 text-sm leading-6 text-red-700">{loadError}</p>
-          <DromapButton className="mt-4" onClick={() => router.push("/dashboard")}>
-            Retour au tableau de bord
-          </DromapButton>
-        </div>
-      </div>
-    );
-  }
-
-  if (project.contentLoaded === false) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-slate-50 text-sm text-slate-600">
-        Ouverture du projet…
-      </div>
-    );
-  }
-
-  return <LoadedSetupContent projectId={projectId} />;
 }
 
 export function DromapProjectSetupClient({ projectId }: { projectId: string }) {

@@ -1,7 +1,7 @@
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
-
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextRequest, NextResponse } from "next/server";
+import { checkAiAccess } from "@/lib/dromap/server/ai-access";
+import { readPublicUrl } from "@/lib/dromap/server/public-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,45 +9,6 @@ export const maxDuration = 60;
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const TIMEOUT_MS = 45_000;
-
-function isPrivateIpv4(address: string) {
-  const parts = address.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) return true;
-  const [a, b] = parts as [number, number, number, number];
-  return (
-    a === 10 || a === 127 || a === 0 ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    a >= 224
-  );
-}
-
-function isPrivateIpv6(address: string) {
-  const normalized = address.toLowerCase();
-  return normalized === "::1" || normalized === "::" || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe8") || normalized.startsWith("fe9") || normalized.startsWith("fea") || normalized.startsWith("feb");
-}
-
-async function assertPublicHost(url: URL) {
-  const hostname = url.hostname.toLowerCase();
-  if (hostname === "localhost" || hostname.endsWith(".local") || hostname.endsWith(".internal")) {
-    throw new Error("Cette adresse ne peut pas être importée.");
-  }
-  if (isIP(hostname)) {
-    if ((isIP(hostname) === 4 && isPrivateIpv4(hostname)) || (isIP(hostname) === 6 && isPrivateIpv6(hostname))) {
-      throw new Error("Cette adresse ne peut pas être importée.");
-    }
-    return;
-  }
-  const addresses = await lookup(hostname, { all: true, verbatim: true });
-  if (!addresses.length) throw new Error("Cette adresse est introuvable.");
-  for (const entry of addresses) {
-    if ((entry.family === 4 && isPrivateIpv4(entry.address)) || (entry.family === 6 && isPrivateIpv6(entry.address))) {
-      throw new Error("Cette adresse ne peut pas être importée.");
-    }
-  }
-}
 
 function looksLikeGeoJson(text: string) {
   try {
@@ -58,7 +19,9 @@ function looksLikeGeoJson(text: string) {
   }
 }
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
+  const accessError = await checkAiAccess("geojson");
+  if (accessError) return accessError;
   try {
     const rawUrl = request.nextUrl.searchParams.get("url")?.trim();
     if (!rawUrl) return NextResponse.json({ error: "URL GeoJSON manquante." }, { status: 400 });
@@ -66,37 +29,16 @@ export async function GET(request: NextRequest) {
     if (url.protocol !== "https:" && url.protocol !== "http:") {
       return NextResponse.json({ error: "Seules les URL HTTP/HTTPS sont autorisées." }, { status: 400 });
     }
-    await assertPublicHost(url);
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    try {
-      const response = await fetch(url, {
-        headers: {
-          Accept: "application/geo+json,application/json,text/json;q=0.9,*/*;q=0.1",
-          "User-Agent": "DroMap/1.0 AI GeoJSON importer",
-        },
-        redirect: "error",
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      if (!response.ok) throw new Error("La source GeoJSON est momentanément indisponible.");
-      const contentLength = Number(response.headers.get("content-length") ?? 0);
-      if (contentLength > MAX_BYTES) throw new Error("Le fichier dépasse la limite de 25 Mo.");
-      const buffer = await response.arrayBuffer();
-      if (buffer.byteLength > MAX_BYTES) throw new Error("Le fichier dépasse la limite de 25 Mo.");
-      const text = new TextDecoder().decode(buffer);
-      if (!looksLikeGeoJson(text)) throw new Error("La source ne contient pas un objet GeoJSON valide.");
-      return new NextResponse(text, {
-        status: 200,
-        headers: {
-          "Content-Type": "application/geo+json; charset=utf-8",
-          "Cache-Control": "private, max-age=300",
-        },
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
+    const text = await readPublicUrl(url, MAX_BYTES, TIMEOUT_MS);
+    if (!looksLikeGeoJson(text)) throw new Error("La source ne contient pas un objet GeoJSON valide.");
+    return new NextResponse(text, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/geo+json; charset=utf-8",
+        "Cache-Control": "private, max-age=300",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Téléchargement GeoJSON impossible." },
@@ -104,3 +46,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+export const GET = withRequestSecurity(handleGET);

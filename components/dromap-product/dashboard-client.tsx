@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState, type ChangeEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { DromapProductBootstrap } from "./product-bootstrap";
 import { DromapProductShell } from "./product-shell";
@@ -10,6 +10,7 @@ import { DromapDialog } from "@/components/dromap-ui/dialog";
 import { DromapEmptyState } from "@/components/dromap-ui/empty-state";
 import { DromapStatusBadge } from "@/components/dromap-ui/status-badge";
 import { DashboardProjectExportDialog } from "./dashboard-project-export-dialog";
+import { DashboardProjectPublicationDialog } from "./dashboard-project-publication-dialog";
 import {
   getProjectStatusLabel,
   type DromapProject,
@@ -18,9 +19,11 @@ import {
   createDromapEditorSnapshotFromImportedProject,
   type DromapEditorProjectSnapshot,
 } from "@/lib/dromap/editor-project-persistence";
-import { parseDromapProjectJson } from "@/app/editor/test/export-download";
+import { parseDromapProjectJson } from "@/editor/export-download";
 import { useDromapProductStore } from "@/stores/dromap-product";
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
+import { resolveDromapPreferences, type DromapDashboardViewPreference } from "@/lib/dromap/preferences";
+import type { DromapPublicPublication } from "@/lib/dromap/publications";
 
 function formatDate(value: string) {
   try {
@@ -33,7 +36,19 @@ function formatDate(value: string) {
   }
 }
 
-function ProjectCard({ project }: { project: DromapProject }) {
+function ProjectCard({
+  project,
+  selectForSingleMap = false,
+  viewMode = "grid",
+  publicPublication = null,
+  onPublicationChanged,
+}: {
+  project: DromapProject;
+  selectForSingleMap?: boolean;
+  viewMode?: DromapDashboardViewPreference;
+  publicPublication?: DromapPublicPublication | null;
+  onPublicationChanged?: (publication: DromapPublicPublication | null) => void;
+}) {
   const router = useRouter();
   const userMode = useDromapProductStore((state) => state.userMode);
   const duplicateProject = useDromapProductStore(
@@ -45,29 +60,36 @@ function ProjectCard({ project }: { project: DromapProject }) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [publicationOpen, setPublicationOpen] = useState(false);
   const [nameDraft, setNameDraft] = useState(project.name);
 
   const basemap = getDromapBasemapConfig(
     project.editorSnapshot?.basemapId ?? project.setup.basemapId,
   );
 
-  const targetHref = project.setupComplete
-    ? `/projects/${project.id}/editor`
-    : `/projects/${project.id}/setup`;
+  const targetHref = selectForSingleMap && project.setupComplete
+    ? `/pricing?purchase=single-map&projectId=${encodeURIComponent(project.id)}`
+    : project.setupComplete
+      ? `/projects/${project.id}/editor`
+      : `/projects/${project.id}/setup`;
+
+  const listView = viewMode === "list";
 
   return (
-    <article className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-lg">
+    <article className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-teal-300">
       <button
         type="button"
         onClick={() => router.push(targetHref)}
-        className="block w-full text-left"
+        className={listView ? "block w-full text-left sm:grid sm:grid-cols-[14rem_minmax(0,1fr)]" : "block w-full text-left"}
       >
-        <div className="relative aspect-[16/9] overflow-hidden bg-gradient-to-br from-slate-100 via-indigo-50 to-sky-100">
+        <div className={listView ? "relative min-h-36 overflow-hidden bg-[#edf4f2] sm:min-h-32" : "relative aspect-[16/9] overflow-hidden bg-[#edf4f2]"}>
           {project.thumbnailDataUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={project.thumbnailDataUrl}
               alt={`Aperçu du projet ${project.name}`}
+              loading="lazy"
+              decoding="async"
               className="h-full w-full bg-slate-100 object-contain"
             />
           ) : (
@@ -80,8 +102,8 @@ function ProjectCard({ project }: { project: DromapProject }) {
                     : `linear-gradient(135deg, ${basemap.exportBackground}, #dbeafe)`,
               }}
             >
-              <div className="rounded-xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm backdrop-blur">
-                <div className="text-xs font-bold uppercase tracking-wide text-indigo-600">
+              <div className="rounded-xl border border-white/80 bg-white px-4 py-3 shadow-sm">
+                <div className="text-xs font-bold uppercase tracking-wide text-teal-600">
                   Fond sélectionné
                 </div>
                 <div className="mt-1 font-black text-slate-950">{basemap.label}</div>
@@ -92,8 +114,18 @@ function ProjectCard({ project }: { project: DromapProject }) {
             </div>
           )}
           {project.thumbnailDataUrl ? (
-            <div className="absolute bottom-3 right-3 rounded-full border border-white/70 bg-slate-950/75 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur">
+            <div className="absolute bottom-3 right-3 rounded-full border border-white/70 bg-slate-950/75 px-2.5 py-1 text-[11px] font-bold text-white">
               Rendu enregistré
+            </div>
+          ) : null}
+          {selectForSingleMap && project.setupComplete ? (
+            <div className="absolute right-3 top-3 rounded-full border border-emerald-200 bg-emerald-600 px-2.5 py-1 text-[11px] font-black text-white shadow-sm">
+              Sélectionner cette carte
+            </div>
+          ) : null}
+          {!selectForSingleMap && publicPublication ? (
+            <div className="absolute right-3 top-3 rounded-full border border-emerald-200 bg-emerald-600 px-2.5 py-1 text-[11px] font-black text-white shadow-sm">
+              Publique
             </div>
           ) : null}
           <div className="absolute left-3 top-3">
@@ -103,11 +135,16 @@ function ProjectCard({ project }: { project: DromapProject }) {
             />
           </div>
         </div>
-        <div className="p-4">
-          <h2 className="truncate font-black text-slate-950">{project.name}</h2>
+        <div className={listView ? "flex min-w-0 flex-col justify-center p-4 sm:px-5" : "p-4"}>
+          <h2 className={listView ? "truncate text-lg font-black text-slate-950" : "truncate font-black text-slate-950"}>{project.name}</h2>
           <div className="mt-1 text-xs text-slate-500">
             {project.creatorName} · modifié le {formatDate(project.updatedAt)}
           </div>
+          {listView ? (
+            <div className="mt-3 text-xs font-semibold text-slate-600">
+              {basemap.label} · {project.setupComplete ? "Prêt à éditer" : `Étape ${project.setup.currentStep} sur 4`}
+            </div>
+          ) : null}
         </div>
       </button>
 
@@ -115,18 +152,24 @@ function ProjectCard({ project }: { project: DromapProject }) {
         <span className="text-xs text-slate-500">
           {project.setupComplete ? "Prêt à éditer" : `Étape ${project.setup.currentStep} sur 4`}
         </span>
-        <button
-          type="button"
-          onClick={() => setMenuOpen((open) => !open)}
-          className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-white font-black text-slate-700 transition hover:bg-slate-100"
-          aria-label={`Actions pour ${project.name}`}
-          aria-expanded={menuOpen}
-        >
-          …
-        </button>
+        {!selectForSingleMap ? (
+          <button
+            type="button"
+            onClick={() => setMenuOpen((open) => !open)}
+            className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-white font-black text-slate-700 transition hover:bg-slate-100"
+            aria-label={`Actions pour ${project.name}`}
+            aria-expanded={menuOpen}
+          >
+            …
+          </button>
+        ) : (
+          <span className="text-xs font-black text-emerald-700">
+            {project.setupComplete ? "Choisir" : "Configuration à terminer"}
+          </span>
+        )}
 
-        {menuOpen ? (
-          <div className="absolute bottom-12 right-3 z-20 w-48 rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-xl">
+        {!selectForSingleMap && menuOpen ? (
+          <div className="absolute bottom-12 right-3 z-20 w-48 rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-lg">
             <button
               type="button"
               onClick={() => {
@@ -184,6 +227,17 @@ function ProjectCard({ project }: { project: DromapProject }) {
               type="button"
               onClick={() => {
                 setMenuOpen(false);
+                setPublicationOpen(true);
+              }}
+              className="w-full rounded-lg px-3 py-2 text-left hover:bg-slate-100"
+              title="Publier une version en lecture seule dans la bibliothèque publique DroMap."
+            >
+              {publicPublication ? "Gérer la publication" : "Publier la carte"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
                 trashProject(project.id);
               }}
               className="w-full rounded-lg px-3 py-2 text-left text-red-700 hover:bg-red-50"
@@ -200,6 +254,14 @@ function ProjectCard({ project }: { project: DromapProject }) {
         projectName={project.name}
         userMode={userMode}
         onClose={() => setExportOpen(false)}
+      />
+
+      <DashboardProjectPublicationDialog
+        open={publicationOpen}
+        projectId={project.id}
+        projectName={project.name}
+        onClose={() => setPublicationOpen(false)}
+        onPublicationChanged={onPublicationChanged}
       />
 
       <DromapDialog
@@ -312,7 +374,7 @@ function ProjectCard({ project }: { project: DromapProject }) {
           id={`rename-${project.id}`}
           value={nameDraft}
           onChange={(event) => setNameDraft(event.target.value)}
-          className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base font-semibold text-slate-950 caret-indigo-600 shadow-inner outline-none placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+          className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base font-semibold text-slate-950 caret-teal-600 shadow-inner outline-none placeholder:text-slate-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
           autoFocus
         />
       </DromapDialog>
@@ -322,10 +384,16 @@ function ProjectCard({ project }: { project: DromapProject }) {
 
 function DashboardContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const selectForSingleMap = searchParams.get("selectFor") === "single-map";
   const allProjects = useDromapProductStore((state) => state.projects);
   const accountPreferences = useDromapProductStore((state) => state.accountPreferences);
+  const resolvedPreferences = useMemo(
+    () => resolveDromapPreferences(accountPreferences),
+    [accountPreferences],
+  );
   const projects = useMemo(() => {
-    const sortPreference = accountPreferences.projectSort;
+    const sortPreference = resolvedPreferences.projectSort;
     const visibleProjects = allProjects.filter((project) => project.status !== "trashed");
 
     if (sortPreference === "name-asc") {
@@ -339,7 +407,7 @@ function DashboardContent() {
     }
 
     return visibleProjects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  }, [accountPreferences.projectSort, allProjects]);
+  }, [allProjects, resolvedPreferences.projectSort]);
   const userMode = useDromapProductStore((state) => state.userMode);
   const createProject = useDromapProductStore((state) => state.createProject);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -351,6 +419,46 @@ function DashboardContent() {
     snapshot: DromapEditorProjectSnapshot;
   } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [publicationsByProjectId, setPublicationsByProjectId] = useState<Record<string, DromapPublicPublication>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    if (userMode !== "authenticated") {
+      setPublicationsByProjectId({});
+      return () => { cancelled = true; };
+    }
+    void fetch("/api/dromap/publications/mine", {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as
+          | { publications?: Array<{ projectId: string; slug: string; title?: string; publishedAt?: string; updatedAt?: string }> }
+          | null;
+        if (cancelled || !response.ok || !Array.isArray(payload?.publications)) return;
+        const next: Record<string, DromapPublicPublication> = {};
+        for (const item of payload.publications) {
+          if (!item?.projectId || !item.slug) continue;
+          next[item.projectId] = {
+            slug: item.slug,
+            title: item.title ?? "Carte publique",
+            description: "",
+            authorName: null,
+            tags: [],
+            thumbnailDataUrl: "",
+            accessMode: "read-only",
+            allowCreatorCreditRemoval: false,
+            creatorCreditName: null,
+            publishedAt: item.publishedAt ?? "",
+            updatedAt: item.updatedAt ?? "",
+          };
+        }
+        setPublicationsByProjectId(next);
+      })
+      .catch(() => null);
+    return () => { cancelled = true; };
+  }, [userMode]);
 
   function startNewProject(replaceGuestProject = false) {
     const id = createProject({ replaceGuestProject });
@@ -359,7 +467,10 @@ function DashboardContent() {
       setReplaceDialogOpen(true);
       return;
     }
-    if (id) router.push(`/projects/${id}/setup`);
+    if (id) {
+      const createdProject = useDromapProductStore.getState().projects.find((project) => project.id === id);
+      router.push(createdProject?.setupComplete ? `/projects/${id}/editor` : `/projects/${id}/setup`);
+    }
   }
 
   function requestImport() {
@@ -423,12 +534,14 @@ function DashboardContent() {
           : "Tes projets sauvegardés en ligne."
       }
       actions={
-        <>
-          <DromapButton onClick={requestImport}>Importer un Projet DroMap</DromapButton>
-          <DromapButton variant="primary" onClick={() => startNewProject(false)}>
-            Nouveau projet
-          </DromapButton>
-        </>
+        selectForSingleMap ? undefined : (
+          <>
+            <DromapButton onClick={requestImport}>Importer un Projet DroMap</DromapButton>
+            <DromapButton variant="primary" onClick={() => startNewProject(false)}>
+              Nouveau projet
+            </DromapButton>
+          </>
+        )
       }
     >
       <input
@@ -439,6 +552,18 @@ function DashboardContent() {
         className="hidden"
       />
 
+      {selectForSingleMap ? (
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-950">
+          <div>
+            <strong className="block font-black">Choisis la carte à débloquer pour 3 €</strong>
+            <span className="mt-0.5 block text-xs leading-5 text-emerald-800">
+              Clique sur un projet configuré. Tu reviendras ensuite sur la formule Export Max pour cette carte.
+            </span>
+          </div>
+          <DromapButton onClick={() => router.push("/pricing")}>Annuler</DromapButton>
+        </div>
+      ) : null}
+
       {importError ? (
         <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {importError}
@@ -448,7 +573,7 @@ function DashboardContent() {
       {projects.length === 0 ? (
         <DromapEmptyState
           title="Crée ta première carte"
-          description="Le parcours guidé te fera choisir le nom, le fond, la zone de travail puis les calques avant d’ouvrir l’éditeur complet."
+          description=""
           action={
             <DromapButton variant="primary" onClick={() => startNewProject(false)}>
               Nouveau projet
@@ -457,9 +582,23 @@ function DashboardContent() {
           icon="⌖"
         />
       ) : (
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <div className={resolvedPreferences.dashboardView === "list" ? "space-y-3" : "grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"}>
           {projects.map((project) => (
-            <ProjectCard key={project.id} project={project} />
+            <ProjectCard
+              key={project.id}
+              project={project}
+              selectForSingleMap={selectForSingleMap}
+              viewMode={resolvedPreferences.dashboardView}
+              publicPublication={publicationsByProjectId[project.id] ?? null}
+              onPublicationChanged={(publication) =>
+                setPublicationsByProjectId((current) => {
+                  const next = { ...current };
+                  if (publication) next[project.id] = publication;
+                  else delete next[project.id];
+                  return next;
+                })
+              }
+            />
           ))}
         </div>
       )}
@@ -500,7 +639,7 @@ function DashboardContent() {
                       : current,
                   )
                 }
-                className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
               />
             </div>
 

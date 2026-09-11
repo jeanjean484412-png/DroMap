@@ -1,9 +1,11 @@
 import type { DromapBasemapId } from "@/lib/dromap/basemap";
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
-import type { DroMapSavedLayer } from "@/stores/editor-test-layers";
-import type { DromapGeoJsonLayer } from "@/stores/editor-test-geojson-layers";
+import type { DroMapSavedLayer } from "@/stores/editor-layers";
+import type { DromapGeoJsonLayer } from "@/stores/editor-geojson-layers";
 import type { DromapEditorProjectSnapshot } from "@/lib/dromap/editor-project-persistence";
 import type { DromapMapView } from "@/lib/dromap/map-view";
+import type { DromapAccountPlan } from "@/lib/dromap/plans";
+import type { DromapCreatorCreditPosition } from "@/lib/dromap/publications";
 
 export type DromapUserMode = "guest" | "authenticated";
 
@@ -33,6 +35,25 @@ export type DromapProjectSetup = {
   layerChoice: DromapInitialLayerChoice | null;
 };
 
+export type DromapProjectAiMessage = {
+  id: string;
+  role: "user" | "assistant" | "system" | "error";
+  text: string;
+  createdAt: string;
+};
+
+export type DromapPublicSourceAttribution = {
+  kind: "public-map";
+  publicationSlug: string;
+  creatorName: string;
+  allowRemoval: boolean;
+  /** Position historique par coin, conservée pour la compatibilité des projets déjà créés. */
+  position: DromapCreatorCreditPosition;
+  /** Position libre normalisée dans le rectangle de carte (centre du crédit). */
+  mapPosition?: { x: number; y: number } | null;
+  hidden: boolean;
+};
+
 export type DromapProject = {
   id: string;
   name: string;
@@ -48,6 +69,9 @@ export type DromapProject = {
   pendingChanges: number;
   thumbnailDataUrl: string | null;
   importedFileName: string | null;
+  sourceAttribution?: DromapPublicSourceAttribution | null;
+  /** Discussion IA propre au projet, synchronisée avec le projet sans entrer dans l'historique cartographique. */
+  aiConversation?: DromapProjectAiMessage[];
 
   /** État de cache/synchronisation, non inclus dans le Projet DroMap exporté. */
   contentLoaded?: boolean;
@@ -61,13 +85,18 @@ export type DromapProject = {
 export type DromapCapabilities = {
   canUseAi: boolean;
   canImportBuildings: boolean;
+  canUseGeoJsonLibrary: boolean;
   canUseAdvancedLegend: boolean;
   canExportHighQuality: boolean;
   canExportOtherVisualFormats: boolean;
+  canCustomizeBasemapRender: boolean;
   canExportProjectData: boolean;
   canSaveLayersToLibrary: boolean;
+  canCreateCustomMarkers: boolean;
   canSaveCustomMarkersToLibrary: boolean;
   canSaveOnline: boolean;
+  canPublishPublicMaps: boolean;
+  canDownloadPublicMaps: boolean;
 };
 
 export const DROMAP_TRASH_RETENTION_DAYS = 10;
@@ -103,19 +132,53 @@ export function getDromapTrashRemainingDays(
 
 export function getDromapCapabilities(
   mode: DromapUserMode,
+  plan: DromapAccountPlan = "tester",
+  options: { singleMapMaxExport?: boolean; publicMapExport?: boolean } = {},
 ): DromapCapabilities {
-  const authenticated = mode === "authenticated";
+  if (mode === "guest") {
+    return {
+      canUseAi: false,
+      canImportBuildings: false,
+      canUseGeoJsonLibrary: false,
+      canUseAdvancedLegend: false,
+      canExportHighQuality: false,
+      canExportOtherVisualFormats: false,
+      canCustomizeBasemapRender: false,
+      canExportProjectData: false,
+      canSaveLayersToLibrary: false,
+      canCreateCustomMarkers: false,
+      canSaveCustomMarkersToLibrary: false,
+      canSaveOnline: false,
+      canPublishPublicMaps: false,
+      canDownloadPublicMaps: false,
+    };
+  }
+
+  const premium = plan === "plus" || plan === "pro" || plan === "tester";
+  const singleMapMaxExport = options.singleMapMaxExport === true;
+  const publicMapExport = options.publicMapExport === true;
+  const visualExportPremium = premium || singleMapMaxExport || publicMapExport;
+  const canExportHighQuality = visualExportPremium;
+  const canExportOtherVisualFormats = visualExportPremium;
+  const canCustomizeBasemapRender = visualExportPremium;
 
   return {
-    canUseAi: authenticated,
-    canImportBuildings: authenticated,
-    canUseAdvancedLegend: authenticated,
-    canExportHighQuality: authenticated,
-    canExportOtherVisualFormats: authenticated,
-    canExportProjectData: authenticated,
-    canSaveLayersToLibrary: authenticated,
-    canSaveCustomMarkersToLibrary: authenticated,
-    canSaveOnline: authenticated,
+    canUseAi: premium,
+    canImportBuildings: premium,
+    // La bibliothèque de données DroMap nécessite au minimum un compte.
+    // L'import d'un fichier GeoJSON local reste indépendant de cette règle.
+    canUseGeoJsonLibrary: true,
+    canUseAdvancedLegend: premium,
+    canExportHighQuality,
+    canExportOtherVisualFormats,
+    canCustomizeBasemapRender,
+    canExportProjectData: premium,
+    canSaveLayersToLibrary: premium,
+    canCreateCustomMarkers: premium,
+    canSaveCustomMarkersToLibrary: premium,
+    canSaveOnline: true,
+    canPublishPublicMaps: premium,
+    canDownloadPublicMaps: premium,
   };
 }
 

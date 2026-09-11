@@ -2,9 +2,11 @@
 
 import { useEffect, type ReactNode } from "react";
 import { useDromapProductStore } from "@/stores/dromap-product";
+import { resolveDromapPreferences } from "@/lib/dromap/preferences";
 import { DromapPersonalLibrarySync } from "./personal-library-sync";
 import { DromapSingleDeviceGuard } from "./single-device-guard";
 
+import { DromapPageSkeleton } from "@/components/dromap-ui/page-skeleton";
 let productRemoteRefreshInFlight: Promise<boolean> | null = null;
 let lastProductRemoteRefreshAt = 0;
 let productRemoteRefreshBackoffUntil = 0;
@@ -15,6 +17,7 @@ export function DromapProductBootstrap({ children }: { children: ReactNode }) {
   const hydrated = useDromapProductStore((state) => state.hydrated);
   const bootstrap = useDromapProductStore((state) => state.bootstrap);
   const userMode = useDromapProductStore((state) => state.userMode);
+  const accountPreferences = useDromapProductStore((state) => state.accountPreferences);
   const refreshRemoteProjects = useDromapProductStore((state) => state.refreshRemoteProjects);
   const syncAllProjects = useDromapProductStore((state) => state.syncAllProjects);
   const purgeExpiredTrash = useDromapProductStore((state) => state.purgeExpiredTrash);
@@ -23,6 +26,12 @@ export function DromapProductBootstrap({ children }: { children: ReactNode }) {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => {
+    if (!hydrated || typeof document === "undefined") return;
+    const { reduceMotion } = resolveDromapPreferences(accountPreferences);
+    document.documentElement.classList.toggle("dromap-reduce-motion", reduceMotion);
+  }, [accountPreferences, hydrated]);
 
   useEffect(() => {
     if (!hydrated || typeof navigator === "undefined" || !navigator.storage?.persist) return;
@@ -103,11 +112,7 @@ export function DromapProductBootstrap({ children }: { children: ReactNode }) {
   }, [flushPersistence, hydrated, purgeExpiredTrash, refreshRemoteProjects, syncAllProjects, userMode]);
 
   if (!hydrated) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-slate-50 px-4 text-sm text-slate-600">
-        Chargement de DroMap…
-      </div>
-    );
+    return <DromapPageSkeleton />;
   }
 
   return (

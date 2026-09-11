@@ -1,3 +1,4 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
 import {
@@ -18,7 +19,7 @@ type ProjectManifestRow = {
   metadata?: unknown;
 };
 
-export async function GET() {
+async function handleGET() {
   if (!getSupabaseConfig()) {
     return NextResponse.json({ error: "La sauvegarde en ligne est momentanément indisponible." }, { status: 503 });
   }
@@ -66,3 +67,5 @@ export async function GET() {
     return NextResponse.json({ error: "Les projets en ligne sont momentanément indisponibles." }, { status: 503 });
   }
 }
+
+export const GET = withRequestSecurity(handleGET);

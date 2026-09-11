@@ -8,6 +8,9 @@ export type FeatureBodyDragPreviewDetail = {
   sourceLayer: L.Layer;
   latDelta: number;
   lngDelta: number;
+  /** Déplacement écran cumulé depuis le dernier frame de preview. */
+  containerDeltaX?: number;
+  containerDeltaY?: number;
   refreshEditHandles?: boolean;
 };
 

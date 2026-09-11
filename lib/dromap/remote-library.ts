@@ -1,6 +1,6 @@
-import type { DroMapCustomMarkerDefinition } from "@/stores/editor-test-custom-markers";
-import type { DroMapSavedLayer } from "@/stores/editor-test-layers";
-import type { DromapSavedGeoJsonLayer } from "@/stores/editor-test-geojson-layers";
+import type { DroMapCustomMarkerDefinition } from "@/stores/editor-custom-markers";
+import type { DroMapSavedLayer } from "@/stores/editor-layers";
+import type { DromapSavedGeoJsonLayer } from "@/stores/editor-geojson-layers";
 
 const REMOTE_CHUNK_CHARACTERS = 2_400_000;
 const MAX_PARALLEL_CHUNKS = 2;

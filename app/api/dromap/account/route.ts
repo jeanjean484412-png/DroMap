@@ -1,3 +1,4 @@
+import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
 import {
@@ -9,7 +10,7 @@ import {
   verifySupabasePassword,
 } from "@/lib/dromap/server/supabase-rest";
 
-export async function DELETE(request: Request) {
+async function handleDELETE(request: Request) {
   if (!getSupabaseConfig()) {
     return NextResponse.json({ error: "Les comptes DroMap sont momentanément indisponibles." }, { status: 503 });
   }
@@ -59,3 +60,5 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Le compte ne peut pas être supprimé pour le moment." }, { status: 503 });
   }
 }
+
+export const DELETE = withRequestSecurity(handleDELETE);

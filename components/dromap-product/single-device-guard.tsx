@@ -89,15 +89,15 @@ export function DromapSingleDeviceGuard() {
   if (!blocked) return null;
 
   return (
-    <div className="fixed inset-0 z-[100000] grid place-items-center bg-slate-950/55 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-3xl border border-white/60 bg-white p-6 text-center shadow-2xl">
+    <div className="fixed inset-0 z-[100000] grid place-items-center bg-slate-950/55 p-4">
+      <div className="w-full max-w-md rounded-2xl border border-white/60 bg-white p-6 text-center shadow-lg">
         <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-amber-100 text-2xl">⚠</div>
         <h2 className="mt-4 text-xl font-black text-slate-950">Compte déjà ouvert ailleurs</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">
           DroMap autorise un seul appareil actif à la fois pour éviter les conflits de sauvegarde. Ferme DroMap sur l’autre appareil, puis réessaie ici.
         </p>
         <div className="mt-5 flex justify-center gap-2">
-          <button type="button" onClick={() => void claim(false)} disabled={checking} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-60">
+          <button type="button" onClick={() => void claim(false)} disabled={checking} className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-500 disabled:opacity-60">
             {checking ? "Vérification…" : "Réessayer"}
           </button>
           <button type="button" onClick={() => void (async () => { await release(); await signOutAccount(); })()} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">

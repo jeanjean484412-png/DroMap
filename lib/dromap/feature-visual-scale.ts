@@ -75,6 +75,27 @@ export function getVisualZoomScale(
   );
 }
 
+export function getFeatureVisualScaleForStaticRender(
+  feature: DroMapFeature,
+  currentZoom: number,
+  fallbackReferenceZoom: number,
+) {
+  // Un rendu statique (par exemple la miniature du dashboard) ne doit pas
+  // dépendre du mode courant de l’éditeur. Il relit directement le zoom de
+  // référence enregistré sur l’objet afin de conserver exactement la même
+  // proportion cartographique que l’éditeur, la preview et l’export.
+  if (!isFiniteNumber(currentZoom)) {
+    return 1;
+  }
+
+  const referenceZoom = getFeatureVisualReferenceZoom(
+    feature,
+    fallbackReferenceZoom,
+  );
+
+  return getVisualZoomScale(currentZoom, referenceZoom);
+}
+
 export function getFeatureVisualScale(
   feature: DroMapFeature,
   currentZoom: number,

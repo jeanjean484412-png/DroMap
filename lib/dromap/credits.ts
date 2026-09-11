@@ -17,7 +17,7 @@ const NATURAL_EARTH_ATTRIBUTION =
   '<a href="https://www.naturalearthdata.com/">Natural Earth</a>';
 
 const FRANCE_GEOJSON_ATTRIBUTION =
-  '<a href="https://github.com/gregoiredavid/france-geojson">france-geojson</a> / <a href="https://geoservices.ign.fr/adminexpress">IGN Admin Express</a>';
+  'IGN Admin Express COG — 2018';
 
 export const DROMAP_THIRD_PARTY_CREDITS: DromapThirdPartyCredit[] = [
   {
@@ -56,15 +56,6 @@ export const DROMAP_THIRD_PARTY_CREDITS: DromapThirdPartyCredit[] = [
     href: "https://nominatim.org/",
   },
   {
-    id: "carto",
-    title: "CARTO",
-    category: "fond",
-    license: "Attribution / conditions CARTO basemaps",
-    usage: "Fonds classiques Clair, Sans textes, Voyager et Voyager sans textes.",
-    href: "https://carto.com/attribution/",
-    visibleOnMap: true,
-  },
-  {
     id: "ign-geoplateforme",
     title: "IGN / Géoplateforme",
     category: "fond",
@@ -82,6 +73,47 @@ export const DROMAP_THIRD_PARTY_CREDITS: DromapThirdPartyCredit[] = [
     href: "https://docs.overturemaps.org/guides/buildings/",
   },
   {
+    id: "geoboundaries",
+    title: "geoBoundaries — gbOpen",
+    category: "donnees",
+    license: "CC BY 4.0 pour gbOpen ; attribution requise",
+    usage:
+      "Limites administratives téléchargées uniquement depuis l’API gbOpen. Les variantes gbAuthoritative et gbHumanitarian ne sont pas utilisées.",
+    href: "https://www.geoboundaries.org/api.html",
+  },
+  {
+    id: "usgs-earthquakes",
+    title: "U.S. Geological Survey — Earthquake Hazards Program",
+    category: "donnees",
+    license: "Données USGS généralement dans le domaine public ; crédit recommandé",
+    usage: "Flux GeoJSON de séismes du catalogue de données.",
+    href: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/geojson.php",
+  },
+  {
+    id: "world-bank-wdi",
+    title: "World Bank — World Development Indicators",
+    category: "donnees",
+    license: "CC BY 4.0 + conditions additionnelles de la Banque mondiale",
+    usage: "Indicateurs WDI récupérés par l’assistant lorsque la source est utilisée.",
+    href: "https://datacatalog.worldbank.org/search/dataset/0037712/world-development-indicators",
+  },
+  {
+    id: "wikidata",
+    title: "Wikidata",
+    category: "donnees",
+    license: "CC0 pour les données structurées",
+    usage: "Recherche et métadonnées structurées utilisées par l’assistant.",
+    href: "https://www.wikidata.org/wiki/Wikidata:Licensing",
+  },
+  {
+    id: "wikipedia",
+    title: "Wikipedia / Wikimedia",
+    category: "donnees",
+    license: "CC BY-SA 4.0 pour le texte, avec attribution et partage à l’identique si réutilisé",
+    usage: "Source documentaire pouvant être consultée par l’assistant.",
+    href: "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+  },
+  {
     id: "natural-earth",
     title: "Natural Earth",
     category: "donnees",
@@ -94,8 +126,8 @@ export const DROMAP_THIRD_PARTY_CREDITS: DromapThirdPartyCredit[] = [
     id: "france-geojson",
     title: "france-geojson / IGN Admin Express",
     category: "donnees",
-    license: "Licence Ouverte / Etalab selon la source IGN Admin Express",
-    usage: "Régions et départements français des fonds France.",
+    license: "Licence Ouverte / Etalab 2.0",
+    usage: "Contours administratifs français utilisés par les fonds blancs France (données IGN Admin Express COG 2018, diffusées via france-geojson).",
     href: "https://github.com/gregoiredavid/france-geojson",
     visibleOnMap: true,
   },
@@ -108,12 +140,29 @@ export const DROMAP_THIRD_PARTY_CREDITS: DromapThirdPartyCredit[] = [
     href: "https://tabler.io/icons",
   },
   {
+    id: "fabric-js",
+    title: "Fabric.js",
+    category: "bibliotheques",
+    license: "MIT",
+    usage:
+      "Moteur de manipulation du canevas du concepteur de marqueurs personnalisés (sélection, déplacement, redimensionnement et rotation).",
+    href: "https://fabricjs.com/",
+  },
+  {
     id: "leaflet",
     title: "Leaflet",
     category: "bibliotheques",
     license: "BSD 2-Clause",
     usage: "Carte interactive principale de l’éditeur.",
     href: "https://leafletjs.com/",
+  },
+  {
+    id: "react-leaflet",
+    title: "React Leaflet",
+    category: "bibliotheques",
+    license: "Hippocratic License 2.1",
+    usage: "Adaptateur React utilisé autour de Leaflet.",
+    href: "https://github.com/PaulLeCam/react-leaflet",
   },
   {
     id: "maplibre-gl-js",
@@ -124,12 +173,62 @@ export const DROMAP_THIRD_PARTY_CREDITS: DromapThirdPartyCredit[] = [
     href: "https://maplibre.org/",
   },
   {
+    id: "maplibre-gl-leaflet",
+    title: "MapLibre GL Leaflet",
+    category: "bibliotheques",
+    license: "ISC",
+    usage: "Pont Leaflet ↔ MapLibre chargé pour les fonds vectoriels.",
+    href: "https://github.com/maplibre/maplibre-gl-leaflet",
+  },
+  {
+    id: "geoarrow-wasm",
+    title: "GeoArrow WASM",
+    category: "bibliotheques",
+    license: "MIT OR Apache-2.0",
+    usage: "Lecture des données GeoParquet Overture pour les bâtiments.",
+    href: "https://github.com/geoarrow/geoarrow-rs",
+  },
+  {
     id: "leaflet-geoman",
     title: "Leaflet-Geoman Free",
     category: "bibliotheques",
     license: "MIT",
     usage: "Édition géométrique de certains objets de carte.",
     href: "https://geoman.io/",
+  },
+  {
+    id: "gemini-api",
+    title: "Google Gemini API",
+    category: "bibliotheques",
+    license: "Conditions de service Google Gemini API",
+    usage: "Service utilisé par l’assistant IA lorsque cette fonction est disponible.",
+    href: "https://ai.google.dev/gemini-api/terms",
+  },
+  {
+    id: "stripe-services",
+    title: "Stripe Payments / Billing / Checkout",
+    category: "bibliotheques",
+    license: "Stripe Services Agreement et conditions applicables aux services Stripe",
+    usage:
+      "Paiements ponctuels, abonnements, portail de facturation et gestion du cycle de paiement lorsque la facturation DroMap est activée.",
+    href: "https://stripe.com/legal/ssa",
+  },
+  {
+    id: "stripe-node",
+    title: "Stripe Node.js Library",
+    category: "bibliotheques",
+    license: "MIT",
+    usage: "SDK serveur officiel utilisé pour appeler l’API Stripe et vérifier les webhooks.",
+    href: "https://github.com/stripe/stripe-node",
+  },
+  {
+    id: "vercel-web-analytics",
+    title: "Vercel Web Analytics",
+    category: "bibliotheques",
+    license: "Service Vercel ; package @vercel/analytics sous licence MIT",
+    usage:
+      "Mesure agrégée de l’audience des pages publiques de DroMap, sans cookie de mesure d’audience et avec exclusion des routes privées ou sensibles.",
+    href: "https://vercel.com/docs/analytics",
   },
 ];
 
@@ -246,22 +345,22 @@ function getBaseExportAttributionHtml(basemap: DromapBasemapConfig) {
     basemap.id === "ign-plan" ||
     basemap.id === "ign-plan-raster"
   ) {
-    return '<a href="https://www.ign.fr/">© IGN</a> · <a href="https://cartes.gouv.fr/">Géoplateforme</a>';
+    return 'Source : <a href="https://www.ign.fr/">IGN</a>';
   }
 
   if (basemap.kind === "maplibre" || basemap.id.startsWith("openfreemap-")) {
-    return '<a href="https://openfreemap.org">© OpenFreeMap</a> · <a href="https://www.openmaptiles.org">© OpenMapTiles</a> · <a href="https://www.openstreetmap.org/copyright">© OSM</a>';
+    return '<a href="https://www.openmaptiles.org">© OpenMapTiles</a> · © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> — openstreetmap.org/copyright';
   }
 
   const rawAttribution = basemap.kind === "tile" ? basemap.attribution : "";
   const normalizedAttribution = normalizeAttributionHtml(rawAttribution);
 
   if (normalizedAttribution.includes("carto")) {
-    return '<a href="https://carto.com/attributions">© CARTO</a> · <a href="https://www.openstreetmap.org/copyright">© OSM</a>';
+    return '<a href="https://carto.com/attributions">© CARTO</a> · Map data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> — openstreetmap.org/copyright';
   }
 
   if (normalizedAttribution.includes("openstreetmap")) {
-    return '<a href="https://www.openstreetmap.org/copyright">© OSM</a>';
+    return 'Map data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> — openstreetmap.org/copyright';
   }
 
   return basemap.kind === "tile" ? basemap.attribution : "";
@@ -269,7 +368,7 @@ function getBaseExportAttributionHtml(basemap: DromapBasemapConfig) {
 
 function getBoundarySourceExportAttributionHtml(sourceId: string) {
   if (sourceId === "france-geojson") {
-    return '<a href="https://github.com/gregoiredavid/france-geojson">© france-geojson</a> · <a href="https://geoservices.ign.fr/adminexpress">© IGN</a>';
+    return 'IGN Admin Express COG — 2018';
   }
 
   // Natural Earth est public domain : on le garde dans le panneau Crédits,

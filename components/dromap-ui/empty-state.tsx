@@ -13,7 +13,7 @@ export function DromapEmptyState({
 }) {
   return (
     <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-10 text-center">
-      <div className="grid h-12 w-12 place-items-center rounded-2xl bg-indigo-50 text-xl text-indigo-700">
+      <div className="grid h-12 w-12 place-items-center rounded-2xl bg-teal-50 text-xl text-teal-700">
         {icon}
       </div>
       <h2 className="mt-4 text-base font-black text-slate-950">{title}</h2>

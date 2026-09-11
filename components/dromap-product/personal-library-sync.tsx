@@ -12,17 +12,17 @@ import {
 } from "@/lib/dromap/remote-library";
 import { useDromapProductStore } from "@/stores/dromap-product";
 import {
-  useEditorTestCustomMarkersStore,
+  useEditorCustomMarkersStore,
   type DroMapCustomMarkerDefinition,
-} from "@/stores/editor-test-custom-markers";
+} from "@/stores/editor-custom-markers";
 import {
-  useEditorTestLayersStore,
+  useEditorLayersStore,
   type DroMapSavedLayer,
-} from "@/stores/editor-test-layers";
+} from "@/stores/editor-layers";
 import {
-  useEditorTestGeoJsonLayersStore,
+  useEditorGeoJsonLayersStore,
   type DromapSavedGeoJsonLayer,
-} from "@/stores/editor-test-geojson-layers";
+} from "@/stores/editor-geojson-layers";
 
 const LIBRARY_SYNC_META_KEY_PREFIX = "dromap-personal-library-sync-v3";
 const LEGACY_LIBRARY_SYNC_META_KEY = "dromap-personal-library-sync-v2";
@@ -118,9 +118,9 @@ function stableSignature(payload: DromapPersonalLibraryPayload) {
 }
 
 function buildLocalPayload(meta: LocalLibrarySyncMeta): DromapPersonalLibraryPayload {
-  const customMarkers = useEditorTestCustomMarkersStore.getState().customMarkers;
-  const savedLayers = useEditorTestLayersStore.getState().savedLayers;
-  const savedGeoJsonLayers = useEditorTestGeoJsonLayersStore.getState().savedGeoJsonLayers;
+  const customMarkers = useEditorCustomMarkersStore.getState().customMarkers;
+  const savedLayers = useEditorLayersStore.getState().savedLayers;
+  const savedGeoJsonLayers = useEditorGeoJsonLayersStore.getState().savedGeoJsonLayers;
   const newestItem = newestTimestamp(
     ...customMarkers.map(itemTimestamp),
     ...savedLayers.map(itemTimestamp),
@@ -211,9 +211,9 @@ function mergePayloads(
 }
 
 function applyPayload(payload: DromapPersonalLibraryPayload) {
-  useEditorTestCustomMarkersStore.getState().replaceCustomMarkers(payload.customMarkers ?? []);
-  useEditorTestLayersStore.getState().replaceSavedLayers(payload.savedLayers ?? []);
-  useEditorTestGeoJsonLayersStore.getState().replaceSavedGeoJsonLayers(payload.savedGeoJsonLayers ?? []);
+  useEditorCustomMarkersStore.getState().replaceCustomMarkers(payload.customMarkers ?? []);
+  useEditorLayersStore.getState().replaceSavedLayers(payload.savedLayers ?? []);
+  useEditorGeoJsonLayersStore.getState().replaceSavedGeoJsonLayers(payload.savedGeoJsonLayers ?? []);
 }
 
 function collectRemovedIds<T extends { id: string }>(before: T[], after: T[]) {
@@ -248,22 +248,22 @@ export function DromapPersonalLibrarySync() {
       return;
     }
 
-    const customStore = useEditorTestCustomMarkersStore.getState();
+    const customStore = useEditorCustomMarkersStore.getState();
     customStore.setLibraryPersistenceEnabled(true);
     const previousOwner = window.localStorage.getItem(LIBRARY_LOCAL_OWNER_KEY);
     const ownerChanged = Boolean(previousOwner && previousOwner !== accountUserId);
     if (ownerChanged) {
       suppressRef.current = true;
       customStore.replaceCustomMarkers([]);
-      useEditorTestLayersStore.getState().replaceSavedLayers([]);
-      useEditorTestGeoJsonLayersStore.getState().replaceSavedGeoJsonLayers([]);
+      useEditorLayersStore.getState().replaceSavedLayers([]);
+      useEditorGeoJsonLayersStore.getState().replaceSavedGeoJsonLayers([]);
       window.localStorage.setItem(SAVED_LAYERS_STORAGE_KEY, "[]");
       window.localStorage.setItem(SAVED_GEOJSON_LAYERS_STORAGE_KEY, "[]");
       queueMicrotask(() => { suppressRef.current = false; });
     } else {
       customStore.loadFromStorage();
-      useEditorTestLayersStore.getState().loadSavedLayersFromStorage();
-      useEditorTestGeoJsonLayersStore.getState().loadSavedGeoJsonLayersFromStorage();
+      useEditorLayersStore.getState().loadSavedLayersFromStorage();
+      useEditorGeoJsonLayersStore.getState().loadSavedGeoJsonLayersFromStorage();
     }
     window.localStorage.setItem(LIBRARY_LOCAL_OWNER_KEY, accountUserId);
 
@@ -397,9 +397,9 @@ export function DromapPersonalLibrarySync() {
       if (!initializedRef.current || suppressRef.current || cancelled) return;
       const before = previousRef.current;
       const current = {
-        customMarkers: useEditorTestCustomMarkersStore.getState().customMarkers,
-        savedLayers: useEditorTestLayersStore.getState().savedLayers,
-        savedGeoJsonLayers: useEditorTestGeoJsonLayersStore.getState().savedGeoJsonLayers,
+        customMarkers: useEditorCustomMarkersStore.getState().customMarkers,
+        savedLayers: useEditorLayersStore.getState().savedLayers,
+        savedGeoJsonLayers: useEditorGeoJsonLayersStore.getState().savedGeoJsonLayers,
       };
       const meta = readMeta(accountUserId);
       const timestamp = nowIso();
@@ -416,13 +416,13 @@ export function DromapPersonalLibrarySync() {
       }, 800);
     };
 
-    const unsubscribeMarkers = useEditorTestCustomMarkersStore.subscribe((state, previous) => {
+    const unsubscribeMarkers = useEditorCustomMarkersStore.subscribe((state, previous) => {
       if (state.customMarkers !== previous.customMarkers) scheduleSync();
     });
-    const unsubscribeLayers = useEditorTestLayersStore.subscribe((state, previous) => {
+    const unsubscribeLayers = useEditorLayersStore.subscribe((state, previous) => {
       if (state.savedLayers !== previous.savedLayers) scheduleSync();
     });
-    const unsubscribeGeoJson = useEditorTestGeoJsonLayersStore.subscribe((state, previous) => {
+    const unsubscribeGeoJson = useEditorGeoJsonLayersStore.subscribe((state, previous) => {
       if (state.savedGeoJsonLayers !== previous.savedGeoJsonLayers) scheduleSync();
     });
 
@@ -430,9 +430,9 @@ export function DromapPersonalLibrarySync() {
       await synchronize();
       if (cancelled) return;
       previousRef.current = {
-        customMarkers: useEditorTestCustomMarkersStore.getState().customMarkers,
-        savedLayers: useEditorTestLayersStore.getState().savedLayers,
-        savedGeoJsonLayers: useEditorTestGeoJsonLayersStore.getState().savedGeoJsonLayers,
+        customMarkers: useEditorCustomMarkersStore.getState().customMarkers,
+        savedLayers: useEditorLayersStore.getState().savedLayers,
+        savedGeoJsonLayers: useEditorGeoJsonLayersStore.getState().savedGeoJsonLayers,
       };
       initializedRef.current = true;
     })();
