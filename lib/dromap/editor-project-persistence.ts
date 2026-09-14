@@ -54,6 +54,7 @@ export type DromapEditorExportSettings = {
   mapTitlePosition: ExportLegendMapPosition;
   mapTitleFontSize: number;
   mapTitleColor: string;
+  guestWatermarkMapPosition: ExportLegendMapPosition;
   legendBackgroundColor: string;
   legendSideWidth: number;
   legendBottomHeight: number;
@@ -288,6 +289,7 @@ export function getDefaultDromapEditorExportSettings(): DromapEditorExportSettin
     mapTitlePosition: { x: 0.5, y: 0.08 },
     mapTitleFontSize: 44,
     mapTitleColor: "#0f172a",
+    guestWatermarkMapPosition: { x: 0.5, y: 0.95 },
     legendBackgroundColor: "#ffffff",
     legendSideWidth: 420,
     legendBottomHeight: 0,
@@ -340,6 +342,9 @@ export function createDromapEditorExportSettingsSnapshot(): DromapEditorExportSe
     mapTitlePosition: { ...exportState.mapTitlePosition },
     mapTitleFontSize: exportState.mapTitleFontSize,
     mapTitleColor: exportState.mapTitleColor,
+    guestWatermarkMapPosition: {
+      ...exportState.guestWatermarkMapPosition,
+    },
     legendBackgroundColor: exportState.legendBackgroundColor,
     legendSideWidth: exportState.legendSideWidth,
     legendBottomHeight: exportState.legendBottomHeight,
@@ -431,6 +436,10 @@ export function normalizeDromapEditorExportSettings(
       typeof value.mapTitleColor === "string"
         ? value.mapTitleColor
         : defaults.mapTitleColor,
+    guestWatermarkMapPosition: parseLegendMapPosition(
+      value.guestWatermarkMapPosition,
+      defaults.guestWatermarkMapPosition,
+    ),
     legendBackgroundColor:
       typeof value.legendBackgroundColor === "string"
         ? value.legendBackgroundColor
@@ -668,6 +677,9 @@ export function createDromapEditorSnapshotFromImportedProject(
       mapTitlePosition: cloneValue(imported.mapTitlePosition),
       mapTitleFontSize: imported.mapTitleFontSize,
       mapTitleColor: imported.mapTitleColor,
+      guestWatermarkMapPosition: cloneValue(
+        imported.guestWatermarkMapPosition,
+      ),
       legendBackgroundColor: imported.legendBackgroundColor,
       legendSideWidth: imported.legendSideWidth,
       legendBottomHeight: imported.legendBottomHeight,

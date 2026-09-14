@@ -102,6 +102,7 @@ export async function createDromapProjectThumbnailDataUrl() {
     mapTitlePosition: exportSettings.mapTitlePosition,
     mapTitleFontSize: exportSettings.mapTitleFontSize,
     mapTitleColor: exportSettings.mapTitleColor,
+    guestWatermarkMapPosition: exportSettings.guestWatermarkMapPosition,
     showCountryNeighborContext:
       snapshot.showCountryNeighborContext !== false,
     showAllFeatureLabels: snapshot.showAllFeatureLabels === true,

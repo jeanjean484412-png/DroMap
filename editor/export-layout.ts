@@ -1237,9 +1237,9 @@ function createFixedExportLayout(
         mapRect,
         legendRect: {
           x: contentRect.x,
-          y: contentRect.y,
+          y: mapRect.y,
           width: legendWidth,
-          height: contentRect.height,
+          height: mapRect.height,
         },
       },
       points,
@@ -1255,9 +1255,9 @@ function createFixedExportLayout(
       mapRect,
       legendRect: {
         x: contentRect.x + mapAreaWidth + EXPORT_LAYOUT_GAP,
-        y: contentRect.y,
+        y: mapRect.y,
         width: legendWidth,
-        height: contentRect.height,
+        height: mapRect.height,
       },
     },
     points,

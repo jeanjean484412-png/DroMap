@@ -73,6 +73,7 @@ type EditorExportState = {
   mapTitlePosition: ExportMapElementCustomPosition;
   mapTitleFontSize: number;
   mapTitleColor: string;
+  guestWatermarkMapPosition: ExportMapElementCustomPosition;
 
   legendBackgroundColor: string;
   legendSideWidth: number;
@@ -128,6 +129,9 @@ type EditorExportState = {
   setMapTitlePosition: (position: ExportMapElementCustomPosition) => void;
   setMapTitleFontSize: (fontSize: number) => void;
   setMapTitleColor: (color: string) => void;
+  setGuestWatermarkMapPosition: (
+    position: ExportMapElementCustomPosition,
+  ) => void;
 
   setLegendBackgroundColor: (color: string) => void;
   setLegendSideWidth: (width: number) => void;
@@ -264,6 +268,7 @@ export const useEditorExportStore = create<EditorExportState>(
     mapTitlePosition: { x: 0.5, y: 0.08 },
     mapTitleFontSize: 44,
     mapTitleColor: "#0f172a",
+    guestWatermarkMapPosition: { x: 0.5, y: 0.95 },
 
     legendBackgroundColor: "#ffffff",
     legendSideWidth: 420,
@@ -380,6 +385,15 @@ export const useEditorExportStore = create<EditorExportState>(
 
     setMapTitleColor: (color) => {
       set({ mapTitleColor: color });
+    },
+
+    setGuestWatermarkMapPosition: (position) => {
+      set({
+        guestWatermarkMapPosition: {
+          x: Math.min(1, Math.max(0, position.x)),
+          y: Math.min(1, Math.max(0, position.y)),
+        },
+      });
     },
 
     setLegendBackgroundColor: (color) => {
@@ -849,6 +863,7 @@ export const useEditorExportStore = create<EditorExportState>(
         northArrowPosition: "top-right",
         northArrowMapPosition: null,
         northArrowSize: 1,
+        guestWatermarkMapPosition: { x: 0.5, y: 0.95 },
         hiddenLegendFeatureIds: [],
         hiddenLegendGroupKeys: [],
         legendFeatureOrder: [],

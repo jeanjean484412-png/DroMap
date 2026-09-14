@@ -2532,6 +2532,43 @@ function ExportCreatorCreditPreview(input: {
   );
 }
 
+function ExportGuestWatermarkPreview(input: {
+  position: ExportMapElementCustomPosition;
+  mapRect: ExportCanvasRect;
+  onPositionChange: (position: ExportMapElementCustomPosition) => void;
+  onRemovalRequest?: () => void;
+}) {
+  const drag = useMapElementPointerDrag(input.onPositionChange);
+  const fontSize = Math.max(
+    20,
+    Math.min(34, Math.round(input.mapRect.width / 33)),
+  );
+
+  return (
+    <button
+      type="button"
+      onPointerDown={drag.onPointerDown}
+      onPointerMove={drag.onPointerMove}
+      onPointerUp={drag.onPointerUp}
+      onPointerCancel={drag.onPointerCancel}
+      onClick={(event) => {
+        if (!drag.consumeClickAfterDrag(event)) input.onRemovalRequest?.();
+      }}
+      className="absolute z-[1150] cursor-grab touch-none select-none whitespace-nowrap rounded-md border-0 bg-transparent px-2 py-1 font-extrabold leading-none text-slate-900/60 transition active:cursor-grabbing hover:bg-white/45 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-200"
+      style={{
+        ...getFreeMapElementPositionStyle(input.position),
+        fontSize,
+        textShadow:
+          "-1px -1px 0 rgba(255,255,255,.72), 1px -1px 0 rgba(255,255,255,.72), -1px 1px 0 rgba(255,255,255,.72), 1px 1px 0 rgba(255,255,255,.72)",
+      }}
+      title="Glisser pour déplacer la mention. Cliquer pour la retirer."
+      aria-label="Déplacer la mention Créé avec DroMap"
+    >
+      Créé avec DroMap
+    </button>
+  );
+}
+
 function ExportScaleBarPreview(input: {
   enabled: boolean;
   style: ExportScaleBarStyle;
@@ -3019,6 +3056,12 @@ export function ExportPreviewScene({
     sourceAttribution?.kind === "public-map" &&
     Boolean(sourceAttribution.creatorName.trim()) &&
     !(sourceAttribution.allowRemoval && sourceAttribution.hidden);
+  const guestWatermarkMapPosition = useEditorExportStore(
+    (state) => state.guestWatermarkMapPosition,
+  );
+  const setGuestWatermarkMapPosition = useEditorExportStore(
+    (state) => state.setGuestWatermarkMapPosition,
+  );
 
   const canCustomizeBasemapRender =
     !productRuntimeEnabled || capabilities.canCustomizeBasemapRender;
@@ -4023,9 +4066,9 @@ export function ExportPreviewScene({
 
     return {
       left: x,
-      top: layout.contentRect.y,
+      top: layout.mapRect.y,
       width: 20,
-      height: layout.contentRect.height,
+      height: layout.mapRect.height,
       cursor: "col-resize",
     };
   }, [layout, legendPosition]);
@@ -4512,22 +4555,12 @@ export function ExportPreviewScene({
                 ) : null}
 
                 {showDromapGuestWatermark ? (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      onGuestWatermarkClick?.();
-                    }}
-                    className="absolute bottom-[3%] left-1/2 z-[1150] -translate-x-1/2 whitespace-nowrap rounded-md px-2 py-1 text-sm font-black text-slate-900/60 transition hover:bg-white/45 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-200"
-                    style={{
-                      textShadow:
-                        "-1px -1px 0 rgba(255,255,255,.72), 1px -1px 0 rgba(255,255,255,.72), -1px 1px 0 rgba(255,255,255,.72), 1px 1px 0 rgba(255,255,255,.72)",
-                    }}
-                    title="Retirer la mention DroMap"
-                  >
-                    Créé avec DroMap
-                  </button>
+                  <ExportGuestWatermarkPreview
+                    position={guestWatermarkMapPosition}
+                    mapRect={layout.mapRect}
+                    onPositionChange={setGuestWatermarkMapPosition}
+                    onRemovalRequest={onGuestWatermarkClick}
+                  />
                 ) : null}
               </div>
 

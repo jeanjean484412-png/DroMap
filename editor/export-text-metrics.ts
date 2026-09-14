@@ -8,6 +8,20 @@ import { DROMAP_CSS_FONT_FAMILY, getDromapRuntimeFontFamily } from "@/lib/dromap
  */
 export const EXPORT_LEGEND_FONT_FAMILY = DROMAP_CSS_FONT_FAMILY;
 
+/**
+ * CanvasRenderingContext2D ne restitue pas correctement les piles générées
+ * par `next/font` dans tous les navigateurs. On lui fournit donc une pile
+ * système explicite, tandis que la prévisualisation DOM conserve la pile CSS.
+ */
+export function getExportCanvasFontFamily() {
+  // Les familles générées par next/font (par exemple "Geist Fallback")
+  // utilisent des règles CSS que le parseur de `CanvasRenderingContext2D.font`
+  // ne restitue pas de façon fiable dans tous les navigateurs. Cette pile
+  // système explicite est volontairement la même que celle des éléments
+  // cartographiques déjà correctement rendus dans le canvas.
+  return 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+}
+
 export type ExportTextFontWeight = 400 | 500 | 600 | 700;
 
 let textMeasureCanvas: HTMLCanvasElement | null = null;

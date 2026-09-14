@@ -75,6 +75,9 @@ export function createDashboardExportInput(
     mapTitlePosition: settings?.mapTitlePosition ?? defaults.mapTitlePosition,
     mapTitleFontSize: settings?.mapTitleFontSize ?? defaults.mapTitleFontSize,
     mapTitleColor: settings?.mapTitleColor ?? defaults.mapTitleColor,
+    guestWatermarkMapPosition:
+      settings?.guestWatermarkMapPosition ??
+      defaults.guestWatermarkMapPosition,
     showCountryNeighborContext: snapshot.showCountryNeighborContext !== false,
     showAllFeatureLabels: snapshot.showAllFeatureLabels === true,
     showAllGeoJsonFeatureLabels: snapshot.showAllGeoJsonFeatureLabels === true,

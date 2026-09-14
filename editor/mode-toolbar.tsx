@@ -1,8 +1,10 @@
 "use client";
 
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
+import { DromapContactDialog } from "@/components/dromap-product/contact-dialog";
 import { EDITOR_MODE_LABELS } from "@/lib/dromap/editor-mode";
 import type {
   DroMapFeatureDashStyle,
@@ -1421,6 +1423,7 @@ export default function ModeToolbar({
   const [lineToolChoice, setLineToolChoice] = useState<LineToolChoice>("line");
   const [zoneToolChoice, setZoneToolChoice] = useState<ZoneToolChoice>("zone");
   const [importsOpen, setImportsOpen] = useState(false);
+  const [contactOpen, setContactOpen] = useState(false);
   const [importsPanelTop, setImportsPanelTop] = useState(8);
   const toolbarRootRef = useRef<HTMLDivElement | null>(null);
   const importsLauncherRef = useRef<HTMLDivElement | null>(null);
@@ -1428,6 +1431,7 @@ export default function ModeToolbar({
   const markerLibraryScrollRef = useRef<HTMLDivElement | null>(null);
 
   const currentMode = useEditorModeStore((state) => state.currentMode);
+  const pathname = usePathname();
   const { enabled: productRuntimeEnabled, capabilities } = useDromapProductRuntime();
 
   const workspaceBounds = useEditorWorkspaceStore(
@@ -2210,21 +2214,28 @@ export default function ModeToolbar({
               </span>
             </button>
 
-            <button
-              type="button"
+            <div
               data-dromap-tour="imports-cycle"
-              disabled
-              className="flex w-full cursor-not-allowed items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left text-slate-400"
-              title="Import des pistes cyclables — bientôt disponible"
+              className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left text-slate-500"
+              title="Prochains imports cartographiques"
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-slate-400">
                 <CycleGlyph />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block font-semibold">Pistes cyclables</span>
-                <span className="block text-[10px]">Bientôt</span>
+                <span className="block font-semibold text-slate-500">À venir</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImportsOpen(false);
+                    setContactOpen(true);
+                  }}
+                  className="mt-0.5 block text-[10px] font-semibold text-teal-700 underline decoration-teal-400 underline-offset-2 transition hover:text-teal-900"
+                >
+                  Suggestions ?
+                </button>
               </span>
-            </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -3431,6 +3442,13 @@ export default function ModeToolbar({
           ) : null}
         </div>
       ) : null}
+
+      <DromapContactDialog
+        open={contactOpen}
+        pathname={pathname}
+        initialCategory="suggestion"
+        onClose={() => setContactOpen(false)}
+      />
     </div>
   );
 }

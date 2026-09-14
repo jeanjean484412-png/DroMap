@@ -51,6 +51,8 @@ const CONTACT_CATEGORIES = [
   },
 ] as const;
 
+type DromapContactCategory = (typeof CONTACT_CATEGORIES)[number]["value"];
+
 const MAX_ATTACHMENT_COUNT = 3;
 const MAX_ATTACHMENT_TOTAL_BYTES = 3 * 1024 * 1024;
 const ACCEPTED_ATTACHMENT_EXTENSIONS = [
@@ -122,10 +124,12 @@ export function DromapContactDialog({
   open,
   pathname,
   onClose,
+  initialCategory = "technical",
 }: {
   open: boolean;
   pathname: string;
   onClose: () => void;
+  initialCategory?: DromapContactCategory;
 }) {
   const userMode = useDromapProductStore((state) => state.userMode);
   const accountName = useDromapProductStore((state) => state.accountName);
@@ -151,7 +155,7 @@ export function DromapContactDialog({
 
   const [name, setName] = useState(accountName || "");
   const [email, setEmail] = useState(accountEmail || "");
-  const [category, setCategory] = useState<(typeof CONTACT_CATEGORIES)[number]["value"]>("technical");
+  const [category, setCategory] = useState<DromapContactCategory>(initialCategory);
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [includeTechnicalContext, setIncludeTechnicalContext] = useState(true);
@@ -177,16 +181,17 @@ export function DromapContactDialog({
     if (!open) return;
     setName(accountName || "");
     setEmail(accountEmail || "");
+    setCategory(initialCategory);
     setSelectedProjectId((current) =>
       current && selectableProjects.some((project) => project.id === current)
         ? current
         : suggestedProjectId,
     );
-  }, [accountEmail, accountName, open, selectableProjects, suggestedProjectId]);
+  }, [accountEmail, accountName, initialCategory, open, selectableProjects, suggestedProjectId]);
 
   const closeAndReset = () => {
     if (sending) return;
-    setCategory("technical");
+    setCategory(initialCategory);
     setSubject("");
     setMessage("");
     setIncludeTechnicalContext(true);

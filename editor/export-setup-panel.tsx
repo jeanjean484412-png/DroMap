@@ -725,6 +725,8 @@ export function ExportSetupPanel() {
       mapTitlePosition,
       mapTitleFontSize,
       mapTitleColor,
+      guestWatermarkMapPosition:
+        useEditorExportStore.getState().guestWatermarkMapPosition,
       showCountryNeighborContext,
       showAllFeatureLabels,
       showAllGeoJsonFeatureLabels,
@@ -1498,7 +1500,11 @@ export function ExportSetupPanel() {
       setIsGeneratingPreview(true);
       setDownloadStatus("Préparation de l’aperçu PNG...");
 
-      const dataUrl = await createCanvasExportPreviewDataUrl(exportInput);
+      const dataUrl = await createCanvasExportPreviewDataUrl(
+        exportInput,
+        undefined,
+        { showDromapGuestWatermark },
+      );
 
       setRenderPreviewUrl(dataUrl);
       setDownloadStatus("Aperçu PNG généré.");
@@ -2520,20 +2526,6 @@ export function ExportSetupPanel() {
                     draggable={false}
                   />
 
-                  {showDromapGuestWatermark ? (
-                    <button
-                      type="button"
-                      onClick={() => setGuestWatermarkOfferOpen(true)}
-                      className="absolute bottom-[3%] left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md px-2 py-1 text-sm font-black text-slate-900/60 transition hover:bg-white/55 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-200"
-                      style={{
-                        textShadow:
-                          "-1px -1px 0 rgba(255,255,255,.72), 1px -1px 0 rgba(255,255,255,.72), -1px 1px 0 rgba(255,255,255,.72), 1px 1px 0 rgba(255,255,255,.72)",
-                      }}
-                      title="Retirer la mention DroMap"
-                    >
-                      Créé avec DroMap
-                    </button>
-                  ) : null}
                 </div>
               </div>
             </div>

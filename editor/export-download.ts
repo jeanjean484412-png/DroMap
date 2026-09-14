@@ -117,7 +117,7 @@ import {
 import { drawZoneHatchingOnCanvas } from "./zone-hatching";
 import { drawExportScaleBarOnCanvas, type ExportScaleUnits } from "./export-scale";
 import { drawExportNorthArrowOnCanvas } from "./export-north-arrow";
-import { EXPORT_LEGEND_FONT_FAMILY } from "./export-text-metrics";
+import { getExportCanvasFontFamily } from "./export-text-metrics";
 import { renderMapLibreStyleToCanvas } from "./openfreemap-maplibre";
 import {
   drawAlignedZoneOutlineOnCanvas,
@@ -185,6 +185,7 @@ export type DownloadCanvasExportInput = {
   mapTitlePosition?: ExportLegendMapPosition;
   mapTitleFontSize?: number;
   mapTitleColor?: string;
+  guestWatermarkMapPosition?: ExportLegendMapPosition;
   showCountryNeighborContext?: boolean;
   showAllFeatureLabels?: boolean;
   showAllGeoJsonFeatureLabels?: boolean;
@@ -1234,6 +1235,7 @@ function drawCreatorAttribution(
 function drawDromapGuestWatermark(
   ctx: CanvasRenderingContext2D,
   mapRect: ExportCanvasRect,
+  position: ExportLegendMapPosition | undefined,
 ) {
   const fontSize = Math.max(20, Math.min(34, Math.round(mapRect.width / 33)));
   const label = "Créé avec DroMap";
@@ -1251,8 +1253,20 @@ function drawDromapGuestWatermark(
   ctx.strokeStyle = "rgba(255, 255, 255, 0.72)";
   ctx.fillStyle = "rgba(15, 23, 42, 0.56)";
 
-  const x = mapRect.x + mapRect.width / 2;
-  const y = mapRect.y + mapRect.height - Math.max(28, fontSize * 1.35);
+  const safePosition = position ?? { x: 0.5, y: 0.95 };
+  const textWidth = ctx.measureText(label).width;
+  const horizontalMargin = textWidth / 2 + Math.max(8, fontSize * 0.3);
+  const verticalMargin = fontSize / 2 + Math.max(8, fontSize * 0.3);
+  const x = clamp(
+    mapRect.x + clamp(safePosition.x, 0, 1) * mapRect.width,
+    mapRect.x + horizontalMargin,
+    mapRect.x + mapRect.width - horizontalMargin,
+  );
+  const y = clamp(
+    mapRect.y + clamp(safePosition.y, 0, 1) * mapRect.height,
+    mapRect.y + verticalMargin,
+    mapRect.y + mapRect.height - verticalMargin,
+  );
   ctx.strokeText(label, x, y);
   ctx.fillText(label, x, y);
   ctx.restore();
@@ -2149,7 +2163,7 @@ function drawTextFeature(
   ctx.save();
   const fontWeight = getTextFeatureBold(feature) ? 700 : 400;
   const fontStyle = getTextFeatureItalic(feature) ? "italic" : "normal";
-  ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${EXPORT_LEGEND_FONT_FAMILY}`;
+  ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${getExportCanvasFontFamily()}`;
 
   const measuredLineWidths = lines.map((line) => {
     if (line.length === 0) {
@@ -2600,7 +2614,7 @@ function createCanvasFeatureMapLabelLayouts(
     mapRect,
     (text, fontSize) => {
       ctx.save();
-      ctx.font = `700 ${fontSize}px ${EXPORT_LEGEND_FONT_FAMILY}`;
+      ctx.font = `700 ${fontSize}px ${getExportCanvasFontFamily()}`;
       const width = ctx.measureText(text).width;
       ctx.restore();
       return width;
@@ -2626,7 +2640,7 @@ function drawFeatureMapLabel(
   }
 
   ctx.save();
-  ctx.font = `700 ${layout.fontSize}px ${EXPORT_LEGEND_FONT_FAMILY}`;
+  ctx.font = `700 ${layout.fontSize}px ${getExportCanvasFontFamily()}`;
   ctx.fillStyle = "#0f172a";
   ctx.strokeStyle = "rgba(255, 255, 255, 0.98)";
   ctx.lineWidth = Math.max(0, outlineWidth);
@@ -2669,7 +2683,7 @@ function drawMapTitleOnCanvas(
   const lineHeight = safeFontSize * 1.12;
 
   ctx.save();
-  ctx.font = `800 ${safeFontSize}px ${EXPORT_LEGEND_FONT_FAMILY}`;
+  ctx.font = `800 ${safeFontSize}px ${getExportCanvasFontFamily()}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineJoin = "round";
@@ -2821,7 +2835,7 @@ async function drawLegendSymbol(
     ctx.stroke();
 
     ctx.fillStyle = hexToRgba(style.color, style.opacity);
-    ctx.font = `700 ${Math.round(textSymbolSize * 0.58)}px ${EXPORT_LEGEND_FONT_FAMILY}`;
+    ctx.font = `700 ${Math.round(textSymbolSize * 0.58)}px ${getExportCanvasFontFamily()}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("T", 0, 1);
@@ -3139,7 +3153,7 @@ async function drawLegend(
 
   if (legendLayout.hasTitle) {
     ctx.fillStyle = colors.titleColor;
-    ctx.font = `700 ${legendLayout.titleFontSize}px ${EXPORT_LEGEND_FONT_FAMILY}`;
+    ctx.font = `700 ${legendLayout.titleFontSize}px ${getExportCanvasFontFamily()}`;
     ctx.textBaseline = "alphabetic";
 
     legendLayout.titleLines.forEach((line, lineIndex) => {
@@ -3198,7 +3212,7 @@ async function drawLegend(
     }
 
     if (displayItem.type === "section") {
-      ctx.font = `700 ${legendLayout.sectionFontSize}px ${EXPORT_LEGEND_FONT_FAMILY}`;
+      ctx.font = `700 ${legendLayout.sectionFontSize}px ${getExportCanvasFontFamily()}`;
       ctx.fillStyle = colors.titleColor;
       ctx.textBaseline = "alphabetic";
       const sectionLines =
@@ -3289,7 +3303,7 @@ async function drawLegend(
       entry.legendSymbolStyle,
     );
 
-    ctx.font = `500 ${legendLayout.itemFontSize}px ${EXPORT_LEGEND_FONT_FAMILY}`;
+    ctx.font = `500 ${legendLayout.itemFontSize}px ${getExportCanvasFontFamily()}`;
     ctx.fillStyle = colors.textColor;
     ctx.textBaseline = "alphabetic";
 
@@ -3330,7 +3344,7 @@ async function drawLegend(
     ctx.fill();
     ctx.stroke();
 
-    ctx.font = `600 ${warningFontSize}px ${EXPORT_LEGEND_FONT_FAMILY}`;
+    ctx.font = `600 ${warningFontSize}px ${getExportCanvasFontFamily()}`;
     ctx.fillStyle = "#92400e";
     ctx.textBaseline = "alphabetic";
 
@@ -3722,6 +3736,8 @@ function createProjectJson(input: DownloadCanvasExportInput) {
         fontSize: input.mapTitleFontSize ?? 44,
         color: input.mapTitleColor ?? "#0f172a",
       },
+      guestWatermarkMapPosition:
+        input.guestWatermarkMapPosition ?? { x: 0.5, y: 0.95 },
       legendPosition: input.legendPosition,
       legendMapPosition: input.legendMapPosition ?? { x: 0, y: 0.84 },
       legendMapTitlePosition: input.legendMapTitlePosition ?? { x: 0.5, y: 0 },
@@ -3796,6 +3812,7 @@ export type ImportedDromapProject = {
   mapTitlePosition: ExportLegendMapPosition;
   mapTitleFontSize: number;
   mapTitleColor: string;
+  guestWatermarkMapPosition: ExportLegendMapPosition;
   exportFormat: ExportFormat;
   legendPosition: ExportLegendPosition;
   legendMapPosition: ExportLegendMapPosition;
@@ -4505,6 +4522,10 @@ export function parseDromapProjectJson(
     mapTitleColor: parseString(
       getRecordValue(safeMapTitle, "color"),
       "#0f172a",
+    ),
+    guestWatermarkMapPosition: parseLegendMapPosition(
+      getRecordValue(exportSettings, "guestWatermarkMapPosition"),
+      { x: 0.5, y: 0.95 },
     ),
     exportFormat: parseExportFormat(getRecordValue(exportSettings, "format")),
     legendPosition: parseLegendPosition(
@@ -6178,7 +6199,11 @@ async function renderCanvasExportToCanvas(
   );
 
   if (showDromapGuestWatermark) {
-    drawDromapGuestWatermark(ctx, layout.mapRect);
+    drawDromapGuestWatermark(
+      ctx,
+      layout.mapRect,
+      input.guestWatermarkMapPosition,
+    );
   }
 
   // Les crédits du fond ET des jeux de données visibles restent la toute
@@ -6213,8 +6238,14 @@ async function renderCanvasExportToCanvas(
 export async function createCanvasExportPreviewDataUrl(
   input: DownloadCanvasExportInput,
   pixelRatio = PREVIEW_EXPORT_PIXEL_RATIO,
+  options: { showDromapGuestWatermark?: boolean } = {},
 ) {
-  const canvas = await renderCanvasExportToCanvas(input, pixelRatio);
+  const canvas = await renderCanvasExportToCanvas(
+    input,
+    pixelRatio,
+    "standard",
+    options.showDromapGuestWatermark === true,
+  );
 
   return canvas.toDataURL("image/png");
 }
