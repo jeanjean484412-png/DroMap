@@ -1121,6 +1121,7 @@ function LegendSymbol({
 
 function EditableLegendText({
   value,
+  displayValue,
   onCommit,
   placeholder,
   className,
@@ -1129,6 +1130,7 @@ function EditableLegendText({
   liveCommit = false,
 }: {
   value: string;
+  displayValue?: string;
   onCommit: (value: string) => void;
   placeholder?: string;
   className?: string;
@@ -1156,7 +1158,7 @@ function EditableLegendText({
 
     textarea.style.height = "0px";
     textarea.style.height = `${Math.max(textarea.scrollHeight, 1)}px`;
-  }, [draftValue, multiline, style]);
+  }, [displayValue, draftValue, isEditing, multiline, style]);
 
   function commit() {
     setIsEditing(false);
@@ -1174,7 +1176,9 @@ function EditableLegendText({
   }
 
   const sharedProps = {
-    value: draftValue,
+    // Hors édition, afficher exactement les lignes calculées pour l'export.
+    // Le navigateur ne doit pas inventer des coupures supplémentaires.
+    value: isEditing ? draftValue : (displayValue ?? draftValue),
     placeholder,
     onFocus: () => {
       editingStartValueRef.current = value;
@@ -1222,7 +1226,7 @@ function EditableLegendText({
   };
 
   if (multiline) {
-    return <textarea ref={textareaRef} {...sharedProps} rows={1} wrap="soft" />;
+    return <textarea ref={textareaRef} {...sharedProps} rows={1} wrap="off" />;
   }
 
   return <input {...sharedProps} type="text" />;
@@ -1780,6 +1784,7 @@ function ExportLegendPreview({
           >
             <EditableLegendText
               value={safeTitle}
+              displayValue={legendLayout.titleLines.join("\n")}
               onCommit={onTitleChange}
               multiline
               liveCommit
@@ -1791,9 +1796,9 @@ function ExportLegendPreview({
                 color: colors.titleColor,
                 fontSize: titleFontSize,
                 lineHeight: `${legendLayout.titleLineHeight}px`,
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
-                wordBreak: "break-word",
+                whiteSpace: "pre",
+                overflowWrap: "normal",
+                wordBreak: "normal",
                 height: "auto",
                 WebkitTextStroke:
                   legendPosition === "map"
@@ -1884,6 +1889,9 @@ function ExportLegendPreview({
                   >
                     <EditableLegendText
                       value={displayItem.label}
+                      displayValue={(item.textLines ?? [displayItem.label]).join(
+                        "\n",
+                      )}
                       onCommit={(nextValue) => {
                         const trimmedValue = nextValue.trim();
                         if (trimmedValue.length === 0) return;
@@ -1903,7 +1911,8 @@ function ExportLegendPreview({
                         lineHeight: 1.2,
                         height: item.height,
                         boxSizing: "border-box",
-                        overflowWrap: "break-word",
+                        whiteSpace: "pre",
+                        overflowWrap: "normal",
                         wordBreak: "normal",
                         WebkitTextStroke:
                           legendPosition === "map"
@@ -2085,6 +2094,7 @@ function ExportLegendPreview({
                   >
                     <EditableLegendText
                       value={entry.label}
+                      displayValue={(item.textLines ?? [entry.label]).join("\n")}
                       onCommit={(nextValue) =>
                         onEntryLabelChange(entry.dedupeKey, nextValue)
                       }
@@ -2098,8 +2108,9 @@ function ExportLegendPreview({
                         lineHeight: appearance.labelLineHeight,
                         minHeight: item.height,
                         height: "auto",
-                        overflowWrap: "anywhere",
-                        wordBreak: "break-word",
+                        whiteSpace: "pre",
+                        overflowWrap: "normal",
+                        wordBreak: "normal",
                       }}
                     />
                   </span>
