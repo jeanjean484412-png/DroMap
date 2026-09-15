@@ -2,6 +2,8 @@ import Link from "next/link";
 import { IBM_Plex_Sans } from "next/font/google";
 import { DromapHomeAccountActions } from "@/components/dromap-product/home-account-actions";
 import { DromapBrandBlock } from "@/components/dromap-product/dromap-brand";
+import { DromapHomeShareButton } from "@/components/dromap-product/home-share-button";
+import { getDromapSiteUrl } from "@/lib/dromap/site-url";
 import type { DromapPublicPublication } from "@/lib/dromap/publications";
 import {
   dromapPublicationsConfigured, publicationRowToPublicWithImageRoutes,
@@ -91,7 +93,7 @@ export async function DromapHomePage() {
       <div className={styles.wrap}>
         <header className={styles.header}>
           <Link href="/accueil" aria-label="Accueil DroMap"><DromapBrandBlock markClassName="h-12 w-auto sm:h-14" titleClassName="text-2xl font-semibold tracking-tight text-[#1c4355]" subtitle={null} /></Link>
-          <nav className={styles.nav} aria-label="Navigation publique"><Link href="/library">Les cartes</Link><Link href="/pricing">Les formules</Link><Link href="/help">Aide</Link><DromapHomeAccountActions /></nav>
+          <nav className={styles.nav} aria-label="Navigation publique"><Link href="/library">Les cartes</Link><Link href="/pricing">Les formules</Link><Link href="/help">Aide</Link><DromapHomeShareButton url={`${getDromapSiteUrl()}/accueil`} /><DromapHomeAccountActions /></nav>
         </header>
         <section className={styles.hero}>
           <p className={styles.eyebrow}>Votre atelier de cartographie</p>
