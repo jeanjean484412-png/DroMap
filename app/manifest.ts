@@ -15,19 +15,19 @@ export default function manifest(): MetadataRoute.Manifest {
     lang: "fr",
     icons: [
       {
-        src: "/dromap-icon-192.png?v=20260915-2",
+        src: "/dromap-icon-192.png?v=20260915-3",
         sizes: "192x192",
         type: "image/png",
         purpose: "any",
       },
       {
-        src: "/dromap-icon-512.png?v=20260915-2",
+        src: "/dromap-icon-512.png?v=20260915-3",
         sizes: "512x512",
         type: "image/png",
         purpose: "any",
       },
       {
-        src: "/dromap-icon-512.png?v=20260915-2",
+        src: "/dromap-icon-512.png?v=20260915-3",
         sizes: "512x512",
         type: "image/png",
         purpose: "maskable",

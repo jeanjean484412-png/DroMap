@@ -4,8 +4,9 @@ import sharp from 'sharp';
 // Toutes les déclinaisons utilisent le SVG approuvé comme source unique.
 const source = await readFile(new URL('../public/dromap-logo.svg', import.meta.url));
 const output = (path) => new URL(`../${path}`, import.meta.url);
-const square = (size) => sharp(source).flatten({ background: '#ffffff' }).resize(size, size, {
-  fit: 'contain', background: '#ffffff',
+const square = (size) => sharp(source).resize(size, size, {
+  fit: 'contain',
+  background: { r: 255, g: 255, b: 255, alpha: 0 },
 }).png().toBuffer();
 
 for (const [path, size] of [

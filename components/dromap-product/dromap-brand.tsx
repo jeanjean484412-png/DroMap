@@ -9,7 +9,7 @@ export function DromapLogoMark({
 }) {
   return (
     <Image
-      src="/dromap-logo.svg?v=20260915-2"
+      src="/dromap-logo.svg?v=20260915-3"
       alt={alt}
       width={1280}
       height={1143}
