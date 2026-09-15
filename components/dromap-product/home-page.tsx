@@ -1,60 +1,23 @@
 import Link from "next/link";
-
+import { IBM_Plex_Sans } from "next/font/google";
 import { DromapHomeAccountActions } from "@/components/dromap-product/home-account-actions";
 import { DromapBrandBlock } from "@/components/dromap-product/dromap-brand";
 import type { DromapPublicPublication } from "@/lib/dromap/publications";
 import {
-  dromapPublicationsConfigured,
-  publicationRowToPublicWithImageRoutes,
-  publicationsAdminFetch,
-  type DromapPublicationRow,
+  dromapPublicationsConfigured, publicationRowToPublicWithImageRoutes,
+  publicationsAdminFetch, type DromapPublicationRow,
 } from "@/lib/dromap/server/publications";
+import styles from "./home-page.module.css";
 
-const VALUE_PROPS = [
-  {
-    title: "Une carte vraiment modifiable",
-    description:
-      "Marqueurs, textes, traits, zones, calques et données restent des objets éditables — pas une image figée.",
-  },
-  {
-    title: "Des imports utiles, pas du bruit",
-    description:
-      "GeoJSON, bâtiments, routes et autres données cartographiques s’intègrent à la zone de travail avec sélection et contrôle.",
-  },
-  {
-    title: "Un rendu fidèle",
-    description:
-      "Titre, légende, échelle, nord et objets gardent leurs proportions entre l’éditeur, l’aperçu et l’export.",
-  },
-  {
-    title: "L’IA reste sous contrôle",
-    description:
-      "L’Assistant peut proposer un plan et préparer des actions, mais les étapes sensibles restent visibles, ajustables et réversibles.",
-  },
-] as const;
-
-const FEATURED_PUBLICATION_TITLES = ["Candice", "Coetquiflan", "Test"] as const;
-
-function placeholderPublication(title: string): DromapPublicPublication {
-  const now = new Date().toISOString();
-  return {
-    slug: title.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-    title,
-    description: "Carte publiée dans DroMap.",
-    authorName: null,
-    tags: [],
-    thumbnailDataUrl: "",
-    accessMode: "read-only",
-    allowCreatorCreditRemoval: false,
-    creatorCreditName: null,
-    publishedAt: now,
-    updatedAt: now,
-  };
-}
+const homeFont = IBM_Plex_Sans({
+  subsets: ["latin"], weight: ["400", "500", "600"],
+  variable: "--font-home", display: "swap",
+});
+const FEATURED_PUBLICATION_TITLES = ["Candice", "Coetquiflan"] as const;
 
 async function readFeaturedPublications() {
   if (!dromapPublicationsConfigured()) {
-    return FEATURED_PUBLICATION_TITLES.map((title) => placeholderPublication(title));
+    return [];
   }
 
   try {
@@ -64,7 +27,7 @@ async function readFeaturedPublications() {
     );
 
     if (!response.ok) {
-      return FEATURED_PUBLICATION_TITLES.map((title) => placeholderPublication(title));
+      return [];
     }
 
     const rows = (await response.json().catch(() => [])) as DromapPublicationRow[];
@@ -74,282 +37,95 @@ async function readFeaturedPublications() {
           .filter((row): row is DromapPublicPublication => row !== null)
       : [];
 
-    return FEATURED_PUBLICATION_TITLES.map((title) => {
-      const publication = publications.find(
-        (item) => item.title.localeCompare(title, "fr", { sensitivity: "base" }) === 0,
-      );
-      return publication ?? placeholderPublication(title);
-    });
+    const featured = publications.filter((item) =>
+      FEATURED_PUBLICATION_TITLES.some((title) => item.title.localeCompare(title, "fr", { sensitivity: "base" }) === 0),
+    );
+    return [...featured, ...publications.filter((item) => !featured.includes(item))].slice(0, 3);
   } catch {
-    return FEATURED_PUBLICATION_TITLES.map((title) => placeholderPublication(title));
+    return [];
   }
 }
 
-function PublicationVisual({
-  publication,
-  priority = false,
-}: {
-  publication: DromapPublicPublication;
-  priority?: boolean;
-}) {
-  if (!publication.thumbnailDataUrl) {
-    return (
-      <div className="flex h-full w-full items-center justify-center bg-[#eaf3f1] p-6 text-center">
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#2b8e88]">
-            Carte DroMap
-          </div>
-          <div className="mt-3 text-2xl font-black tracking-tight text-[#123a59]">
-            {publication.title}
-          </div>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            L’aperçu réel apparaîtra ici dès que la carte sera disponible dans la bibliothèque publique.
-          </p>
-        </div>
-      </div>
-    );
-  }
 
+function MapIllustration() {
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={publication.thumbnailDataUrl}
-      alt={`Aperçu de ${publication.title}`}
-      draggable={false}
-      loading={priority ? "eager" : "lazy"}
-      fetchPriority={priority ? "high" : "auto"}
-      decoding="async"
-      className="h-full w-full object-contain bg-slate-100"
-    />
+    <svg viewBox="0 0 1100 500" width="100%" height="100%" role="img" aria-label="Illustration cartographique : un parcours relie le village, la prairie et le belvédère" preserveAspectRatio="xMidYMid slice">
+      <rect width="1100" height="500" fill="#e9ecdd" />
+      <path d="M0 0H440L380 110 220 174 0 123Z M680 0H1100V230L916 190 823 87Z M0 330L190 270 314 380 258 500H0Z M707 352L872 298 1100 362V500H740Z" fill="#cbd8bd" />
+      <g fill="none" stroke="#afbea5" strokeWidth="1.5" opacity=".55">
+        <path d="M-60 60Q180 200 338 42T720 80 1150 140 M-60 86Q180 226 338 68T720 106 1150 166 M-60 112Q180 252 338 94T720 132 1150 192 M-60 138Q180 278 338 120T720 158 1150 218" />
+        <path d="M590 520Q580 375 782 385T1160 320 M610 520Q600 395 802 405T1160 340 M630 520Q620 415 822 425T1160 360" />
+      </g>
+      <path d="M370 -30C310 70 532 100 486 207S391 322 519 370 554 466 610 530" fill="none" stroke="#f7f5ee" strokeWidth="29" />
+      <path d="M370 -30C310 70 532 100 486 207S391 322 519 370 554 466 610 530" fill="none" stroke="#a1cbd0" strokeWidth="20" />
+      <path d="M-30 390L197 264 389 290 642 191 892 255 1130 135 M198 264L235 -20 M642 191L741 -20 M389 290L291 530" fill="none" stroke="#d3cab8" strokeWidth="18" strokeLinejoin="round" />
+      <path d="M-30 390L197 264 389 290 642 191 892 255 1130 135 M198 264L235 -20 M642 191L741 -20 M389 290L291 530" fill="none" stroke="#fffdf3" strokeWidth="13" strokeLinejoin="round" />
+      <g fill="#d7b3a0" stroke="#bd9581" strokeWidth="1">
+        <path d="M198 212h29v22h-29z M244 233h36v19h-36z M254 272h26v32h-26z M304 242h42v25h-42z M335 306h24v18h-24z M173 291h32v22h-32z M643 219h26v19h-26z M683 229h34v22h-34z" />
+      </g>
+      <path d="M244 255L362 218 415 143 635 116 755 184 870 162 939 92" fill="none" stroke="#fffdf3" strokeWidth="8" strokeLinejoin="round" />
+      <path d="M244 255L362 218 415 143 635 116 755 184 870 162 939 92" fill="none" stroke="#ce6350" strokeWidth="4" strokeDasharray="9 6" strokeLinejoin="round" />
+      <g fill="#fffdf3" stroke="#1c4355" strokeWidth="3"><circle cx="244" cy="255" r="7" /><circle cx="635" cy="116" r="7" /><circle cx="939" cy="92" r="7" /></g>
+      <g fill="#1c4355" fontFamily="sans-serif" fontSize="16">
+        <text x="199" y="346">Le village</text><text x="573" y="86">La grande prairie</text><text x="865" y="65">Le belvédère</text>
+        <text x="780" y="422" fontSize="12" letterSpacing="3" fill="#70826c">BOIS DES CHÊNES</text>
+      </g>
+      <g transform="translate(1010 330)" fill="#1c4355"><text x="0" y="-14" textAnchor="middle" fontFamily="sans-serif" fontSize="13">N</text><path d="M0 0L-7 28 0 22 7 28Z" /></g>
+      <g transform="translate(36 418)"><rect width="204" height="50" rx="2" fill="#fffdf3" fillOpacity=".94" /><path d="M16 25h38" stroke="#ce6350" strokeWidth="3" strokeDasharray="7 4" /><text x="68" y="30" fill="#1c4355" fontSize="13" fontFamily="sans-serif">Parcours de la sortie</text></g>
+    </svg>
   );
 }
 
-function FeaturedMapsShowcase({ publications }: { publications: DromapPublicPublication[] }) {
-  const [mainPublication, ...secondaryPublications] = publications;
-
+function PublicationVisual({ publication, priority = false }: { publication: DromapPublicPublication; priority?: boolean }) {
   return (
-    <div className="rounded-2xl border border-[#d7e7e3] bg-white p-4 shadow-sm">
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-[#fbfcfb]">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Carte mise en avant
-            </div>
-            <div className="mt-1 text-lg font-black tracking-tight text-slate-950">
-              {mainPublication.title}
-            </div>
-          </div>
-          <Link
-            href={mainPublication.thumbnailDataUrl ? `/library/${mainPublication.slug}` : "/library"}
-            className="rounded-full border border-[#cfe7e3] bg-[#eff9f7] px-4 py-2 text-xs font-black text-[#123a59] hover:border-[#b8ddd8]"
-          >
-            Voir la carte
-          </Link>
-        </div>
-        <div className="aspect-[16/8] overflow-hidden bg-slate-100">
-          <PublicationVisual publication={mainPublication} priority />
-        </div>
-        <div className="border-t border-slate-200 px-5 py-4 text-sm leading-6 text-slate-600">
-          {mainPublication.description || "Carte publiée dans DroMap."}
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        {secondaryPublications.map((publication) => (
-          <Link
-            key={publication.title}
-            href={publication.thumbnailDataUrl ? `/library/${publication.slug}` : "/library"}
-            className="overflow-hidden rounded-2xl border border-slate-200 bg-[#fbfcfb] transition hover:border-[#b8ddd8]"
-          >
-            <div className="aspect-[16/9] overflow-hidden border-b border-slate-200 bg-slate-100">
-              <PublicationVisual publication={publication} />
-            </div>
-            <div className="px-4 py-3">
-              <div className="text-sm font-black text-slate-950">{publication.title}</div>
-              <div className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
-                {publication.description || "Carte publiée dans DroMap."}
-              </div>
-            </div>
-          </Link>
-        ))}
-      </div>
-    </div>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={publication.thumbnailDataUrl} alt={`Carte : ${publication.title}`} loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : "auto"} decoding="async" />
   );
 }
 
 export async function DromapHomePage() {
-  const featuredPublications = await readFeaturedPublications();
-
+  const publications = (await readFeaturedPublications()).filter((item) => item.thumbnailDataUrl);
+  const [mainPublication, ...otherPublications] = publications;
   return (
-    <main className="min-h-screen bg-[#f7f9f8] pb-[calc(5rem+env(safe-area-inset-bottom))] text-slate-950 sm:pb-0">
-      <header className="border-b border-[#d9e7e4] bg-[#fbfcfb]">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-8 lg:py-5">
-          <Link href="/accueil" aria-label="Accueil DroMap">
-            <DromapBrandBlock markClassName="h-12 w-auto sm:h-16" titleClassName="text-xl font-black tracking-tight text-[#123a59] sm:text-[1.5rem]" subtitle="Éditeur cartographique" />
-          </Link>
-          <nav className="flex min-w-0 items-center gap-1 text-sm font-semibold text-slate-600 sm:gap-2 lg:gap-3" aria-label="Navigation publique">
-            <Link href="/library" className="hidden rounded-full px-3 py-2 hover:bg-white hover:text-slate-950 md:inline-flex">Cartes publiques</Link>
-            <Link href="/pricing" className="hidden rounded-full px-3 py-2 hover:bg-white hover:text-slate-950 md:inline-flex">Formules</Link>
-            <Link href="/help" className="hidden rounded-full px-3 py-2 hover:bg-white hover:text-slate-950 lg:inline-flex">Aide</Link>
-            <DromapHomeAccountActions />
-            <Link
-              href="/projects/new"
-              className="hidden rounded-full bg-[#123a59] px-5 py-2.5 font-black text-white transition hover:bg-[#0f304a] sm:inline-flex"
-            >
-              Créer une carte
-            </Link>
-          </nav>
-        </div>
-      </header>
-
-      <section className="border-b border-[#d9e7e4] bg-[#f7f9f8]">
-        <div className="mx-auto grid max-w-7xl gap-10 px-4 py-10 sm:px-6 sm:py-14 lg:px-8 lg:py-16 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] xl:items-start xl:gap-14">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-[#cfe7e3] bg-[#eef9f7] px-3 py-1.5 text-xs font-black text-[#123a59]">
-              <span className="h-2 w-2 rounded-full bg-[#2eb7a7]" />
-              Cartographie claire, modifiable et exportable
-            </div>
-            <h1 className="mt-5 max-w-3xl text-3xl font-black leading-[1.05] tracking-[-0.04em] text-slate-950 sm:mt-6 sm:text-5xl xl:text-6xl">
-              Crée une carte sérieuse sans apprendre un logiciel SIG.
-            </h1>
-            <p className="mt-5 max-w-2xl text-base leading-7 text-slate-600 sm:mt-6 sm:text-lg sm:leading-8">
-              DroMap réunit les gestes familiers d’un éditeur graphique et les fonctions utiles de la cartographie : zone de travail, calques, imports, légende, rendu fidèle et Assistant IA contrôlable.
-            </p>
-            <div className="mt-7 grid gap-3 sm:flex sm:flex-wrap sm:items-center">
-              <Link
-                href="/projects/new"
-                className="inline-flex items-center justify-center rounded-full bg-[#123a59] px-6 py-3.5 text-sm font-black text-white transition hover:bg-[#0f304a]"
-              >
-                Créer une carte
-              </Link>
-              <Link
-                href="/library"
-                className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-6 py-3.5 text-sm font-black text-slate-800 transition hover:border-slate-400 hover:bg-slate-50"
-              >
-                Voir les cartes publiques
-              </Link>
-            </div>
-            <div className="mt-7 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs font-semibold text-slate-500">
-              <span>Essai sans compte</span>
-              <span className="h-1 w-1 rounded-full bg-slate-300" />
-              <span>Projet modifiable</span>
-              <span className="h-1 w-1 rounded-full bg-slate-300" />
-              <span>Export PNG standard disponible</span>
-            </div>
+    <main className={`${homeFont.variable} ${styles.home}`}>
+      <div className={styles.wrap}>
+        <header className={styles.header}>
+          <Link href="/accueil" aria-label="Accueil DroMap"><DromapBrandBlock markClassName="h-12 w-auto sm:h-14" titleClassName="text-2xl font-semibold tracking-tight text-[#1c4355]" subtitle={null} /></Link>
+          <nav className={styles.nav} aria-label="Navigation publique"><Link href="/library">Les cartes</Link><Link href="/pricing">Les formules</Link><Link href="/help">Aide</Link><DromapHomeAccountActions /></nav>
+        </header>
+        <section className={styles.hero}>
+          <p className={styles.eyebrow}>Votre atelier de cartographie</p>
+          <h1>Mettez votre territoire<br /><span>au clair.</span></h1>
+          <div className={styles.intro}>
+            <p>Un lieu à explorer, un projet à expliquer, un itinéraire à partager. Ajoutez vos données, dessinez ce qui compte et composez une carte qui raconte votre terrain.</p>
+            <div><div className={styles.actions}><Link className={styles.button} href="/projects/new">Commencer ma carte <span aria-hidden="true">↗</span></Link><Link className={styles.textLink} href="/library">Explorer les cartes</Link></div><div className={styles.note}>Essayez sans compte. Export PNG standard disponible.</div></div>
           </div>
-          <FeaturedMapsShowcase publications={featuredPublications} />
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-7xl px-4 py-14 sm:px-6 sm:py-16 lg:px-8 lg:py-20">
-        <div className="grid gap-10 lg:grid-cols-[18rem_minmax(0,1fr)] lg:items-start">
-          <div>
-            <div className="text-xs font-black uppercase tracking-[0.18em] text-[#2b8e88]">Pourquoi DroMap</div>
-            <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">
-              Un éditeur de carte, pas un générateur d’image.
-            </h2>
-            <p className="mt-4 text-base leading-7 text-slate-600">
-              Chaque élément important reste structuré et modifiable. Une carte peut être reprise, corrigée et réorganisée sans repartir de zéro.
-            </p>
-          </div>
-          <div className="grid overflow-hidden rounded-2xl border border-slate-200 bg-slate-200 sm:grid-cols-2">
-            {VALUE_PROPS.map((item, index) => (
-              <article
-                key={item.title}
-                className="bg-white p-6"
-              >
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  0{index + 1}
-                </div>
-                <h3 className="mt-3 text-lg font-black tracking-tight text-slate-950">{item.title}</h3>
-                <p className="mt-2 text-sm leading-6 text-slate-600">{item.description}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-7xl px-4 py-14 sm:px-6 sm:py-16 lg:px-8 lg:py-20">
-        <div className="grid gap-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-          <div>
-            <div className="text-xs font-black uppercase tracking-[0.18em] text-[#2b8e88]">De la donnée au rendu</div>
-            <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">
-              Garde la maîtrise à chaque étape.
-            </h2>
-            <p className="mt-4 max-w-xl text-base leading-7 text-slate-600">
-              Le parcours reste lisible : définir une zone, ajouter les données utiles, mettre en forme la carte, puis préparer le rendu final.
-            </p>
-          </div>
-          <ol className="grid gap-3 sm:grid-cols-2">
-            {[
-              ["01", "Définir la zone", "Recherche, sélection manuelle ou zone administrative selon le projet."],
-              ["02", "Ajouter les éléments utiles", "Objets DroMap, GeoJSON, bâtiments, routes et bibliothèques selon les droits disponibles."],
-              ["03", "Mettre en forme", "Styles, étiquettes, calques, sélection multiple et légende liée aux objets."],
-              ["04", "Préparer le rendu", "Titre, légende, échelle, nord, détail du fond et formats d’export."],
-            ].map(([number, title, description]) => (
-              <li key={number} className="rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{number}</div>
-                <div className="mt-3 font-black text-slate-950">{title}</div>
-                <div className="mt-2 text-sm leading-6 text-slate-600">{description}</div>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-7xl px-4 pb-14 sm:px-6 sm:pb-16 lg:px-8 lg:pb-20">
-        <div className="rounded-2xl border border-[#163f5e] bg-[#123a59] px-5 py-8 text-white sm:px-8 sm:py-10">
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem] lg:items-center">
-            <div>
-              <div className="text-xs font-black uppercase tracking-[0.18em] text-[#8fe5da]">
-                Commencer maintenant
-              </div>
-              <h2 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">
-                Construis une carte avant de choisir une formule.
-              </h2>
-              <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-200">
-                Le mode sans compte permet de tester le parcours et les outils essentiels. Un compte peut ensuite être créé pour synchroniser les projets et débloquer les fonctions avancées.
-              </p>
-            </div>
-            <div className="space-y-3">
-              <Link
-                href="/projects/new"
-                className="block rounded-full bg-white px-5 py-3.5 text-center text-sm font-black text-[#123a59] hover:bg-slate-100"
-              >
-                Créer une carte
-              </Link>
-              <Link
-                href="/pricing"
-                className="block rounded-full border border-white/25 px-5 py-3.5 text-center text-sm font-black text-white hover:bg-white/10"
-              >
-                Comparer les formules
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <footer className="border-t border-[#d9e7e4] bg-[#fbfcfb]">
-        <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:px-8 md:grid-cols-[1fr_auto] md:items-center">
-          <div>
-            <DromapBrandBlock subtitle="Éditeur cartographique pour créer des cartes claires, modifiables et exportables." markClassName="h-12 w-auto" titleClassName="text-[1.3rem] font-black tracking-tight text-[#123a59]" subtitleClassName="text-xs text-slate-500" />
-          </div>
-          <div className="flex flex-wrap items-center gap-5 text-xs font-semibold text-slate-500">
-            <Link href="/confidentialite" className="hover:text-slate-900">Confidentialité</Link>
-            <Link href="/conditions-generales" className="hover:text-slate-900">Conditions générales</Link>
-            <Link href="/credits" className="hover:text-slate-900">Crédits</Link>
-            <a href="mailto:contact@dromap.fr" className="hover:text-slate-900">Contact</a>
-          </div>
-        </div>
-      </footer>
-
-      <div className="fixed inset-x-0 bottom-0 z-[2900] border-t border-slate-200 bg-white/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 shadow-[0_-10px_30px_rgba(15,23,42,0.14)] backdrop-blur sm:hidden">
-        <Link
-          href="/projects/new"
-          className="flex min-h-12 w-full items-center justify-center rounded-full bg-[#123a59] px-5 text-sm font-black text-white shadow-sm transition hover:bg-[#0f304a]"
-        >
-          Créer une carte
-        </Link>
+        </section>
+        <figure className={styles.mapFrame}>
+          <div className={styles.mapVisual}>{mainPublication ? <PublicationVisual publication={mainPublication} priority /> : <MapIllustration />}</div>
+          <figcaption className={styles.caption}><div><strong>{mainPublication?.title ?? "Une sortie, un parcours, des repères."}</strong><span> — {mainPublication ? "Une carte créée avec DroMap" : "Illustration cartographique"}</span></div>{mainPublication ? <Link className={styles.textLink} href={`/library/${mainPublication.slug}`}>Voir cette carte ↗</Link> : <span>À vous de tracer la suite.</span>}</figcaption>
+        </figure>
+        <section className={styles.section}>
+          <p className={styles.eyebrow}>Du premier repère à la carte finale</p>
+          <h2>Vous connaissez le terrain.<br />Donnez-lui forme.</h2>
+          <p className={styles.sectionIntro}>DroMap réunit le fond de carte, vos données et vos annotations dans un même espace. Vous pouvez tout reprendre, déplacer et ajuster au fil de votre projet.</p>
+          <ol className={styles.steps}>{[
+            ["01", "Cadrez votre territoire", "Un quartier, une commune, un coin de forêt. Recherchez votre lieu et choisissez la zone que vous voulez montrer."],
+            ["02", "Montrez ce qui compte", "Importez vos données, tracez un parcours, entourez une zone ou ajoutez quelques mots. Votre carte prend votre point de vue."],
+            ["03", "Soignez le dernier détail", "Placez le titre, organisez la légende et choisissez votre format. Exportez votre carte pour un dossier, une réunion ou une sortie."],
+          ].map(([number, title, description]) => <li key={number} className={styles.step}><span className={styles.number}>{number}</span><h3>{title}</h3><p>{description}</p></li>)}</ol>
+        </section>
+        <section className={`${styles.section} ${styles.uses}`}>
+          <div><p className={styles.eyebrow}>Des cartes qui servent</p><h2>Qu’avez-vous envie<br />de montrer ?</h2><p className={styles.sectionIntro}>Une bonne carte aide à se repérer et à se comprendre. Le contenu, c’est vous qui l’apportez.</p></div>
+          <ul className={styles.useList}>
+            <li><h3>Un projet à présenter</h3><p>Rendez visibles les bâtiments, les accès et les zones d’intervention pour que chacun comprenne de quoi vous parlez.</p></li>
+            <li><h3>Une sortie à préparer</h3><p>Rassemblez le parcours, les points de rendez-vous et les lieux à ne pas manquer sur un même document.</p></li>
+            <li><h3>Un territoire à raconter</h3><p>Mettez vos observations en carte pour un cours, une étude ou une publication.</p></li>
+          </ul>
+        </section>
+        {otherPublications.length > 0 ? <section className={styles.section}><p className={styles.eyebrow}>L’atelier ouvert</p><h2>D’autres regards sur le terrain.</h2><div className={styles.gallery}>{otherPublications.map((publication) => <Link key={publication.slug} href={`/library/${publication.slug}`}><PublicationVisual publication={publication} /><h3>{publication.title} ↗</h3>{publication.description ? <p>{publication.description}</p> : null}</Link>)}</div></section> : null}
+        <section className={styles.closing}><div><p className={styles.eyebrow}>À vous de jouer</p><h2>Tout commence par un lieu.</h2><p>Ouvrez l’atelier et essayez avec un endroit que vous connaissez. Vous pouvez commencer sans créer de compte.</p></div><Link className={styles.button} href="/projects/new">Commencer ma carte <span aria-hidden="true">↗</span></Link></section>
+        <footer className={styles.footer}><DromapBrandBlock markClassName="h-10 w-auto" titleClassName="text-xl font-semibold tracking-tight text-[#1c4355]" subtitle={null} /><nav aria-label="Informations"><Link href="/pricing">Formules</Link><Link href="/confidentialite">Confidentialité</Link><Link href="/conditions-generales">Conditions générales</Link><Link href="/credits">Crédits</Link><a href="mailto:contact@dromap.fr">Contact</a></nav></footer>
       </div>
     </main>
   );

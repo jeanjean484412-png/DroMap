@@ -31,13 +31,13 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       {
-        url: "/favicon.ico?v=20260910",
+        url: "/favicon.ico?v=20260915-2",
         type: "image/x-icon",
         sizes: "16x16 32x32 48x48 256x256",
       },
-      { url: "/icon.png", type: "image/png", sizes: "512x512" },
+      { url: "/icon.png?v=20260915-2", type: "image/png", sizes: "512x512" },
     ],
-    apple: [{ url: "/apple-icon.png", type: "image/png", sizes: "180x180" }],
+    apple: [{ url: "/apple-icon.png?v=20260915-2", type: "image/png", sizes: "180x180" }],
   },
   openGraph: {
     type: "website",
@@ -47,7 +47,7 @@ export const metadata: Metadata = {
     description: DROMAP_DEFAULT_DESCRIPTION,
     images: [
       {
-        url: "/dromap-share.png",
+        url: "/dromap-share.png?v=20260915-2",
         width: 1200,
         height: 630,
         alt: "DroMap — Éditeur cartographique en ligne",
@@ -58,7 +58,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: DROMAP_DEFAULT_TITLE,
     description: DROMAP_DEFAULT_DESCRIPTION,
-    images: ["/dromap-share.png"],
+    images: ["/dromap-share.png?v=20260915-2"],
   },
 };
 
