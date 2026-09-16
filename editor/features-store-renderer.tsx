@@ -1455,9 +1455,12 @@ export function FeaturesStoreRenderer() {
         line-height: 1.15;
         text-align: center;
         text-overflow: clip;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        word-break: break-word;
+        /* Les retours sont déjà calculés par feature-map-labels.ts. Le DOM
+           doit respecter ces lignes sans en créer d'autres selon ses propres
+           arrondis de métriques de police. */
+        white-space: pre;
+        overflow-wrap: normal;
+        word-break: normal;
         writing-mode: horizontal-tb;
         pointer-events: none !important;
         user-select: none;

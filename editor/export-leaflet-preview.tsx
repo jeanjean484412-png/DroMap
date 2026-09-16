@@ -927,9 +927,11 @@ export function ExportLeafletPreview({
           line-height: 1.15;
           text-align: center;
           text-overflow: clip;
-          white-space: pre-wrap;
-          overflow-wrap: anywhere;
-          word-break: break-word;
+          /* Même règle que le canvas PNG/PDF : seules les lignes calculées
+             par createFeatureMapLabelScreenLayouts sont affichées. */
+          white-space: pre;
+          overflow-wrap: normal;
+          word-break: normal;
           writing-mode: horizontal-tb;
           pointer-events: none !important;
           user-select: none;
