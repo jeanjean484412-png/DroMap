@@ -67,12 +67,6 @@
 .shareOptions span { float: right; }
 .shareOptions .primaryShareOption { display: block; grid-column: 1 / -1; background: #147d43; color: #fff; border-color: #147d43; font-weight: 600; padding: 16px; }
 .shareOptions .primaryShareOption:hover { background: #106536; }
-.emailSection { margin-bottom: 22px; }
-.emailSection > table { margin-top: 14px; }
-.emailSection table a:hover { text-decoration: none; }
-.emailActions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; font-size: 13px; }
-.emailActions button { padding: 10px 12px; background: #1c4355; color: #fff; border-radius: 5px; cursor: pointer; }
-.emailActions a { text-decoration: underline; text-underline-offset: 3px; }
 .shareLabel { display: block; font-size: 12px; margin-bottom: 7px; }
 .shareCopy { display: flex; gap: 8px; }
 .shareCopy input { min-width: 0; flex: 1; padding: 10px; border: 1px solid #1c43552b; border-radius: 5px; font-size: 13px; }
