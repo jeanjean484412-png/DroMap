@@ -65,8 +65,8 @@
 .shareOptions a:hover, .shareOptions button:hover { background: #edf3ed; }
 .shareOptions small { display: block; font-size: 11px; color: #52616a; margin-top: 4px; }
 .shareOptions span { float: right; }
-.shareOptions .whatsappOption { display: block; grid-column: 1 / -1; background: #147d43; color: #fff; border-color: #147d43; font-weight: 600; padding: 16px; }
-.shareOptions .whatsappOption:hover { background: #106536; }
+.shareOptions .primaryShareOption { display: block; grid-column: 1 / -1; background: #147d43; color: #fff; border-color: #147d43; font-weight: 600; padding: 16px; }
+.shareOptions .primaryShareOption:hover { background: #106536; }
 .emailSection { margin-bottom: 22px; }
 .emailSection > table { margin-top: 14px; }
 .emailSection table a:hover { text-decoration: none; }
