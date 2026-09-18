@@ -1,5 +1,7 @@
 "use client";
 
+import { isCurvedLineFeature, getCurvedLegendPath } from "@/lib/dromap/curved-line";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -204,7 +206,7 @@ function getFeatureTypeLabel(feature: LegendFeature) {
   if (type === "text") return "Texte";
   if (type === "marker" || geometryType === "Point") return "Marqueur";
   if (type === "line" || geometryType === "LineString") {
-    return isTracedLineFeature(feature) ? "Trait suivi" : "Ligne";
+    return isCurvedLineFeature(feature) ? "Trait courbe" : isTracedLineFeature(feature) ? "Trait suivi" : "Ligne";
   }
   if (type === "zone" || geometryType === "Polygon") {
     if (isQuickShapeZoneFeature(feature)) return "Forme rapide";
@@ -440,9 +442,9 @@ function LegendSymbol({ feature }: { feature: LegendFeature }) {
           opacity: getFeatureOpacity(feature),
         }}
       >
-        {isFreehandLineFeature(feature) ? (
+        {isCurvedLineFeature(feature) || isFreehandLineFeature(feature) ? (
           <path
-            d={freehandPath}
+            d={isCurvedLineFeature(feature) ? getCurvedLegendPath(lineStartX, lineEndX, centerY) : freehandPath}
             fill="none"
             stroke={color}
             strokeWidth={symbolWeight}
@@ -2140,7 +2142,7 @@ export function LegendPanel({
                         <span className="mt-0.5 block text-[10px] leading-snug text-teal-700">
                           {getScopedFeatureIds(feature).length} objet(s) modifiable(s) concerné(s).
                           {isLine(feature)
-                            ? " Le type distingue trait classique, dessin libre et suivi de trait."
+                            ? " Le type distingue trait classique, trait courbe, dessin libre et suivi de trait."
                             : isZone(feature)
                               ? " Le type distingue zone classique, zone libre, remplissage et chaque forme rapide."
                               : isText(feature)

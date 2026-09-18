@@ -15,7 +15,7 @@ const homeFont = IBM_Plex_Sans({
   subsets: ["latin"], weight: ["400", "500", "600"],
   variable: "--font-home", display: "swap",
 });
-const FEATURED_PUBLICATION_TITLES = ["Candice", "Coetquiflan"] as const;
+const HIDDEN_DEMO_TITLES = ["Candice", "Coetquiflan"] as const;
 
 async function readFeaturedPublications() {
   if (!dromapPublicationsConfigured()) {
@@ -39,10 +39,9 @@ async function readFeaturedPublications() {
           .filter((row): row is DromapPublicPublication => row !== null)
       : [];
 
-    const featured = publications.filter((item) =>
-      FEATURED_PUBLICATION_TITLES.some((title) => item.title.localeCompare(title, "fr", { sensitivity: "base" }) === 0),
-    );
-    return [...featured, ...publications.filter((item) => !featured.includes(item))].slice(0, 3);
+    return publications.filter((item) =>
+      !HIDDEN_DEMO_TITLES.some((title) => item.title.trim().localeCompare(title, "fr", { sensitivity: "base" }) === 0),
+    ).slice(0, 3);
   } catch {
     return [];
   }

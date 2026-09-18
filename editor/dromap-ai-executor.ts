@@ -1,5 +1,7 @@
 "use client";
 
+import { createCurvedLineCoordinates } from "@/lib/dromap/curved-line";
+
 import type {
   DroMapFeature,
   DroMapFeatureStyle,
@@ -650,12 +652,18 @@ function createLineFeature(
   if (coordinates.length < 2)
     throw new Error("Une ligne exige au moins deux points.");
   const base = makeFeatureBase(command, "line", layerId);
+  if (command.lineVariant === "curved" && coordinates.length > 3) {
+    throw new Error("Un trait courbe attend deux extrémités et, éventuellement, un point de courbure entre les deux.");
+  }
+  const points: [number, number][] = coordinates.map(({ lng, lat }) => [lng, lat]);
   return {
     type: "Feature",
     id: base.id,
     geometry: {
       type: "LineString",
-      coordinates: coordinates.map(({ lng, lat }) => [lng, lat]),
+      coordinates: command.lineVariant === "curved"
+        ? createCurvedLineCoordinates(points[0], points[points.length - 1], points.length === 3 ? points[1] : undefined)
+        : points,
     },
     properties: {
       type: "line",

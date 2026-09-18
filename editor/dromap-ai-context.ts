@@ -1,5 +1,7 @@
 "use client";
 
+import { getCurvedLineHandles, isCurvedLineFeature } from "@/lib/dromap/curved-line";
+
 import type { DroMapAiProjectContext } from "./dromap-ai-types";
 import { DROMAP_GEOJSON_CATALOG } from "./geojson-data-catalog";
 import { getCurrentEditorMapZoom } from "@/lib/dromap/feature-visual-scale";
@@ -96,7 +98,10 @@ export function buildDroMapAiProjectContext(): DroMapAiProjectContext {
       legendLabel: feature.properties.legendLabel ?? null,
       layerId: feature.properties.layerId ?? null,
       geometryType: feature.geometry.type,
-      coordinates: compactCoordinates(feature.geometry.coordinates),
+      lineVariant: feature.properties.lineVariant ?? null,
+      coordinates: isCurvedLineFeature(feature) && feature.geometry.type === "LineString"
+        ? getCurvedLineHandles(feature.geometry.coordinates)
+        : compactCoordinates(feature.geometry.coordinates),
       style: feature.properties.style,
       symbol: feature.properties.symbol ?? null,
       mapLabelVisibility: feature.properties.mapLabelVisibility ?? null,

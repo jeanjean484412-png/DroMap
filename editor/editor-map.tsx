@@ -31,6 +31,7 @@ import { FeatureLayerDeleteCommand } from "./feature-layer-delete-command";
 import { FeaturesStoreRenderer } from "./features-store-renderer";
 import { TextToolLayer } from "./text-tool-layer";
 import { FreehandLineToolLayer } from "./freehand-line-tool-layer";
+import { CurvedLineToolLayer, SelectedCurvedLineHandles } from "./curved-line-tool-layer";
 import { TraceLineToolLayer } from "./trace-line-tool-layer";
 import { FreehandZoneToolLayer } from "./freehand-zone-tool-layer";
 import { ZoneFillToolLayer } from "./zone-fill-tool-layer";
@@ -73,6 +74,7 @@ function SelectedFeatureEditHandles() {
           <SelectedMarkerRotationHandle featureId={featureId} />
           <SelectedTextRotationHandle featureId={featureId} />
           <SelectedZoneShapeRotationHandle featureId={featureId} />
+          <SelectedCurvedLineHandles featureId={featureId} />
         </Fragment>
       ))}
       <SelectedTextResizeHandle />
@@ -562,6 +564,7 @@ export default function EditorMap({ onPresentationReady }: EditorMapProps = {}) 
         <SelectedFeatureMapInteractions />
         <FreehandLineToolLayer />
         <TraceLineToolLayer />
+        <CurvedLineToolLayer />
         <FreehandZoneToolLayer />
         <ZoneFillToolLayer />
         <TextToolLayer />

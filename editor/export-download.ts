@@ -1,5 +1,6 @@
 "use client";
 
+import { isCurvedLineFeature, getCurvedLegendPoints } from "@/lib/dromap/curved-line";
 import {
   isFreehandLineFeature,
   type DroMapFeature,
@@ -1396,6 +1397,21 @@ function drawCleanLegendLineStrokeOnCanvas(
   symbolStyle?: ExportLegendSymbolStyle,
 ) {
   const dashStyle = symbolStyle?.dashStyle ?? getFeatureDashStyle(feature);
+
+  if (isCurvedLineFeature(feature)) {
+    ctx.save();
+    ctx.setLineDash(dashStyle === "solid" ? [] : dashStyle === "dotted"
+      ? [0.001, symbolStyle?.dotSpacing ?? 10]
+      : [symbolStyle?.dashLength ?? 14, symbolStyle?.dashGap ?? Math.max(6, lineWidth * 1.15)]);
+    ctx.beginPath();
+    getCurvedLegendPoints(startX, endX, centerY).forEach(([x, y], index) => {
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
 
   if (dashStyle === "solid") {
     ctx.beginPath();
@@ -5272,6 +5288,7 @@ function getImportedLineVariant(
   if (
     rawVariant === "freehand" ||
     rawVariant === "traced" ||
+    rawVariant === "curved" ||
     rawVariant === "straight"
   ) {
     return rawVariant;

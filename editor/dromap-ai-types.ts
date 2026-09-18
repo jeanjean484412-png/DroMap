@@ -378,6 +378,7 @@ export type DroMapAiProjectContext = {
     legendLabel: string | null;
     layerId: string | null;
     geometryType: "Point" | "LineString" | "Polygon";
+    lineVariant?: DroMapLineVariant | null;
     coordinates: unknown;
     style: Record<string, unknown>;
     symbol: Record<string, unknown> | null;

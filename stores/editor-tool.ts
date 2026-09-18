@@ -5,6 +5,7 @@ export type EditorActiveTool =
   | "edit"
   | "marker"
   | "line"
+  | "curved-line"
   | "freehand"
   | "trace-line"
   | "zone"

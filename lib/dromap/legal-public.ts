@@ -1,7 +1,7 @@
 export const DROMAP_LEGAL_LAST_UPDATED = "1er septembre 2026";
 export const DROMAP_TERMS_VERSION = "2026-09-01";
-export const DROMAP_PRIVACY_VERSION = "2026-09-10";
-export const DROMAP_PRIVACY_LAST_UPDATED = "10 septembre 2026";
+export const DROMAP_PRIVACY_VERSION = "2026-09-17";
+export const DROMAP_PRIVACY_LAST_UPDATED = "17 septembre 2026";
 
 export const DROMAP_LEGAL_LINKS = {
   privacy: "/confidentialite",

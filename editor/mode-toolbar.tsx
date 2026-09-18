@@ -163,7 +163,7 @@ const DEFAULT_TEXT_STYLE = {
 
 type LineToolChoice = Extract<
   EditorActiveTool,
-  "line" | "freehand" | "trace-line"
+  "line" | "curved-line" | "freehand" | "trace-line"
 >;
 type ZoneToolChoice = Extract<
   EditorActiveTool,
@@ -471,6 +471,12 @@ const LINE_TOOL_CHOICES: {
     label: "Trait classique",
     description: "Ligne droite ou brisée par clics.",
     icon: <ClassicLineGlyph />,
+  },
+  {
+    value: "curved-line",
+    label: "Trait courbe",
+    description: "Deux clics pour les extrémités, puis tirez la poignée centrale.",
+    icon: <svg width="28" height="20" viewBox="0 0 28 20" fill="none"><path d="M2 17 Q14 -10 26 17" stroke="currentColor" strokeWidth="2" /><circle cx="14" cy="3.5" r="3" fill="currentColor" /></svg>,
   },
   {
     value: "freehand",
@@ -1143,6 +1149,7 @@ function getSettingsTitle(openSettingsTool: EditorActiveTool) {
   if (openSettingsTool === "marker") return "Marqueur";
   if (
     openSettingsTool === "line" ||
+    openSettingsTool === "curved-line" ||
     openSettingsTool === "freehand" ||
     openSettingsTool === "trace-line"
   ) {
@@ -1168,6 +1175,7 @@ function getSettingsSubtitle(openSettingsTool: EditorActiveTool) {
 
   if (
     openSettingsTool === "line" ||
+    openSettingsTool === "curved-line" ||
     openSettingsTool === "freehand" ||
     openSettingsTool === "trace-line"
   ) {
@@ -1191,6 +1199,7 @@ function getSettingsSubtitle(openSettingsTool: EditorActiveTool) {
 }
 
 function getLineToolIcon(tool: LineToolChoice) {
+  if (tool === "curved-line") return LINE_TOOL_CHOICES.find((choice) => choice.value === tool)!.icon;
   if (tool === "freehand") {
     return <FreehandLineGlyph />;
   }
@@ -1203,6 +1212,7 @@ function getLineToolIcon(tool: LineToolChoice) {
 }
 
 function getActiveLineToolLabel(tool: LineToolChoice) {
+  if (tool === "curved-line") return "Trait courbe";
   if (tool === "freehand") {
     return "Dessin libre";
   }
@@ -1565,6 +1575,7 @@ export default function ModeToolbar({
 
   const lineSettingsOpen =
     openSettingsTool === "line" ||
+    openSettingsTool === "curved-line" ||
     openSettingsTool === "freehand" ||
     openSettingsTool === "trace-line";
   const zoneSettingsOpen =
@@ -1594,7 +1605,8 @@ export default function ModeToolbar({
   useEffect(() => {
     if (
       activeTool === "line" ||
-      activeTool === "freehand" ||
+      activeTool === "curved-line" ||
+    activeTool === "freehand" ||
       activeTool === "trace-line"
     ) {
       setLineToolChoice(activeTool);
@@ -1783,7 +1795,8 @@ export default function ModeToolbar({
     bringSettingsPanelToFront();
     setOpenSettingsTool((current) =>
       current === "line" ||
-      current === "freehand" ||
+      current === "curved-line" ||
+    current === "freehand" ||
       current === "trace-line"
         ? null
         : nextLineTool,
@@ -1886,6 +1899,7 @@ export default function ModeToolbar({
 
     if (
     openSettingsTool === "line" ||
+    openSettingsTool === "curved-line" ||
     openSettingsTool === "freehand" ||
     openSettingsTool === "trace-line"
   ) {
@@ -1994,7 +2008,8 @@ export default function ModeToolbar({
               displayLabel="Traits"
               active={
                 activeTool === "line" ||
-                activeTool === "freehand" ||
+                activeTool === "curved-line" ||
+    activeTool === "freehand" ||
                 activeTool === "trace-line"
               }
               settingsOpen={lineSettingsOpen}

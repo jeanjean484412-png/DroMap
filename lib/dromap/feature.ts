@@ -15,7 +15,7 @@ export type DroMapZoneVariant = "polygon" | "freehand" | "shape" | "boundary-fil
 
 export type DroMapZoneShapeKind = "rectangle" | "circle" | "ellipse";
 
-export type DroMapLineVariant = "straight" | "freehand" | "traced";
+export type DroMapLineVariant = "straight" | "freehand" | "traced" | "curved";
 
 export type DroMapMarkerBuiltinSymbol = string;
 
@@ -289,6 +289,8 @@ export function isFreehandLineFeature(feature: DroMapFeature) {
   ) {
     return false;
   }
+
+  if (feature.properties.lineVariant === "curved") return false;
 
   if (feature.properties.lineVariant === "freehand") {
     return true;

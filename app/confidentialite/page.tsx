@@ -48,7 +48,7 @@ export default function PrivacyPage() {
       lastUpdated={DROMAP_PRIVACY_LAST_UPDATED}
     >
       <LegalCallout>
-        <strong>Principe DroMap :</strong> les données de carte restent privées tant que l’utilisateur ne choisit pas explicitement de publier une carte. DroMap n’installe aucun outil publicitaire. La mesure d’audience des pages publiques repose sur Vercel Web Analytics, configuré sans cookie de mesure d’audience et avec exclusion des pages privées ou sensibles de DroMap.
+        <strong>Principe DroMap :</strong> les données de carte restent privées tant que l’utilisateur ne choisit pas explicitement de publier une carte. DroMap n’installe aucun outil publicitaire. La mesure d’audience des pages publiques par Vercel Web Analytics est facultative et activée uniquement après votre acceptation.
       </LegalCallout>
 
       <LegalSection id="responsable" title="1. Responsable du traitement">
@@ -70,7 +70,7 @@ export default function PrivacyPage() {
               <tr><td className="px-4 py-4 font-bold text-slate-900">Facturation</td><td className="px-4 py-4">Formule, identifiants Stripe, statut d’abonnement, droits d’achat à l’unité, dates de paiement et données nécessaires à la facturation. Les numéros complets de carte bancaire ne sont pas stockés par DroMap.</td><td className="px-4 py-4">Gérer les abonnements, achats, accès premium, factures et obligations comptables.</td><td className="px-4 py-4">Exécution du contrat et obligations légales.</td></tr>
               <tr><td className="px-4 py-4 font-bold text-slate-900">Contact et support</td><td className="px-4 py-4">Nom, e-mail, catégorie, sujet, message, pièces jointes facultatives et, si l’utilisateur les choisit, informations techniques ou métadonnées d’un projet.</td><td className="px-4 py-4">Répondre à la demande, diagnostiquer un problème et assurer le suivi du support.</td><td className="px-4 py-4">Intérêt légitime à assurer le support et, selon la demande, exécution du contrat.</td></tr>
               <tr><td className="px-4 py-4 font-bold text-slate-900">Publication publique</td><td className="px-4 py-4">Titre, description, aperçu de carte, nom du créateur affiché selon les réglages, droits de consultation/export/copie et source figée nécessaire aux fonctions autorisées.</td><td className="px-4 py-4">Publier la carte dans la bibliothèque et appliquer les permissions choisies par son auteur.</td><td className="px-4 py-4">Exécution de l’action de publication demandée par l’utilisateur.</td></tr>
-              <tr><td className="px-4 py-4 font-bold text-slate-900">Mesure d’audience publique</td><td className="px-4 py-4">Pages publiques consultées, route, provenance éventuelle, pays, type d’appareil, navigateur et système d’exploitation, sous forme de données agrégées ou anonymisées dans Vercel Web Analytics. DroMap exclut de l’envoi les espaces privés, les projets, les pages de compte et les parcours d’authentification ou de confirmation.</td><td className="px-4 py-4">Connaître la fréquentation des pages publiques, identifier les contenus utiles et améliorer le service.</td><td className="px-4 py-4">Intérêt légitime à mesurer et améliorer l’audience du service, dans le respect des règles applicables à la mesure d’audience.</td></tr>
+              <tr><td className="px-4 py-4 font-bold text-slate-900">Mesure d’audience publique</td><td className="px-4 py-4">Pages publiques consultées, provenance éventuelle, pays, type d’appareil, navigateur et système d’exploitation. DroMap exclut les espaces privés et retire les paramètres de l’URL envoyée. Les statistiques sont agrégées par Vercel Web Analytics.</td><td className="px-4 py-4">Connaître la fréquentation des pages publiques et améliorer le service.</td><td className="px-4 py-4">Consentement facultatif, retirable avec le bouton Confidentialité.</td></tr>
             </tbody>
           </table>
         </div>
@@ -79,11 +79,13 @@ export default function PrivacyPage() {
       <LegalSection id="conservation" title="3. Durées de conservation">
         <ul className="list-disc space-y-2 pl-5">
           <li><strong>Compte :</strong> pendant la durée d’utilisation du compte, puis suppression lorsque l’utilisateur supprime son compte, sous réserve des données qui doivent être conservées pour respecter une obligation légale ou défendre un droit.</li>
+          <li><strong>Compte inactif :</strong> la politique de DroMap prévoit une revue après 3 ans sans activité, puis une information préalable laissant 30 jours pour réactiver le compte ou récupérer ses données avant suppression. Les droits d’accès à des contenus achetés et les abonnements font l’objet d’un examen spécifique. Le délai de 3 ans est un choix de conservation de DroMap, pas une durée légale applicable à toutes les données.</li>
           <li><strong>Projets :</strong> tant qu’ils sont conservés par l’utilisateur. Un projet placé dans la corbeille est prévu pour rester restaurable pendant 10 jours avant suppression définitive.</li>
           <li><strong>Projet invité et caches locaux :</strong> les données peuvent rester sur l’appareil de l’utilisateur dans le stockage local du navigateur jusqu’à suppression du projet, effacement des données du site ou transfert vers un compte.</li>
-          <li><strong>Facturation et pièces comptables :</strong> pendant la durée nécessaire au contrat puis pendant les durées imposées par les obligations comptables, fiscales et de preuve applicables.</li>
+          <li><strong>Facturation et pièces comptables :</strong> les pièces comptables et justificatifs nécessaires sont conservés 10 ans à compter de la clôture de l’exercice concerné, avec accès restreint. Cela ne justifie pas de conserver l’intégralité des projets supprimés.</li>
           <li><strong>Demandes de support :</strong> jusqu’à 24 mois après le dernier échange, sauf nécessité de conservation plus longue liée à un litige, une obligation légale ou une demande de l’utilisateur.</li>
-          <li><strong>Adresse IP utilisée pour l’anti-abus du formulaire Contact :</strong> lorsqu’elle est disponible, elle est utilisée en mémoire pour limiter les envois répétés sur une fenêtre de 10 minutes ; le code de DroMap ne l’inscrit pas dans une base de support.</li>
+          <li><strong>Anti-abus :</strong> les identifiants techniques dérivés d’une adresse IP ou d’une adresse e-mail servent uniquement à limiter les requêtes. Les fenêtres expirées sont destinées à être purgées quotidiennement ; les compteurs techniques IA/GeoJSON après 24 heures. Les journaux d’hébergement ont leurs propres durées, gérées auprès des prestataires.</li>
+          <li><strong>Choix de confidentialité :</strong> acceptation et refus de la mesure d’audience sont mémorisés pendant 180 jours sur cet appareil, puis demandés à nouveau.</li>
           <li><strong>Publication publique :</strong> jusqu’au retrait de la publication, à la mise en corbeille du projet source ou à une suppression imposée pour des raisons juridiques ou de sécurité.</li>
         </ul>
       </LegalSection>
@@ -109,8 +111,8 @@ export default function PrivacyPage() {
       <LegalSection id="cookies" title="6. Cookies et stockage local">
         <p>DroMap utilise des cookies techniques nécessaires à l’authentification et à la récupération de session. Ils sont configurés pour le fonctionnement du compte et ne servent pas à la publicité.</p>
         <p>DroMap utilise également le stockage local du navigateur (notamment IndexedDB ou localStorage selon la fonction) pour conserver un projet invité, sécuriser la reprise locale d’un projet, certaines préférences d’interface et des données nécessaires à l’expérience de l’éditeur.</p>
-        <p><strong>DroMap utilise Vercel Web Analytics pour mesurer l’audience des pages publiques.</strong> Selon la documentation de Vercel, ce service ne dépose pas de cookie de mesure d’audience et stocke des données anonymisées. DroMap exclut de cette mesure les routes privées ou sensibles, notamment les projets, le tableau de bord, le compte, les paramètres, l’authentification et les pages de confirmation de paiement.</p>
-        <p>Aucun cookie publicitaire ni outil de suivi inter-sites n’est installé par DroMap. Si un futur outil introduit un traceur nécessitant un consentement, il ne sera activé qu’après mise à jour de cette politique et du mécanisme de consentement approprié.</p>
+        <p><strong>Vercel Web Analytics est désactivé tant que vous ne l’avez pas accepté.</strong> Bien que Vercel indique fonctionner sans cookie de mesure d’audience, DroMap recueille votre choix pour cette mesure facultative. Refuser ne limite aucune fonction du site. Les pages privées ou sensibles sont exclues de la mesure.</p>
+        <p>Vous pouvez accepter, refuser ou retirer votre consentement avec le bouton <strong>Confidentialité</strong> présent sur le site. Le retrait arrête les prochains envois. Les cookies strictement nécessaires à la connexion et le stockage nécessaire aux fonctions demandées ne nécessitent pas d’acceptation facultative. Aucun cookie publicitaire n’est installé par DroMap.</p>
       </LegalSection>
 
       <LegalSection id="publication" title="7. Cartes publiques et visibilité">
@@ -119,6 +121,7 @@ export default function PrivacyPage() {
       </LegalSection>
 
       <LegalSection id="droits" title="8. Vos droits">
+        <p>Vous pouvez supprimer votre compte depuis <a href="/account" className="underline">Mon compte</a>, et supprimer vos projets depuis le tableau de bord puis la corbeille. La suppression du compte concerne aussi ses projets en ligne et sa bibliothèque personnelle. Les messages de support et les pièces comptables suivent leurs règles de conservation distinctes.</p>
         <p>Selon la situation et la base légale du traitement, une personne peut demander l’accès à ses données, leur rectification, leur effacement, la limitation du traitement, la portabilité des données concernées ou s’opposer à certains traitements fondés sur l’intérêt légitime.</p>
         <p>Les demandes peuvent être envoyées à <DromapLegalContactLink className="font-bold text-teal-700 hover:underline">contact@dromap.fr</DromapLegalContactLink>. Si la réponse apportée n’est pas satisfaisante, la personne conserve le droit de saisir l’autorité de contrôle compétente, notamment la CNIL en France.</p>
       </LegalSection>

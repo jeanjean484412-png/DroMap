@@ -1,5 +1,7 @@
 "use client";
 
+import { isCurvedLineFeature, getCurvedLegendPath } from "@/lib/dromap/curved-line";
+
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -491,6 +493,13 @@ function renderLegendPreviewLineStroke({
   symbolStyle?: ExportLegendSymbolStyle;
 }) {
   const dashStyle = symbolStyle?.dashStyle ?? getLegendDashStyle(feature);
+
+  if (isCurvedLineFeature(feature)) {
+    const dashArray = dashStyle === "solid" ? undefined : dashStyle === "dotted"
+      ? `0.001 ${symbolStyle?.dotSpacing ?? 10}`
+      : `${symbolStyle?.dashLength ?? 14} ${symbolStyle?.dashGap ?? Math.max(6, symbolWeight * 1.15)}`;
+    return <path d={getCurvedLegendPath(lineStartX, lineEndX, centerY)} fill="none" stroke={color} strokeWidth={symbolWeight} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={dashArray} />;
+  }
 
   if (dashStyle === "solid") {
     return isFreehandLineFeature(feature) ? (

@@ -289,6 +289,7 @@ function enableLayerEdit(layer: L.Layer) {
     layer instanceof L.Marker ||
     (feature && isFreehandLineFeature(feature)) ||
     (feature && isTracedLineFeature(feature)) ||
+    feature?.properties.lineVariant === "curved" ||
     (feature && isFreehandZoneFeature(feature)) ||
     (feature && isQuickShapeZoneFeature(feature)) ||
     (feature && isFeatureGeometryLocked(feature)) ||
@@ -974,6 +975,12 @@ export function DrawingToolController() {
 
         disableAllLayerEdit(map);
       };
+    }
+
+    if (activeTool === "curved-line") {
+      deactivateGeomanModes(map);
+      disableAllLayerEdit(map);
+      return;
     }
 
     if (activeTool === "shape") {

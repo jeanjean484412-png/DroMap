@@ -120,7 +120,7 @@ const MAP_ELEMENT_POSITIONS = [
   "bottom-right",
 ] as const;
 const NORTH_STYLES = ["classic", "simple", "compass", "needle"] as const;
-const LINE_VARIANTS = ["straight", "freehand", "traced"] as const;
+const LINE_VARIANTS = ["straight", "freehand", "traced", "curved"] as const;
 const ZONE_VARIANTS = [
   "polygon",
   "freehand",
@@ -186,6 +186,7 @@ Règles absolues :
 - Les opacités sont entre 0 et 1. Les couleurs sont hexadécimales.
 - Tu ne peux JAMAIS changer le fond de carte : ne génère jamais set_basemap. Si le fond courant paraît mal adapté, ajoute seulement un conseil clair dans warnings, par exemple « Conseil de fond : utilise un fond classique » ou « Conseil de fond : utilise un fond blanc territorial — pays/continent/région selon la carte ». Ne modifie pas le fond toi-même.
 - Une ligne utilise places ou coordinates dans l'ordre. Pour une flèche, style.arrowEnd=true.
+- Un trait courbe est create_line avec lineVariant="curved" et exactement 3 coordinates : départ, point de courbure SUR la courbe, arrivée (2 points donnent un trait initialement droit, courbable ensuite). La poignée centrale permet ensuite de modifier la courbure.
 - Un dessin libre est create_line avec lineVariant="freehand" et beaucoup de coordinates. Un suivi est lineVariant="traced" si la géométrie exacte est fournie.
 - Une zone libre est create_zone avec zoneVariant="freehand". Une forme est create_shape avec shapeKind et bounds/coordinate.
 - Pour utiliser le véritable outil Remplissage sur un fond blanc vectoriel ou un polygone GeoJSON visible, utilise fill_boundary avec place ou coordinate et un style de zone.
@@ -278,7 +279,7 @@ Marqueurs, textes, traits et zones
 - delete_custom_marker : customMarkerRef ou label
 - create_marker : place ou coordinate, label, legendLabel?, layerRef?, symbolId? ou customMarkerRef?, style?, mapLabelVisibility?
 - create_text : place ou coordinate, label=texte affiché, layerRef?, style?
-- create_line : coordinates ou places, label?, legendLabel?, layerRef?, lineVariant="straight"|"freehand"|"traced", style?
+- create_line : coordinates ou places, label?, legendLabel?, layerRef?, lineVariant="straight"|"freehand"|"traced"|"curved", style?
 - create_zone : rings ou coordinates/places, label?, legendLabel?, layerRef?, zoneVariant="polygon"|"freehand"|"shape"|"boundary-fill", style?
 - create_shape : place ou coordinate, shapeKind="rectangle"|"circle"|"ellipse", bounds? ou style.zoneShapeWidth/zoneShapeHeight, label?, layerRef?, style?
 - fill_boundary : place ou coordinate, label?, legendLabel?, layerRef?, style? ; utilise les polygones GeoJSON visibles ou les frontières vectorielles du fond
@@ -2797,11 +2798,13 @@ async function handlePOST(request: NextRequest) {
   if (accessError) return accessError;
   try {
     const apiKey = process.env.GEMINI_API_KEY?.trim();
-    if (!apiKey)
+    if (!apiKey) {
+      console.error("DroMap AI: missing server environment variable GEMINI_API_KEY");
       return NextResponse.json(
-        { error: "L’assistant IA est temporairement indisponible." },
-        { status: 500 },
+        { error: "L’assistant IA n’est pas encore configuré sur ce serveur. Contactez le support DroMap.", code: "AI_NOT_CONFIGURED" },
+        { status: 503 },
       );
+    }
     const body = (await request.json()) as DroMapAiApiRequest;
     const prompt = asString(body.prompt).slice(0, MAX_PROMPT_LENGTH);
     if (!prompt)
