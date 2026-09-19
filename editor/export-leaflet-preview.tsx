@@ -406,7 +406,7 @@ function createLeafletLayerFromFeature(
       return createLineArrowBodyLeafletLayer(feature, map, L, pathOptions);
     }
 
-    return L.polyline(latLngs, pathOptions);
+    return L.polyline(latLngs, { ...pathOptions, smoothFactor: feature.properties.lineVariant === "curved" ? 0 : 1 });
   }
 
   if (geometry.type === "Polygon") {

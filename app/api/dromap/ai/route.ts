@@ -186,7 +186,7 @@ Règles absolues :
 - Les opacités sont entre 0 et 1. Les couleurs sont hexadécimales.
 - Tu ne peux JAMAIS changer le fond de carte : ne génère jamais set_basemap. Si le fond courant paraît mal adapté, ajoute seulement un conseil clair dans warnings, par exemple « Conseil de fond : utilise un fond classique » ou « Conseil de fond : utilise un fond blanc territorial — pays/continent/région selon la carte ». Ne modifie pas le fond toi-même.
 - Une ligne utilise places ou coordinates dans l'ordre. Pour une flèche, style.arrowEnd=true.
-- Un trait courbe est create_line avec lineVariant="curved" et exactement 3 coordinates : départ, point de courbure SUR la courbe, arrivée (2 points donnent un trait initialement droit, courbable ensuite). La poignée centrale permet ensuite de modifier la courbure.
+- Un trait courbe est create_line avec lineVariant="curved" et 2 à 64 coordinates ordonnées : départ, points de courbure SUR la courbe, arrivée (2 points donnent un trait initialement droit). Chaque point intermédiaire crée une poignée ; plusieurs permettent une courbe en S ou plusieurs courbures. Le contexte des traits courbes contient ces poignées, pas tous les points du tracé.
 - Un dessin libre est create_line avec lineVariant="freehand" et beaucoup de coordinates. Un suivi est lineVariant="traced" si la géométrie exacte est fournie.
 - Une zone libre est create_zone avec zoneVariant="freehand". Une forme est create_shape avec shapeKind et bounds/coordinate.
 - Pour utiliser le véritable outil Remplissage sur un fond blanc vectoriel ou un polygone GeoJSON visible, utilise fill_boundary avec place ou coordinate et un style de zone.

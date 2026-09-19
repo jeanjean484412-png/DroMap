@@ -42,6 +42,9 @@
 .useList li:first-child { padding-top: 0; }
 .useList h3 { font-size: 21px; font-weight: 500; }
 .useList p { color: #52616a; line-height: 1.7; margin-top: 7px; font-size: 15px; }
+.exampleGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.examplePlaceholder { display: grid; place-items: center; aspect-ratio: 1.35; padding: 24px; border: 1px dashed #1c43554d; background: #e8ede080; color: #52616a; text-align: center; font-size: 16px; }
+@media (max-width: 700px) { .exampleGrid { grid-template-columns: 1fr; } }
 .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; margin-top: 36px; }
 .gallery img { width: 100%; aspect-ratio: 1.7; object-fit: contain; background: #fffefa; border: 1px solid #1c435526; }
 .gallery h3 { font-size: 18px; margin-top: 14px; font-weight: 500; }

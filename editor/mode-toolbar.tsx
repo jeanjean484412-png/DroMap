@@ -475,7 +475,7 @@ const LINE_TOOL_CHOICES: {
   {
     value: "curved-line",
     label: "Trait courbe",
-    description: "Deux clics pour les extrémités, puis tirez la poignée centrale.",
+    description: "Posez les extrémités, puis courbez. Double-cliquez sur le trait pour ajouter une poignée.",
     icon: <svg width="28" height="20" viewBox="0 0 28 20" fill="none"><path d="M2 17 Q14 -10 26 17" stroke="currentColor" strokeWidth="2" /><circle cx="14" cy="3.5" r="3" fill="currentColor" /></svg>,
   },
   {

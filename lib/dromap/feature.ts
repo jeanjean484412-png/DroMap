@@ -148,6 +148,8 @@ export type DroMapFeatureProperties = {
   mapLabelOffset?: DroMapFeatureMapLabelOffset;
   symbol?: DroMapMarkerSymbol;
   lineVariant?: DroMapLineVariant;
+  /** Indices of editable curve anchors in the sampled geometry (survive translations). */
+  curveHandleIndices?: number[];
   zoneVariant?: DroMapZoneVariant;
   zoneShapeKind?: DroMapZoneShapeKind;
   order?: number;
@@ -557,6 +559,7 @@ function getFeatureLineVariantProperties(
 
   return {
     lineVariant: existing.properties.lineVariant,
+    ...(existing.properties.curveHandleIndices ? { curveHandleIndices: [...existing.properties.curveHandleIndices] } : {}),
   };
 }
 

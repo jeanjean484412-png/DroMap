@@ -1,6 +1,6 @@
 "use client";
 
-import { isCurvedLineFeature, getCurvedLegendPoints } from "@/lib/dromap/curved-line";
+import { isCurvedLineFeature, getCurvedLegendPoints, readCurveHandleIndices } from "@/lib/dromap/curved-line";
 import {
   isFreehandLineFeature,
   type DroMapFeature,
@@ -4289,6 +4289,7 @@ function parseDromapFeature(value: unknown): DroMapFeature | null {
         : {}),
       ...(safeMapLabelOffset ? { mapLabelOffset: safeMapLabelOffset } : {}),
       ...(safeSymbol ? { symbol: safeSymbol } : {}),
+      curveHandleIndices: readCurveHandleIndices(getRecordValue(properties, "curveHandleIndices")),
       ...(typeof getRecordValue(properties, "lineVariant") === "string"
         ? {
             lineVariant: getRecordValue(
@@ -4731,6 +4732,7 @@ function createGeoJsonFeatureProperties(feature: DroMapFeature) {
         ? cloneJsonValue(feature.properties.mapLabelOffset)
         : null,
       lineVariant: feature.properties.lineVariant ?? null,
+      curveHandleIndices: feature.properties.curveHandleIndices ?? null,
       zoneVariant: feature.properties.zoneVariant ?? null,
       zoneShapeKind: feature.properties.zoneShapeKind ?? null,
       locked: feature.properties.locked ?? false,
@@ -5426,6 +5428,7 @@ function createImportedFeatureProperties(
       ...(mapLabelVisibility ? { mapLabelVisibility } : {}),
       ...(mapLabelOffset ? { mapLabelOffset } : {}),
       lineVariant: getImportedLineVariant(properties),
+      curveHandleIndices: readCurveHandleIndices(getDromapGeoJsonProperties(properties)?.curveHandleIndices),
       meta: { version: 1 },
     };
   }

@@ -694,6 +694,7 @@ export function createLineArrowBodyLeafletLayer(
 
   return leaflet.polyline(bodyLatLngs, {
     ...pathOptions,
+    smoothFactor: feature.properties.lineVariant === "curved" ? 0 : 1,
     opacity: getLineArrowStyle(feature).opacity,
     lineCap: getLineArrowBodyLineCap(feature),
     interactive: false,

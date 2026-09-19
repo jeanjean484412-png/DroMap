@@ -13,6 +13,7 @@ import {
   type DromapScaleUnitsPreference,
 } from "@/lib/dromap/preferences";
 import { useDromapProductStore } from "@/stores/dromap-product";
+import { OPEN_PRIVACY_SETTINGS_EVENT } from "@/lib/dromap/privacy-settings";
 
 const TOUR_STORAGE_KEY = "dromap-p1-editor-tour-completed-v1";
 const TOUR_AUTO_PRESENTED_KEY = "dromap-p1-editor-tour-auto-presented-v1";
@@ -382,6 +383,18 @@ function SettingsContent() {
                 </p>
               </div>
               <DromapButton onClick={resetEditorTutorial}>Réinitialiser le tutoriel</DromapButton>
+            </div>
+          </section>
+
+          <section id="confidentialite" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+            <SectionHeader
+              title="Confidentialité et cookies"
+              description="Modifie ton choix pour la mesure d’audience sur cet appareil. Tu peux accepter ou refuser à tout moment, sans modifier le fonctionnement de tes cartes."
+            />
+            <div className="mt-4">
+              <DromapButton onClick={() => window.dispatchEvent(new Event(OPEN_PRIVACY_SETTINGS_EVENT))}>
+                Gérer mes cookies
+              </DromapButton>
             </div>
           </section>
 

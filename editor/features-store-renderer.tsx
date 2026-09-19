@@ -959,10 +959,10 @@ function createLayerFromFeature(
 
     return L.polyline(
       latLngs,
-      getPathOptions(feature, {
+      { ...getPathOptions(feature, {
         interactionOnly: featureHasLineArrow(feature),
         paneName,
-      }),
+      }), smoothFactor: feature.properties.lineVariant === "curved" ? 0 : 1 },
     );
   }
 

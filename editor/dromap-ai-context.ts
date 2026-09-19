@@ -100,7 +100,7 @@ export function buildDroMapAiProjectContext(): DroMapAiProjectContext {
       geometryType: feature.geometry.type,
       lineVariant: feature.properties.lineVariant ?? null,
       coordinates: isCurvedLineFeature(feature) && feature.geometry.type === "LineString"
-        ? getCurvedLineHandles(feature.geometry.coordinates)
+        ? getCurvedLineHandles(feature.geometry.coordinates, feature.properties.curveHandleIndices)
         : compactCoordinates(feature.geometry.coordinates),
       style: feature.properties.style,
       symbol: feature.properties.symbol ?? null,

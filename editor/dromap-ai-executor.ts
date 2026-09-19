@@ -1,6 +1,6 @@
 "use client";
 
-import { createCurvedLineCoordinates } from "@/lib/dromap/curved-line";
+import { createCurvedLineCoordinates, createMultiCurvedLine } from "@/lib/dromap/curved-line";
 
 import type {
   DroMapFeature,
@@ -652,18 +652,19 @@ function createLineFeature(
   if (coordinates.length < 2)
     throw new Error("Une ligne exige au moins deux points.");
   const base = makeFeatureBase(command, "line", layerId);
-  if (command.lineVariant === "curved" && coordinates.length > 3) {
-    throw new Error("Un trait courbe attend deux extrémités et, éventuellement, un point de courbure entre les deux.");
+  if (command.lineVariant === "curved" && coordinates.length > 64) {
+    throw new Error("Un trait courbe accepte jusqu’à 64 poignées.");
   }
   const points: [number, number][] = coordinates.map(({ lng, lat }) => [lng, lat]);
+  const curve = command.lineVariant === "curved"
+    ? points.length >= 3 ? createMultiCurvedLine(points) : { coordinates: createCurvedLineCoordinates(points[0], points[1]), indices: [0, 64, 128] }
+    : null;
   return {
     type: "Feature",
     id: base.id,
     geometry: {
       type: "LineString",
-      coordinates: command.lineVariant === "curved"
-        ? createCurvedLineCoordinates(points[0], points[points.length - 1], points.length === 3 ? points[1] : undefined)
-        : points,
+      coordinates: curve?.coordinates ?? points,
     },
     properties: {
       type: "line",
@@ -671,6 +672,7 @@ function createLineFeature(
       label: base.label,
       ...(base.legendLabel ? { legendLabel: base.legendLabel } : {}),
       lineVariant: command.lineVariant ?? "straight",
+      ...(curve ? { curveHandleIndices: curve.indices } : {}),
       layerId,
       locked: command.locked ?? false,
       geometryLocked: command.geometryLocked ?? false,

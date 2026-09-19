@@ -3,6 +3,7 @@
 import { Analytics, type BeforeSendEvent } from "@vercel/analytics/next";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { OPEN_PRIVACY_SETTINGS_EVENT } from "@/lib/dromap/privacy-settings";
 
 const CONSENT_KEY = "dromap-audience-consent-v1";
 const CONSENT_DURATION = 180 * 24 * 60 * 60 * 1000;
@@ -46,10 +47,13 @@ export function DromapWebAnalytics() {
     const initial = window.setTimeout(refresh, 0);
     const timer = window.setInterval(refresh, 60_000);
     window.addEventListener("storage", refresh);
+    const openSettings = () => setSettingsOpen(true);
+    window.addEventListener(OPEN_PRIVACY_SETTINGS_EVENT, openSettings);
     return () => {
       clearTimeout(initial);
       clearInterval(timer);
       window.removeEventListener("storage", refresh);
+      window.removeEventListener(OPEN_PRIVACY_SETTINGS_EVENT, openSettings);
     };
   }, []);
 
@@ -101,7 +105,7 @@ export function DromapWebAnalytics() {
           <button type="button" onClick={() => choose("accepted")} className="rounded-lg border border-slate-400 px-4 py-2 font-semibold">Accepter</button>
         </div>
       </section>
-    ) : ready ? <button type="button" onClick={() => setSettingsOpen(true)} className="fixed bottom-2 left-2 z-[10000] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm">Confidentialité</button> : null}
+    ) : null}
     </>
   );
 }
