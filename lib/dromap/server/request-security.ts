@@ -47,9 +47,6 @@ export function withRequestSecurity<Args extends unknown[]>(handler: (request: N
       return NextResponse.json({ error: "Origine de la requête refusée." }, { status: 403 });
     }
     if (mutation && request.body) {
-      const type = request.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
-      const expected = path === "/api/dromap/contact" ? "multipart/form-data" : "application/json";
-      if (type !== expected) return NextResponse.json({ error: "Format de requête invalide." }, { status: 415 });
       const max = bodyLimit(path);
       const declared = Number(request.headers.get("content-length"));
       if (Number.isFinite(declared) && declared > max) {
@@ -59,7 +56,19 @@ export function withRequestSecurity<Args extends unknown[]>(handler: (request: N
         const bytes = await readBoundedBytes(request.body, max, AbortSignal.timeout(30_000));
         const headers = new Headers(request.headers);
         headers.delete("content-length");
-        request = new Request(request.url, { method: request.method, headers, body: bytes, signal: request.signal });
+        if (bytes.byteLength > 0) {
+          const type = headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+          const expected = path === "/api/dromap/contact" ? "multipart/form-data" : "application/json";
+          if (type !== expected) {
+            return NextResponse.json({ error: "Format de requête invalide." }, { status: 415 });
+          }
+        }
+        request = new Request(request.url, {
+          method: request.method,
+          headers,
+          body: bytes.byteLength > 0 ? bytes : undefined,
+          signal: request.signal,
+        });
       } catch (error) {
         return NextResponse.json({ error: "Requête invalide ou trop volumineuse." }, {
           status: error instanceof Error && error.message === "BODY_TOO_LARGE" ? 413

@@ -265,7 +265,8 @@ type WorkspaceBoundsPoints = {
 
 const TILE_SIZE = 256;
 const STANDARD_EXPORT_PIXEL_RATIO = 0.65;
-const PREVIEW_EXPORT_PIXEL_RATIO = 0.45;
+export const LIGHT_PREVIEW_EXPORT_PIXEL_RATIO = 0.45;
+export const HIGH_QUALITY_PREVIEW_EXPORT_PIXEL_RATIO = 1;
 const HIGH_EXPORT_PIXEL_RATIO = 1.8;
 const MAX_EXPORT_PIXEL_RATIO = 4;
 const EXPORT_TILE_DETAIL_RATIO = 1;
@@ -6257,7 +6258,7 @@ async function renderCanvasExportToCanvas(
 
 export async function createCanvasExportPreviewDataUrl(
   input: DownloadCanvasExportInput,
-  pixelRatio = PREVIEW_EXPORT_PIXEL_RATIO,
+  pixelRatio = LIGHT_PREVIEW_EXPORT_PIXEL_RATIO,
   options: { showDromapGuestWatermark?: boolean } = {},
 ) {
   const canvas = await renderCanvasExportToCanvas(

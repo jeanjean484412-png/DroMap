@@ -12,9 +12,96 @@ import { useEditorSelectionStore } from "@/stores/editor-selection";
 import { useEditorExportStore } from "@/stores/editor-export";
 import { isFeatureEffectivelyLocked, isFeatureLayerVisible, useEditorLayersStore } from "@/stores/editor-layers";
 import { applyDrawingPresetToFeature } from "@/stores/editor-drawing-options";
+import {
+  DROMAP_FEATURE_BODY_DRAG_PREVIEW_EVENT,
+  type FeatureBodyDragPreviewDetail,
+} from "@/lib/dromap/drag-preview";
 
 const coordinate = (point: L.LatLng): [number, number] => [point.lng, point.lat];
 const latLng = ([lng, lat]: [number, number]) => L.latLng(lat, lng);
+const SNAP_PIXELS = 10;
+const ANGLE_SNAP_RADIANS = (8 * Math.PI) / 180;
+
+function visibleLineFeatures() {
+  const layers = useEditorLayersStore.getState().layers;
+  return useEditorFeaturesStore.getState().features.filter(
+    (feature) =>
+      feature.geometry.type === "LineString" &&
+      !feature.properties.geometryLocked &&
+      !isFeatureEffectivelyLocked(feature, layers) &&
+      isFeatureLayerVisible(feature, layers),
+  );
+}
+
+function snapMapPoint(map: L.Map, raw: L.LatLng, start?: L.LatLng) {
+  const pointer = map.latLngToContainerPoint(raw);
+  let bestAnchor: L.Point | null = null;
+  let bestDistance = SNAP_PIXELS + 1;
+  const features = visibleLineFeatures();
+  for (const feature of features) {
+    if (feature.geometry.type !== "LineString") continue;
+    const coordinates = isCurvedLineFeature(feature)
+      ? getCurvedLineHandles(
+          feature.geometry.coordinates,
+          feature.properties.curveHandleIndices,
+        ) ?? []
+      : feature.geometry.coordinates;
+    for (const value of coordinates) {
+      const target = map.latLngToContainerPoint(latLng(value));
+      const candidateDistance = pointer.distanceTo(target);
+      if (candidateDistance <= SNAP_PIXELS && candidateDistance < bestDistance) {
+        bestDistance = candidateDistance;
+        bestAnchor = target;
+      }
+    }
+  }
+  if (bestAnchor) return map.containerPointToLatLng(bestAnchor);
+  if (!start) return raw;
+
+  const origin = map.latLngToContainerPoint(start);
+  const vector = pointer.subtract(origin);
+  const length = Math.hypot(vector.x, vector.y);
+  if (length < 2) return raw;
+  const pointerAngle = Math.atan2(vector.y, vector.x);
+  const baseAngles = [0, Math.PI / 2];
+  for (const feature of features) {
+    if (
+      feature.geometry.type !== "LineString" ||
+      isCurvedLineFeature(feature) ||
+      feature.geometry.coordinates.length > 32
+    )
+      continue;
+    const points = feature.geometry.coordinates.map((value) =>
+      map.latLngToContainerPoint(latLng(value)),
+    );
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const delta = points[index + 1].subtract(points[index]);
+      if (Math.hypot(delta.x, delta.y) > 1)
+        baseAngles.push(Math.atan2(delta.y, delta.x));
+    }
+  }
+  let bestPoint = pointer;
+  let bestAngularDistance = ANGLE_SNAP_RADIANS;
+  for (const baseAngle of baseAngles) {
+    for (const offset of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      const candidateAngle = baseAngle + offset;
+      const angularDistance = Math.abs(
+        Math.atan2(
+          Math.sin(pointerAngle - candidateAngle),
+          Math.cos(pointerAngle - candidateAngle),
+        ),
+      );
+      if (angularDistance < bestAngularDistance) {
+        bestAngularDistance = angularDistance;
+        bestPoint = L.point(
+          origin.x + Math.cos(candidateAngle) * length,
+          origin.y + Math.sin(candidateAngle) * length,
+        );
+      }
+    }
+  }
+  return map.containerPointToLatLng(bestPoint);
+}
 
 export function CurvedLineToolLayer() {
   const map = useMap();
@@ -74,14 +161,15 @@ export function CurvedLineToolLayer() {
     const oldCursor = container.style.cursor;
     container.style.cursor = "crosshair";
     const move = (event: L.LeafletMouseEvent) => {
-      if (start) preview.setLatLngs([start, event.latlng]);
+      if (start) preview.setLatLngs([start, snapMapPoint(map, event.latlng, start)]);
     };
     const click = (event: L.LeafletMouseEvent) => {
-      if (!start) { start = event.latlng; return; }
-      if (map.latLngToContainerPoint(start).distanceTo(map.latLngToContainerPoint(event.latlng)) < 8) return;
+      if (!start) { start = snapMapPoint(map, event.latlng); return; }
+      const end = snapMapPoint(map, event.latlng, start);
+      if (map.latLngToContainerPoint(start).distanceTo(map.latLngToContainerPoint(end)) < 8) return;
       const feature: DroMapFeature = applyDrawingPresetToFeature({
         type: "Feature", id: crypto.randomUUID(),
-        geometry: { type: "LineString", coordinates: createCurvedLineCoordinates(coordinate(start), coordinate(event.latlng)) },
+        geometry: { type: "LineString", coordinates: createCurvedLineCoordinates(coordinate(start), coordinate(end)) },
         properties: { type: "line", lineVariant: "curved", label: "Trait courbe", legendLabel: "Trait courbe", style: { visualReferenceZoom: map.getZoom() }, meta: { version: 1 } },
       });
       useEditorFeaturesStore.getState().addFeatureWithHistory(feature);
@@ -125,6 +213,10 @@ export function SelectedCurvedLineHandles({ featureId }: { featureId: string }) 
 
   useEffect(() => {
     if (!visible) return;
+    const paneName = "dromap-curve-handles-pane";
+    const pane = map.getPane(paneName) ?? map.createPane(paneName);
+    pane.style.zIndex = "690";
+    pane.style.pointerEvents = "none";
     const current = useEditorFeaturesStore.getState().features.find((item) => item.id === featureId);
     if (current?.geometry.type !== "LineString") return;
     const handles = getCurvedLineHandles(current.geometry.coordinates, current.properties.curveHandleIndices);
@@ -136,9 +228,11 @@ export function SelectedCurvedLineHandles({ featureId }: { featureId: string }) 
       const marker = L.marker(latLng(point), {
         draggable: true, keyboard: false, title, zIndexOffset: 2000,
         bubblingMouseEvents: false, pmIgnore: true,
+        pane: paneName,
         icon: L.divIcon({ className: "dromap-curve-handle", iconSize: [20, 20], iconAnchor: [10, 10],
           html: `<span style="display:block;width:20px;height:20px;border:3px solid white;border-radius:50%;background:${internal ? "#0d9488" : "#2563eb"};box-shadow:0 1px 5px #334155;cursor:grab"></span>` }),
       } as L.MarkerOptions).addTo(map);
+      marker.getElement()?.style.setProperty("pointer-events", "auto");
       marker.on("dragstart", () => {
         original = useEditorFeaturesStore.getState().features.find((item) => item.id === featureId) ?? null;
         draggingRef.current = true;
@@ -167,9 +261,28 @@ export function SelectedCurvedLineHandles({ featureId }: { featureId: string }) 
       return marker;
     });
     markersRef.current = markers;
+    const onBodyDragPreview = (event: Event) => {
+      const detail = (event as CustomEvent<FeatureBodyDragPreviewDetail>).detail;
+      if (detail.featureId !== featureId || draggingRef.current) return;
+      markers.forEach((marker) => {
+        const currentPoint = marker.getLatLng();
+        marker.setLatLng([
+          currentPoint.lat + detail.latDelta,
+          currentPoint.lng + detail.lngDelta,
+        ]);
+      });
+    };
+    window.addEventListener(
+      DROMAP_FEATURE_BODY_DRAG_PREVIEW_EVENT,
+      onBodyDragPreview,
+    );
     return () => {
       if (draggingRef.current && original) useEditorFeaturesStore.getState().updateFeature(featureId, original);
       draggingRef.current = false;
+      window.removeEventListener(
+        DROMAP_FEATURE_BODY_DRAG_PREVIEW_EVENT,
+        onBodyDragPreview,
+      );
       markers.forEach((marker) => { marker.off(); marker.remove(); });
       markersRef.current = [];
     };

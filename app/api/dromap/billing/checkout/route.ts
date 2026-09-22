@@ -155,7 +155,6 @@ async function handlePOST(request: Request) {
         line_items: [{ price: priceId, quantity: 1 }],
         automatic_tax: { enabled: automaticTax },
         customer_update: automaticTax ? { address: "auto" } : undefined,
-        consent_collection: { terms_of_service: "required" },
         metadata: {
           dromap_user_id: auth.user.id,
           dromap_purchase_kind: "single-map",
@@ -220,7 +219,6 @@ async function handlePOST(request: Request) {
         line_items: [{ price: priceId, quantity: 1 }],
         automatic_tax: { enabled: automaticTax },
         customer_update: automaticTax ? { address: "auto" } : undefined,
-        consent_collection: { terms_of_service: "required" },
         metadata,
         payment_intent_data: { metadata },
         success_url: `${origin}/confirmation?session_id={CHECKOUT_SESSION_ID}`,
@@ -272,7 +270,6 @@ async function handlePOST(request: Request) {
         line_items: [{ price: priceId, quantity: 1 }],
         automatic_tax: { enabled: automaticTax },
         customer_update: automaticTax ? { address: "auto" } : undefined,
-        consent_collection: { terms_of_service: "required" },
         metadata,
         subscription_data: { metadata },
         success_url: `${origin}/confirmation?session_id={CHECKOUT_SESSION_ID}`,
@@ -286,8 +283,24 @@ async function handlePOST(request: Request) {
     return NextResponse.json({ error: "Type d’achat invalide." }, { status: 400 });
   } catch (error) {
     console.error("DroMap Stripe checkout:", error);
+    const errorRecord = error && typeof error === "object"
+      ? (error as { code?: unknown; type?: unknown; param?: unknown; message?: unknown })
+      : null;
+    const code = typeof errorRecord?.code === "string" ? errorRecord.code : "";
+    const type = typeof errorRecord?.type === "string" ? errorRecord.type : "";
+    const param = typeof errorRecord?.param === "string" ? errorRecord.param : "";
+    const message = typeof errorRecord?.message === "string" ? errorRecord.message : "";
+    const configurationError =
+      code === "resource_missing" ||
+      type === "StripeAuthenticationError" ||
+      param.includes("price") ||
+      message.includes("terms of service");
     return NextResponse.json(
-      { error: "Impossible d’ouvrir le paiement Stripe pour le moment." },
+      {
+        error: configurationError
+          ? "La configuration Stripe de DroMap est incomplète ou mélange les modes test et production. Vérifie la clé, les identifiants price_ et redéploie le site."
+          : "Impossible d’ouvrir le paiement Stripe pour le moment.",
+      },
       { status: 503 },
     );
   }

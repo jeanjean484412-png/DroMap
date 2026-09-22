@@ -42,6 +42,40 @@ test("requêtes : type JSON exigé, taille réelle contrôlée sans Content-Leng
   assert.match(response.headers.get("cache-control"), /no-store/);
 });
 
+test("requêtes : une mutation réellement vide reste valide sans Content-Type", async () => {
+  const handler = withRequestSecurity(async request => {
+    assert.equal(await request.text(), "");
+    return Response.json({ ok: true });
+  });
+  const emptyBody = new ReadableStream({ start(controller) { controller.close(); } });
+  const response = await handler(new Request("https://dromap.fr/api/dromap/auth/sign-out", {
+    method: "POST",
+    body: emptyBody,
+    duplex: "half",
+  }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+});
+
+test("appareil : un changement de compte ne devient jamais un faux conflit d’appareil", async () => {
+  let restCalls = 0;
+  const route = loadSource("app/api/dromap/account/device-session/route.ts", {
+    "@/lib/dromap/server/supabase-rest": {
+      getSupabaseConfig: () => ({}),
+      getAuthenticatedRequestUser: async () => ({ accessToken: "token-b", user: { id: "account-b" } }),
+      parseJsonResponse: async () => null,
+      supabaseRestFetch: async () => { restCalls++; throw new Error("Ne doit pas être appelé"); },
+    },
+  });
+  const response = await route.POST(jsonRequest("account/device-session", {
+    deviceId: "device:12345678",
+    accountUserId: "account-a",
+  }));
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, "ACCOUNT_SESSION_CHANGED");
+  assert.equal(restCalls, 0);
+});
+
 test("requêtes Next : une requête GET est transmise sans reconstruction incompatible", async () => {
   const request = new Request("http://localhost:3000/api/dromap/publications", {
     headers: { host: "localhost:3000", "sec-fetch-site": "same-origin" },

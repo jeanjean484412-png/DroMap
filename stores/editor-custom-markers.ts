@@ -15,9 +15,13 @@ export type DroMapDrawnMarkerShapeKind =
   "rectangle" | "ellipse" | "circle" | "triangle" | "diamond" | "star";
 
 export type DroMapDrawnMarkerShapeElement = {
+  strokeScales?: boolean;
   id: string;
   type: "shape";
   shape: DroMapDrawnMarkerShapeKind;
+  /** Optional composition metadata; old shapes retain their original appearance. */
+  symbolId?: string;
+  cornerRadius?: number;
   x: number;
   y: number;
   width: number;
@@ -42,6 +46,7 @@ export type DroMapDrawnMarkerShapeElement = {
 };
 
 export type DroMapDrawnMarkerLineElement = {
+  strokeScales?: boolean;
   id: string;
   type: "line" | "arrow";
   x1: number;
@@ -57,11 +62,14 @@ export type DroMapDrawnMarkerLineElement = {
 };
 
 export type DroMapDrawnMarkerPathElement = {
+  strokeScales?: boolean;
   id: string;
   type: "path";
   points: DroMapDrawnMarkerPoint[];
   rawPoints?: DroMapDrawnMarkerPoint[];
   smoothing?: number;
+  /** Curves are stored as editable handles in rawPoints and sampled in points. */
+  lineVariant?: "straight" | "curved" | "freehand";
   closed: boolean;
   fillEnabled: boolean;
   fillColor: string;
@@ -93,6 +101,8 @@ export type DroMapDrawnMarkerTextElement = {
   rotation: number;
   text: string;
   fontSize: number;
+  fontWeight?: number;
+  textAlign?: "left" | "center" | "right";
   color: string;
   opacity?: number;
   backgroundEnabled?: boolean;
@@ -103,11 +113,11 @@ export type DroMapDrawnMarkerTextElement = {
   borderWidth?: number;
 };
 
-export type DroMapDrawnMarkerElement =
+export type DroMapDrawnMarkerElement = (
   | DroMapDrawnMarkerShapeElement
   | DroMapDrawnMarkerLineElement
   | DroMapDrawnMarkerPathElement
-  | DroMapDrawnMarkerTextElement;
+  | DroMapDrawnMarkerTextElement) & { groupId?: string };
 
 export type DroMapCustomMarkerDefinition = {
   id: string;
@@ -183,8 +193,8 @@ function normalizeColor(value: unknown, fallback: string) {
 function normalizePoint(value: unknown): DroMapDrawnMarkerPoint | null {
   if (!isRecord(value)) return null;
   return {
-    x: clampNumber(value.x, 0, 0, CUSTOM_MARKER_CANVAS_SIZE),
-    y: clampNumber(value.y, 0, 0, CUSTOM_MARKER_CANVAS_SIZE),
+    x: clampNumber(value.x, 0, -3600, 3600),
+    y: clampNumber(value.y, 0, -3600, 3600),
   };
 }
 
@@ -203,10 +213,11 @@ function normalizeDrawnElement(
     return {
       id,
       type: value.type,
-      x1: clampNumber(value.x1, 80, 0, CUSTOM_MARKER_CANVAS_SIZE),
-      y1: clampNumber(value.y1, 180, 0, CUSTOM_MARKER_CANVAS_SIZE),
-      x2: clampNumber(value.x2, 280, 0, CUSTOM_MARKER_CANVAS_SIZE),
-      y2: clampNumber(value.y2, 180, 0, CUSTOM_MARKER_CANVAS_SIZE),
+      strokeScales: value.strokeScales === true,
+      x1: clampNumber(value.x1, 80, -3600, 3600),
+      y1: clampNumber(value.y1, 180, -3600, 3600),
+      x2: clampNumber(value.x2, 280, -3600, 3600),
+      y2: clampNumber(value.y2, 180, -3600, 3600),
       strokeColor: normalizeColor(value.strokeColor, "#111827"),
       strokeOpacity: clampNumber(value.strokeOpacity, 1, 0, 1),
       strokeWidth: clampNumber(value.strokeWidth, 2, 1, 40),
@@ -234,9 +245,14 @@ function normalizeDrawnElement(
     return {
       id,
       type: "path",
+      strokeScales: value.strokeScales === true,
       points,
       rawPoints: rawPoints.length >= 2 ? rawPoints : points,
       smoothing: clampNumber(value.smoothing, 45, 0, 100),
+      lineVariant:
+        value.lineVariant === "curved" || value.lineVariant === "freehand"
+          ? value.lineVariant
+          : "straight",
       closed: value.closed === true,
       fillEnabled: value.fillEnabled === true,
       fillColor: normalizeColor(value.fillColor, "#2563eb"),
@@ -272,16 +288,18 @@ function normalizeDrawnElement(
     return {
       id,
       type: "text",
-      x: clampNumber(value.x, 90, 0, CUSTOM_MARKER_CANVAS_SIZE),
-      y: clampNumber(value.y, 145, 0, CUSTOM_MARKER_CANVAS_SIZE),
-      width: clampNumber(value.width, 180, 28, CUSTOM_MARKER_CANVAS_SIZE),
-      height: clampNumber(value.height, 70, 24, CUSTOM_MARKER_CANVAS_SIZE),
+      x: clampNumber(value.x, 90, -3600, 3600),
+      y: clampNumber(value.y, 145, -3600, 3600),
+      width: clampNumber(value.width, 180, 1, 3600),
+      height: clampNumber(value.height, 70, 1, 3600),
       rotation: clampNumber(value.rotation, 0, -180, 180),
       text:
         typeof value.text === "string" && value.text.trim().length > 0
           ? value.text
           : "Texte",
-      fontSize: clampNumber(value.fontSize, 42, 10, 120),
+      fontSize: clampNumber(value.fontSize, 42, 10, 1200),
+      fontWeight: value.fontWeight === 400 ? 400 : 700,
+      textAlign: value.textAlign === "left" || value.textAlign === "right" ? value.textAlign : "center",
       color: normalizeColor(value.color, "#111827"),
       opacity: clampNumber(value.opacity, 1, 0, 1),
       backgroundEnabled: value.backgroundEnabled === true,
@@ -306,11 +324,14 @@ function normalizeDrawnElement(
     return {
       id,
       type: "shape",
+      strokeScales: value.strokeScales === true,
       shape,
-      x: clampNumber(value.x, 80, 0, CUSTOM_MARKER_CANVAS_SIZE),
-      y: clampNumber(value.y, 80, 0, CUSTOM_MARKER_CANVAS_SIZE),
-      width: clampNumber(value.width, 200, 8, CUSTOM_MARKER_CANVAS_SIZE),
-      height: clampNumber(value.height, 200, 8, CUSTOM_MARKER_CANVAS_SIZE),
+      symbolId: typeof value.symbolId === "string" && /^[a-z0-9_-]{1,100}$/.test(value.symbolId) ? value.symbolId : undefined,
+      cornerRadius: value.cornerRadius === undefined ? undefined : clampNumber(value.cornerRadius, 0, 0, 180),
+      x: clampNumber(value.x, 80, -3600, 3600),
+      y: clampNumber(value.y, 80, -3600, 3600),
+      width: clampNumber(value.width, 200, 8, 3600),
+      height: clampNumber(value.height, 200, 8, 3600),
       rotation: clampNumber(value.rotation, 0, -180, 180),
       fillEnabled: value.fillEnabled === true,
       fillColor: normalizeColor(value.fillColor, "#2563eb"),
@@ -359,7 +380,11 @@ export function normalizeCustomMarkerDefinitions(
     const elements = Array.isArray(item.elements)
       ? item.elements
           .map((element, elementIndex) =>
-            normalizeDrawnElement(element, elementIndex),
+            (() => {
+              const normalized = normalizeDrawnElement(element, elementIndex);
+              if (normalized && isRecord(element) && typeof element.groupId === "string") normalized.groupId = element.groupId.slice(0, 120);
+              return normalized;
+            })(),
           )
           .filter((element): element is DroMapDrawnMarkerElement =>
             Boolean(element),

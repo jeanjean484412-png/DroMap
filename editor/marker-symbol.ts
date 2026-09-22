@@ -38264,6 +38264,12 @@ function getBuiltinSvgShape(
   return `${filledShape}${outlineShape}`;
 }
 
+/** Same catalog geometry as the map, embedded as vector paths in compositions. */
+export function getBuiltinMarkerCompositionSvg(symbolId: string, color: string) {
+  const safeColor = /^#[0-9a-f]{6}$/i.test(color) ? color : "#194858";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="${safeColor}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${getBuiltinSvgShape(symbolId)}</svg>`;
+}
+
 function escapeHtmlAttribute(value: string) {
   return value
     .replace(/&/g, "&amp;")

@@ -29,6 +29,8 @@ import { useEditorMapLabelsStore } from "@/stores/editor-map-labels";
 import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
 import {
   createCanvasExportPreviewDataUrl,
+  HIGH_QUALITY_PREVIEW_EXPORT_PIXEL_RATIO,
+  LIGHT_PREVIEW_EXPORT_PIXEL_RATIO,
   type ExportVisualQuality,
   downloadCanvasExportAsJpeg,
   downloadCanvasExportAsPdf,
@@ -1502,7 +1504,9 @@ export function ExportSetupPanel() {
 
       const dataUrl = await createCanvasExportPreviewDataUrl(
         exportInput,
-        undefined,
+        capabilities.canExportHighQuality
+          ? HIGH_QUALITY_PREVIEW_EXPORT_PIXEL_RATIO
+          : LIGHT_PREVIEW_EXPORT_PIXEL_RATIO,
         { showDromapGuestWatermark },
       );
 
@@ -2503,8 +2507,9 @@ export function ExportSetupPanel() {
                     Aperçu du rendu PNG
                   </h3>
                   <p className="mt-1 text-sm text-slate-600">
-                    Aperçu généré en qualité légère pour vérifier l’agencement
-                    final avant téléchargement PNG ou PDF.
+                    {capabilities.canExportHighQuality
+                      ? "Aperçu généré en qualité nette, identique au niveau de détail attendu pour l’export."
+                      : "Aperçu généré en qualité légère pour vérifier l’agencement final avant téléchargement PNG ou PDF."}
                   </p>
                 </div>
 

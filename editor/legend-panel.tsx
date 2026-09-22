@@ -28,8 +28,9 @@ import {
   MIN_DASH_GAP,
   MIN_DASH_LENGTH,
   getFeatureMarkerSize,
-  MAX_MARKER_SIZE,
-  MIN_MARKER_SIZE,
+  getFeatureMarkerSizeLimits,
+  MAX_CUSTOM_MARKER_SIZE,
+  MIN_CUSTOM_MARKER_SIZE,
   type DroMapDashStyle,
 } from "./feature-style";
 import {
@@ -847,6 +848,16 @@ export function LegendPanel({
     (feature) => !isFeatureEffectivelyLocked(feature, layers),
   );
   const selectedMarkers = modifiableSelectedFeatures.filter(isMarker);
+  const selectedMarkerSizeLimits = selectedMarkers.reduce(
+    (limits, marker) => {
+      const markerLimits = getFeatureMarkerSizeLimits(marker);
+      return {
+        min: Math.max(limits.min, markerLimits.min),
+        max: Math.min(limits.max, markerLimits.max),
+      };
+    },
+    { min: MIN_CUSTOM_MARKER_SIZE, max: MAX_CUSTOM_MARKER_SIZE },
+  );
   const selectedLines = modifiableSelectedFeatures.filter(isLine);
   const selectedZones = modifiableSelectedFeatures.filter(isZone);
   const selectedTexts = modifiableSelectedFeatures.filter(isText);
@@ -1524,7 +1535,7 @@ export function LegendPanel({
                     Modification groupée · {selectedFeatures.length} objets
                   </div>
                   <p className="mt-1 text-[10px] leading-snug text-teal-700">
-                    Les réglages ci-dessous s'appliquent en une fois à tous les objets compatibles et non verrouillés de la sélection.
+                    Les réglages ci-dessous s’appliquent en une fois à tous les objets compatibles et non verrouillés de la sélection.
                   </p>
                 </div>
 
@@ -1660,31 +1671,65 @@ export function LegendPanel({
                           {getFeatureMarkerSize(selectedMarkers[0])} px
                         </span>
                       </div>
-                      <input
-                        type="range"
-                        min={MIN_MARKER_SIZE}
-                        max={MAX_MARKER_SIZE}
-                        step="0.5"
-                        value={getFeatureMarkerSize(selectedMarkers[0])}
-                        onPointerDown={() => commitFeaturesHistory()}
-                        onChange={(event) => {
-                          const markerSize = Number(event.target.value);
-                          updateSelectedFeaturesDuringDrag(
-                            selectedMarkers,
-                            (currentFeature) => ({
-                              ...currentFeature,
-                              properties: {
-                                ...currentFeature.properties,
-                                style: {
-                                  ...(currentFeature.properties.style ?? {}),
-                                  markerSize,
+                      <div className="grid grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-2">
+                        <input
+                          type="range"
+                          min={selectedMarkerSizeLimits.min}
+                          max={selectedMarkerSizeLimits.max}
+                          step="0.5"
+                          value={getFeatureMarkerSize(selectedMarkers[0])}
+                          onPointerDown={() => commitFeaturesHistory()}
+                          onChange={(event) => {
+                            const markerSize = Number(event.target.value);
+                            updateSelectedFeaturesDuringDrag(
+                              selectedMarkers,
+                              (currentFeature) => ({
+                                ...currentFeature,
+                                properties: {
+                                  ...currentFeature.properties,
+                                  style: {
+                                    ...(currentFeature.properties.style ?? {}),
+                                    markerSize,
+                                  },
                                 },
-                              },
-                            }),
-                          );
-                        }}
-                        className="w-full"
-                      />
+                              }),
+                            );
+                          }}
+                          className="w-full"
+                          aria-label="Taille des marqueurs sélectionnés"
+                        />
+                        <input
+                          type="number"
+                          min={selectedMarkerSizeLimits.min}
+                          max={selectedMarkerSizeLimits.max}
+                          step="0.5"
+                          value={getFeatureMarkerSize(selectedMarkers[0])}
+                          onChange={(event) => {
+                            const rawSize = Number(event.target.value);
+                            if (!Number.isFinite(rawSize)) return;
+                            const markerSize = clamp(
+                              rawSize,
+                              selectedMarkerSizeLimits.min,
+                              selectedMarkerSizeLimits.max,
+                            );
+                            updateSelectedFeaturesWithHistory(
+                              selectedMarkers,
+                              (currentFeature) => ({
+                                ...currentFeature,
+                                properties: {
+                                  ...currentFeature.properties,
+                                  style: {
+                                    ...(currentFeature.properties.style ?? {}),
+                                    markerSize,
+                                  },
+                                },
+                              }),
+                            );
+                          }}
+                          className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold tabular-nums text-slate-700 outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
+                          aria-label="Taille exacte des marqueurs sélectionnés"
+                        />
+                      </div>
                     </label>
                   ) : null}
 
@@ -2959,34 +3004,70 @@ export function LegendPanel({
                           {getFeatureMarkerSize(feature)} px
                         </span>
                       </div>
-                      <input
-                        type="range"
-                        min={MIN_MARKER_SIZE}
-                        max={MAX_MARKER_SIZE}
-                        step="0.5"
-                        value={getFeatureMarkerSize(feature)}
-                        onPointerDown={() => {
-                          commitFeaturesHistory();
-                        }}
-                        onChange={(event) => {
-                          const markerSize = Number(event.target.value);
+                      <div className="grid grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-2">
+                        <input
+                          type="range"
+                          min={getFeatureMarkerSizeLimits(feature).min}
+                          max={getFeatureMarkerSizeLimits(feature).max}
+                          step="0.5"
+                          value={getFeatureMarkerSize(feature)}
+                          onPointerDown={() => {
+                            commitFeaturesHistory();
+                          }}
+                          onChange={(event) => {
+                            const markerSize = Number(event.target.value);
 
-                          updateFeatureStyleDuringDrag(
-                            feature,
-                            (currentFeature) => ({
-                              ...currentFeature,
-                              properties: {
-                                ...currentFeature.properties,
-                                style: {
-                                  ...(currentFeature.properties?.style ?? {}),
-                                  markerSize,
+                            updateFeatureStyleDuringDrag(
+                              feature,
+                              (currentFeature) => ({
+                                ...currentFeature,
+                                properties: {
+                                  ...currentFeature.properties,
+                                  style: {
+                                    ...(currentFeature.properties?.style ?? {}),
+                                    markerSize,
+                                  },
                                 },
-                              },
-                            }),
-                          );
-                        }}
-                        className="w-full"
-                      />
+                              }),
+                            );
+                          }}
+                          className="w-full"
+                          aria-label="Taille du marqueur"
+                        />
+                        <input
+                          type="number"
+                          min={getFeatureMarkerSizeLimits(feature).min}
+                          max={getFeatureMarkerSizeLimits(feature).max}
+                          step="0.5"
+                          value={getFeatureMarkerSize(feature)}
+                          onChange={(event) => {
+                            const rawSize = Number(event.target.value);
+                            if (!Number.isFinite(rawSize)) return;
+                            const limits = getFeatureMarkerSizeLimits(feature);
+                            const markerSize = clamp(
+                              rawSize,
+                              limits.min,
+                              limits.max,
+                            );
+
+                            updateFeatureWithHistory(
+                              feature.id,
+                              (currentFeature) => ({
+                                ...currentFeature,
+                                properties: {
+                                  ...currentFeature.properties,
+                                  style: {
+                                    ...(currentFeature.properties?.style ?? {}),
+                                    markerSize,
+                                  },
+                                },
+                              }),
+                            );
+                          }}
+                          className="rounded-md border border-blue-200 bg-white px-2 py-1.5 text-xs font-semibold tabular-nums text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                          aria-label="Taille exacte du marqueur"
+                        />
+                      </div>
                     </label>
                   )}
 

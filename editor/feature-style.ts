@@ -2,6 +2,7 @@ export type DroMapDashStyle = "solid" | "dashed" | "dotted";
 
 type FeatureWithStyle = {
   properties?: {
+    symbol?: unknown;
     style?: {
       weight?: number;
       dashStyle?: string;
@@ -25,6 +26,46 @@ export const DROMAP_DASH_STYLES: {
 export const DEFAULT_MARKER_SIZE = 18;
 export const MIN_MARKER_SIZE = 8;
 export const MAX_MARKER_SIZE = 120;
+export const MIN_CUSTOM_MARKER_SIZE = 2;
+export const MAX_CUSTOM_MARKER_SIZE = 300;
+
+export type MarkerSizeLimits = {
+  min: number;
+  max: number;
+};
+
+export function getMarkerSizeLimitsForSymbol(
+  symbol: unknown,
+): MarkerSizeLimits {
+  const symbolType =
+    symbol && typeof symbol === "object" && "type" in symbol
+      ? (symbol as { type?: unknown }).type
+      : null;
+  const isCustomMarker =
+    symbolType === "custom-svg" ||
+    symbolType === "custom-image" ||
+    symbolType === "ai-generated" ||
+    symbolType === "drawn";
+
+  return isCustomMarker
+    ? { min: MIN_CUSTOM_MARKER_SIZE, max: MAX_CUSTOM_MARKER_SIZE }
+    : { min: MIN_MARKER_SIZE, max: MAX_MARKER_SIZE };
+}
+
+export function getFeatureMarkerSizeLimits(
+  feature: FeatureWithStyle,
+): MarkerSizeLimits {
+  return getMarkerSizeLimitsForSymbol(feature.properties?.symbol);
+}
+
+export function clampMarkerSizeForSymbol(
+  value: number,
+  symbol: unknown,
+): number {
+  const { min, max } = getMarkerSizeLimitsForSymbol(symbol);
+  const safeValue = Number.isFinite(value) ? value : DEFAULT_MARKER_SIZE;
+  return Math.min(max, Math.max(min, safeValue));
+}
 
 export function getFeatureDashStyle(feature: FeatureWithStyle): DroMapDashStyle {
   const rawValue = feature.properties?.style?.dashStyle;
@@ -108,5 +149,5 @@ export function getFeatureMarkerSize(feature: FeatureWithStyle): number {
     return Math.min(4096, Math.max(0.5, rawValue));
   }
 
-  return Math.min(MAX_MARKER_SIZE, Math.max(MIN_MARKER_SIZE, rawValue));
+  return clampMarkerSizeForSymbol(rawValue, feature.properties?.symbol);
 }

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { confirmDromapCheckout, type DromapCheckoutConfirmation } from "@/lib/dromap/billing";
+import { useDromapProductStore } from "@/stores/dromap-product";
 import { DromapLogoMark } from "./dromap-brand";
 
 type ConfirmationState =
@@ -13,7 +14,29 @@ type ConfirmationState =
   | { status: "auth"; sessionId: string }
   | { status: "pending"; sessionId: string }
   | { status: "error"; message: string }
-  | { status: "success"; data: DromapCheckoutConfirmation };
+  | {
+      status: "success";
+      data: DromapCheckoutConfirmation;
+      accountSessionRefreshed: boolean;
+    };
+
+async function refreshConfirmedCheckoutAccess() {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      if (await useDromapProductStore.getState().refreshAccountSession()) {
+        return true;
+      }
+    } catch (error) {
+      console.error("Impossible de recharger immédiatement les droits DroMap.", error);
+    }
+
+    if (attempt < 2) {
+      await new Promise((resolve) => window.setTimeout(resolve, 200 * (attempt + 1)));
+    }
+  }
+
+  return false;
+}
 
 function destinationFor(data: DromapCheckoutConfirmation) {
   if (data.kind === "single-map" && data.projectId) {
@@ -79,7 +102,8 @@ export function DromapCheckoutConfirmationClient() {
       return;
     }
 
-    setState({ status: "success", data });
+    const accountSessionRefreshed = await refreshConfirmedCheckoutAccess();
+    setState({ status: "success", data, accountSessionRefreshed });
   }, [sessionId]);
 
   useEffect(() => {
@@ -129,12 +153,22 @@ export function DromapCheckoutConfirmationClient() {
             <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
               <Link
                 href={destination.href}
+                onClick={(event) => {
+                  if (state.accountSessionRefreshed) return;
+                  event.preventDefault();
+                  window.location.assign(destination.href);
+                }}
                 className="inline-flex min-h-11 items-center justify-center rounded-xl bg-[#123a59] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f314b]"
               >
                 {destination.label}
               </Link>
               <Link
                 href={destination.secondaryHref}
+                onClick={(event) => {
+                  if (state.accountSessionRefreshed) return;
+                  event.preventDefault();
+                  window.location.assign(destination.secondaryHref);
+                }}
                 className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-[#2b8e88] hover:text-[#123a59]"
               >
                 {destination.secondaryLabel}

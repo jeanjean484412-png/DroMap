@@ -88,7 +88,7 @@ const TOUR_STEPS: TourStep[] = [
       {
         label: "Traits",
         explanation:
-          "Ouvre les trois façons de dessiner une ligne. Trait classique sert à relier des points proprement, Dessin libre sert à dessiner à la main en maintenant la souris, et Suivi de trait sert à longer automatiquement une frontière ou une ligne déjà visible sur la carte.",
+          "Ouvre les quatre façons de dessiner une ligne. Trait classique relie des points, Trait courbe permet de modeler une ligne avec des poignées, Dessin libre suit la souris et Suivi de trait longe une frontière ou une ligne déjà visible sur la carte.",
         target: { text: "Traits" },
       },
       {
@@ -103,6 +103,13 @@ const TOUR_STEPS: TourStep[] = [
         explanation:
           "À utiliser pour obtenir une ligne nette composée de segments : relier plusieurs villes, montrer un axe, tracer un itinéraire simplifié, une séparation ou une flèche. Clique successivement aux endroits où la ligne doit passer. Chaque clic ajoute un point et DroMap relie ces points. C’est le mode le plus simple pour contrôler précisément le trajet de la ligne. Un double-clic au point d’arrivée arrête le trait.",
         target: { text: "Trait classique" },
+        openToolSettings: "line",
+      },
+      {
+        label: "Trait courbe",
+        explanation:
+          "Clique au départ puis à l’arrivée pour créer le trait. Sélectionne-le et déplace sa poignée centrale pour le courber sans créer d’angles. Pour ajouter une autre courbure, double-clique directement à l’endroit souhaité sur le trait : une nouvelle poignée apparaît, que tu peux déplacer. Les poignées des extrémités déplacent le départ et l’arrivée. Échap quitte la création en cours ; Annuler permet de revenir sur une modification.",
+        target: { text: "Trait courbe" },
         openToolSettings: "line",
       },
       {

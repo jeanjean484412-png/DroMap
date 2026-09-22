@@ -43,10 +43,27 @@ async function handlePOST(request: Request) {
   const auth = await getAuthenticatedRequestUser();
   if (!auth) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
 
-  const body = (await request.json().catch(() => null)) as { deviceId?: unknown; heartbeat?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as {
+    deviceId?: unknown;
+    heartbeat?: unknown;
+    accountUserId?: unknown;
+  } | null;
   const deviceId = normalizeDeviceId(body?.deviceId);
   const heartbeat = body?.heartbeat === true;
   if (!deviceId) return NextResponse.json({ error: "Identifiant d’appareil invalide." }, { status: 400 });
+  const expectedOwnerId =
+    typeof body?.accountUserId === "string" && body.accountUserId.trim()
+      ? body.accountUserId.trim()
+      : null;
+  if (expectedOwnerId && expectedOwnerId !== auth.user.id) {
+    return NextResponse.json(
+      {
+        code: "ACCOUNT_SESSION_CHANGED",
+        error: "La session du compte a changé. Les informations du compte vont être rechargées.",
+      },
+      { status: 409 },
+    );
+  }
 
   try {
     const now = new Date().toISOString();
@@ -88,7 +105,10 @@ async function handlePOST(request: Request) {
     const currentDeviceId = typeof current?.device_id === "string" ? current.device_id : null;
     if (currentDeviceId && currentDeviceId !== deviceId && !leaseIsStale(current?.last_seen_at)) {
       return NextResponse.json(
-        { error: "Ce compte DroMap est déjà utilisé sur un autre appareil." },
+        {
+          code: "DEVICE_LEASE_CONFLICT",
+          error: "Ce compte DroMap est déjà utilisé sur un autre appareil.",
+        },
         { status: 409 },
       );
     }

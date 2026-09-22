@@ -1,6 +1,14 @@
 "use client";
 
-import { getDromapRuntimeFontFamily } from "@/lib/dromap/font-family";
+import { getMarkerTextFontFamily as getDromapRuntimeFontFamily } from "./custom-marker-font";
+import { getBuiltinMarkerCompositionSvg } from "./marker-symbol";
+import {
+  createCurvedMarkerPoints,
+  getMarkerPathHandles,
+  markerArrowHeadLength,
+  trimMarkerLineForArrowheads,
+  updateMarkerPathHandle,
+} from "./custom-marker-line-geometry";
 
 import { useEffect, useRef } from "react";
 
@@ -16,9 +24,10 @@ import {
   type DroMapDrawnMarkerTextElement,
 } from "@/stores/editor-custom-markers";
 
-type DesignerTool =
+export type DesignerTool =
   | "select"
   | "line"
+  | "curved-line"
   | "arrow"
   | "freehand-line"
   | "freehand-zone"
@@ -76,11 +85,11 @@ type TextPreset = {
 type CustomMarkerFabricCanvasProps = {
   elements: DroMapDrawnMarkerElement[];
   activeTool: DesignerTool;
-  selectedElementId: string | null;
+  selectedElementIds: string[];
   linePreset: LinePreset;
   zonePreset: ZonePreset;
   textPreset: TextPreset;
-  onSelectElement: (elementId: string | null) => void;
+  onSelectElements: (elementIds: string[]) => void;
   onCommitElements: (
     elements: DroMapDrawnMarkerElement[],
     coalesceKey?: string,
@@ -93,6 +102,10 @@ type FabricObjectWithDroMapMeta = {
   __dromapBaseElement?: DroMapDrawnMarkerElement;
   __dromapInitialMatrix?: number[];
   __dromapGuide?: boolean;
+  __dromapLineHandle?: boolean;
+  __dromapLineHandleParentId?: string;
+  __dromapLineHandlePointIndex?: number;
+  __dromapPendingElement?: DroMapDrawnMarkerElement;
   [key: string]: unknown;
 };
 
@@ -119,15 +132,15 @@ type Draft =
     }
   | {
       kind: "polyline";
-      tool: "line" | "arrow" | "polygon";
+      tool: "line" | "curved-line" | "arrow" | "polygon";
       points: DroMapDrawnMarkerPoint[];
       preview: any | null;
       pointer: DroMapDrawnMarkerPoint | null;
     };
 
 const MIN_ELEMENT_SIZE = 8;
-const SNAP_DISTANCE = 6;
-const DROMAP_BLUE = "#2563eb";
+const SNAP_DISTANCE = 4;
+const DROMAP_BLUE = "#168c88";
 
 function cloneElement<T extends DroMapDrawnMarkerElement>(element: T): T {
   return JSON.parse(JSON.stringify(element)) as T;
@@ -258,6 +271,65 @@ function snapPoint(
   return clampPoint(best);
 }
 
+function getLineAngles(elements: DroMapDrawnMarkerElement[]) {
+  const angles: number[] = [0, Math.PI / 2];
+  for (const element of elements) {
+    const points =
+      element.type === "line" || element.type === "arrow"
+        ? [
+            { x: element.x1, y: element.y1 },
+            { x: element.x2, y: element.y2 },
+          ]
+        : element.type === "path" && !element.closed
+          ? element.lineVariant === "curved"
+            ? []
+            : element.points
+          : [];
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const dx = points[index + 1].x - points[index].x;
+      const dy = points[index + 1].y - points[index].y;
+      if (Math.hypot(dx, dy) > 1) angles.push(Math.atan2(dy, dx));
+    }
+  }
+  return angles;
+}
+
+function snapLinePoint(
+  point: DroMapDrawnMarkerPoint,
+  start: DroMapDrawnMarkerPoint,
+  elements: DroMapDrawnMarkerElement[],
+  ignoredElementIds: string[] = [],
+) {
+  const anchorSnapped = snapPoint(point, elements, ignoredElementIds);
+  if (distance(anchorSnapped, point) > 0.01) return anchorSnapped;
+  const length = distance(start, point);
+  if (length < 2) return anchorSnapped;
+  const pointerAngle = Math.atan2(point.y - start.y, point.x - start.x);
+  let best = point;
+  let bestAngularDistance = (8 * Math.PI) / 180;
+  for (const baseAngle of getLineAngles(
+    elements.filter((element) => !ignoredElementIds.includes(element.id)),
+  )) {
+    for (const offset of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      const candidateAngle = baseAngle + offset;
+      const angularDistance = Math.abs(
+        Math.atan2(
+          Math.sin(pointerAngle - candidateAngle),
+          Math.cos(pointerAngle - candidateAngle),
+        ),
+      );
+      if (angularDistance < bestAngularDistance) {
+        bestAngularDistance = angularDistance;
+        best = {
+          x: start.x + Math.cos(candidateAngle) * length,
+          y: start.y + Math.sin(candidateAngle) * length,
+        };
+      }
+    }
+  }
+  return snapPoint(clampPoint(best), elements, ignoredElementIds);
+}
+
 function smoothPath(
   points: DroMapDrawnMarkerPoint[],
   smoothing: number,
@@ -342,19 +414,19 @@ function applyFabricTransform(
     const end = transformPoint(delta, { x: element.x2, y: element.y2 });
     return {
       ...element,
-      x1: clamp(start.x),
-      y1: clamp(start.y),
-      x2: clamp(end.x),
-      y2: clamp(end.y),
+      x1: start.x,
+      y1: start.y,
+      x2: end.x,
+      y2: end.y,
     };
   }
 
   if (element.type === "path") {
     return {
       ...element,
-      points: element.points.map((point) => clampPoint(transformPoint(delta, point))),
+      points: element.points.map((point) => transformPoint(delta, point)),
       rawPoints: element.rawPoints?.map((point) =>
-        clampPoint(transformPoint(delta, point)),
+        transformPoint(delta, point),
       ),
     };
   }
@@ -388,21 +460,21 @@ function applyFabricTransform(
     const scale = Math.max(width / element.width, height / element.height);
     return {
       ...element,
-      x: clamp(nextCenter.x - width / 2, 0, CUSTOM_MARKER_CANVAS_SIZE - width),
-      y: clamp(nextCenter.y - height / 2, 0, CUSTOM_MARKER_CANVAS_SIZE - height),
-      width: Math.min(CUSTOM_MARKER_CANVAS_SIZE, width),
-      height: Math.min(CUSTOM_MARKER_CANVAS_SIZE, height),
+      x: nextCenter.x - width / 2,
+      y: nextCenter.y - height / 2,
+      width,
+      height,
       rotation,
-      fontSize: clamp(element.fontSize * scale, 10, 120),
+      fontSize: clamp(element.fontSize * scale, 10, 1200),
     };
   }
 
   return {
     ...element,
-    x: clamp(nextCenter.x - width / 2, 0, CUSTOM_MARKER_CANVAS_SIZE - width),
-    y: clamp(nextCenter.y - height / 2, 0, CUSTOM_MARKER_CANVAS_SIZE - height),
-    width: Math.min(CUSTOM_MARKER_CANVAS_SIZE, width),
-    height: Math.min(CUSTOM_MARKER_CANVAS_SIZE, height),
+    x: nextCenter.x - width / 2,
+    y: nextCenter.y - height / 2,
+    width,
+    height,
     rotation,
   };
 }
@@ -465,7 +537,8 @@ function configureInteractiveObject(object: any, element: DroMapDrawnMarkerEleme
     cornerColor: "#ffffff",
     cornerStrokeColor: DROMAP_BLUE,
     cornerStyle: "circle",
-    cornerSize: 8,
+    cornerSize: 10,
+    touchCornerSize: 20,
     transparentCorners: false,
     borderDashArray: [4, 3],
     padding: 3,
@@ -480,6 +553,19 @@ function configureInteractiveObject(object: any, element: DroMapDrawnMarkerEleme
   }
   if (element.type === "shape" && element.shape === "circle") {
     object.setControlsVisibility?.({ ml: false, mr: false, mt: false, mb: false });
+  }
+  if (
+    element.type === "line" ||
+    element.type === "arrow" ||
+    (element.type === "path" && !element.closed)
+  ) {
+    object.set({
+      hasControls: false,
+      hasBorders: false,
+      lockScalingX: true,
+      lockScalingY: true,
+      lockRotation: true,
+    });
   }
 }
 
@@ -541,8 +627,8 @@ function makeShapePrimitive(
     ...common,
     width: element.width,
     height: element.height,
-    rx: Math.min(18, element.width / 8, element.height / 8),
-    ry: Math.min(18, element.width / 8, element.height / 8),
+    rx: element.cornerRadius ?? Math.min(18, element.width / 8, element.height / 8),
+    ry: element.cornerRadius ?? Math.min(18, element.width / 8, element.height / 8),
   });
 }
 
@@ -637,7 +723,7 @@ function arrowHeadPoints(
   const unitY = deltaY / length;
   const normalX = -unitY;
   const normalY = unitX;
-  const headLength = Math.max(12, strokeWidth * 3.2);
+  const headLength = markerArrowHeadLength(strokeWidth);
   const halfWidth = Math.max(7, strokeWidth * 1.8);
   const baseX = tip.x - unitX * headLength;
   const baseY = tip.y - unitY * headLength;
@@ -659,8 +745,14 @@ function makeLineObject(fabric: any, element: Extract<DroMapDrawnMarkerElement, 
   });
   const start = toLocal({ x: element.x1, y: element.y1 });
   const end = toLocal({ x: element.x2, y: element.y2 });
+  const shaft = trimMarkerLineForArrowheads(
+    [start, end],
+    element.strokeWidth,
+    element.arrowStart === true,
+    element.arrowEnd === true || element.type === "arrow",
+  );
   const layers: any[] = [
-    new fabric.Line([start.x, start.y, end.x, end.y], {
+    new fabric.Line([shaft[0].x, shaft[0].y, shaft[1].x, shaft[1].y], {
       stroke: element.strokeColor,
       strokeWidth: element.strokeWidth,
       strokeDashArray: dashArray(element.dashStyle, element.strokeWidth),
@@ -730,6 +822,12 @@ function makePathObject(fabric: any, element: DroMapDrawnMarkerPathElement) {
     x: point.x - center.x,
     y: point.y - center.y,
   }));
+  const shaftPoints = trimMarkerLineForArrowheads(
+    points,
+    element.strokeWidth,
+    element.arrowStart === true,
+    element.arrowEnd === true,
+  );
   const layers: any[] = [];
 
   if (element.closed && element.fillEnabled) {
@@ -780,7 +878,7 @@ function makePathObject(fabric: any, element: DroMapDrawnMarkerPathElement) {
   }
   if (!element.closed || (element.strokeEnabled !== false && element.strokeWidth > 0)) {
     layers.push(
-      makePathShape(fabric, points, element.closed, {
+      makePathShape(fabric, element.closed ? points : shaftPoints, element.closed, {
         fill: element.closed ? "transparent" : undefined,
         stroke: element.strokeColor,
         strokeWidth: element.strokeWidth,
@@ -828,6 +926,16 @@ function makePathObject(fabric: any, element: DroMapDrawnMarkerPathElement) {
 }
 
 function makeTextObject(fabric: any, element: DroMapDrawnMarkerTextElement) {
+  if (!element.backgroundEnabled && !element.borderEnabled) {
+    return new fabric.IText(element.text, {
+      left: element.x + element.width / 2, top: element.y + element.height / 2,
+      originX: "center", originY: "center", width: element.width,
+      fontFamily: getDromapRuntimeFontFamily(), fontSize: element.fontSize,
+      fontWeight: element.fontWeight ?? 700, textAlign: element.textAlign ?? "center",
+      fill: element.color, opacity: element.opacity ?? 1, angle: element.rotation,
+      lineHeight: 1.16, objectCaching: false,
+    });
+  }
   const layers: any[] = [
     new fabric.Rect({
       left: 0,
@@ -875,8 +983,8 @@ function makeTextObject(fabric: any, element: DroMapDrawnMarkerTextElement) {
       opacity: element.opacity ?? 1,
       fontFamily: getDromapRuntimeFontFamily(),
       fontSize: element.fontSize,
-      fontWeight: 700,
-      textAlign: "center",
+      fontWeight: element.fontWeight ?? 700,
+      textAlign: element.textAlign ?? "center",
       objectCaching: false,
     }),
   );
@@ -891,15 +999,22 @@ function makeTextObject(fabric: any, element: DroMapDrawnMarkerTextElement) {
   });
 }
 
-function createFabricObject(fabric: any, element: DroMapDrawnMarkerElement) {
-  const object =
+async function createFabricObject(fabric: any, element: DroMapDrawnMarkerElement) {
+  let symbol = null;
+  if (element.type === "shape" && element.symbolId) {
+    const loaded = await fabric.loadSVGFromString(getBuiltinMarkerCompositionSvg(element.symbolId, element.fillColor));
+    const bounds = new fabric.Rect({ left: 0, top: 0, width: 24, height: 24, originX: "left", originY: "top", fill: "transparent", strokeWidth: 0 });
+    symbol = new fabric.Group([bounds, ...loaded.objects.filter(Boolean)], { objectCaching: false });
+    symbol.set({ originX: "center", originY: "center", left: element.x + element.width / 2, top: element.y + element.height / 2, scaleX: element.width / 24, scaleY: element.height / 24, angle: element.rotation, opacity: element.fillOpacity ?? 1 });
+  }
+  const object = symbol ?? (
     element.type === "shape"
       ? makeShapeObject(fabric, element)
       : element.type === "path"
         ? makePathObject(fabric, element)
         : element.type === "text"
           ? makeTextObject(fabric, element)
-          : makeLineObject(fabric, element);
+          : makeLineObject(fabric, element));
 
   configureInteractiveObject(object, element);
   const meta = object as FabricObjectWithDroMapMeta;
@@ -913,7 +1028,7 @@ function createFabricObject(fabric: any, element: DroMapDrawnMarkerElement) {
 function createShapeElement(
   tool: Exclude<
     DesignerTool,
-    "select" | "text" | "line" | "arrow" | "freehand-line" | "freehand-zone" | "polygon"
+    "select" | "text" | "line" | "curved-line" | "arrow" | "freehand-line" | "freehand-zone" | "polygon"
   >,
   start: DroMapDrawnMarkerPoint,
   end: DroMapDrawnMarkerPoint,
@@ -945,18 +1060,35 @@ function createShapeElement(
 }
 
 function createPathElement(
-  tool: "line" | "arrow" | "polygon",
+  tool: "line" | "curved-line" | "arrow" | "polygon",
   points: DroMapDrawnMarkerPoint[],
   linePreset: LinePreset,
   zonePreset: ZonePreset,
 ): DroMapDrawnMarkerPathElement {
   const closed = tool === "polygon";
+  const rawPoints =
+    tool === "curved-line" && points.length === 2
+      ? [
+          { ...points[0] },
+          {
+            x: (points[0].x + points[1].x) / 2,
+            y: (points[0].y + points[1].y) / 2,
+          },
+          { ...points[1] },
+        ]
+      : points.map((point) => ({ ...point }));
+  const renderedPoints =
+    tool === "curved-line"
+      ? createCurvedMarkerPoints(rawPoints)
+      : rawPoints;
   return {
+    strokeScales: true,
     id: createElementId(),
     type: "path",
-    points,
-    rawPoints: points,
+    points: renderedPoints,
+    rawPoints,
     smoothing: 0,
+    lineVariant: tool === "curved-line" ? "curved" : "straight",
     closed,
     fillEnabled: closed ? zonePreset.fillEnabled : false,
     fillColor: zonePreset.fillColor,
@@ -988,11 +1120,13 @@ function createFreehandElement(
   const smoothing = closed ? zonePreset.smoothing : linePreset.smoothing;
   const points = smoothPath(rawPoints, smoothing, closed);
   return {
+    strokeScales: true,
     id: createElementId(),
     type: "path",
     points,
     rawPoints,
     smoothing,
+    lineVariant: "freehand",
     closed,
     fillEnabled: closed ? zonePreset.fillEnabled : false,
     fillColor: zonePreset.fillColor,
@@ -1055,7 +1189,7 @@ function getObjectId(object: any) {
 function collectTransformObjects(target: any) {
   if (!target) return [];
   if (!getObjectId(target) && typeof target.getObjects === "function") {
-    return target.getObjects().filter((object: any) => Boolean(getObjectId(object)));
+    return target.getObjects().flatMap(collectTransformObjects);
   }
   return getObjectId(target) ? [target] : [];
 }
@@ -1063,11 +1197,11 @@ function collectTransformObjects(target: any) {
 export function CustomMarkerFabricCanvas({
   elements,
   activeTool,
-  selectedElementId,
+  selectedElementIds,
   linePreset,
   zonePreset,
   textPreset,
-  onSelectElement,
+  onSelectElements,
   onCommitElements,
   onSwitchToSelect,
 }: CustomMarkerFabricCanvasProps) {
@@ -1080,21 +1214,22 @@ export function CustomMarkerFabricCanvas({
   const linePresetRef = useRef(linePreset);
   const zonePresetRef = useRef(zonePreset);
   const textPresetRef = useRef(textPreset);
-  const selectedElementIdRef = useRef(selectedElementId);
-  const onSelectElementRef = useRef(onSelectElement);
+  const selectedElementIdsRef = useRef(selectedElementIds);
+  const onSelectElementsRef = useRef(onSelectElements);
   const onCommitElementsRef = useRef(onCommitElements);
   const onSwitchToSelectRef = useRef(onSwitchToSelect);
   const draftRef = useRef<Draft | null>(null);
   const skipNextElementsSyncRef = useRef(false);
   const syncTokenRef = useRef(0);
+  const rebuildingRef = useRef(false);
 
   elementsRef.current = elements;
   activeToolRef.current = activeTool;
   linePresetRef.current = linePreset;
   zonePresetRef.current = zonePreset;
   textPresetRef.current = textPreset;
-  selectedElementIdRef.current = selectedElementId;
-  onSelectElementRef.current = onSelectElement;
+  selectedElementIdsRef.current = selectedElementIds;
+  onSelectElementsRef.current = onSelectElements;
   onCommitElementsRef.current = onCommitElements;
   onSwitchToSelectRef.current = onSwitchToSelect;
 
@@ -1133,6 +1268,203 @@ export function CustomMarkerFabricCanvas({
     guides.forEach((guide: any) => canvas.remove(guide));
   }
 
+  function clearLineHandles(canvas: any) {
+    canvas
+      .getObjects()
+      .filter(
+        (object: any) =>
+          (object as FabricObjectWithDroMapMeta).__dromapLineHandle,
+      )
+      .forEach((handle: any) => canvas.remove(handle));
+  }
+
+  function lineHandlePoints(element: DroMapDrawnMarkerElement) {
+    if (element.type === "line" || element.type === "arrow") {
+      return [
+        { x: element.x1, y: element.y1 },
+        { x: element.x2, y: element.y2 },
+      ];
+    }
+    if (
+      element.type === "path" &&
+      !element.closed &&
+      element.lineVariant !== "freehand"
+    ) {
+      const handles = getMarkerPathHandles(element);
+      return element.lineVariant === "curved"
+        ? handles
+        : [handles[0], handles[handles.length - 1]];
+    }
+    return [];
+  }
+
+  function refreshLineHandles(canvas: any) {
+    clearLineHandles(canvas);
+    if (
+      activeToolRef.current !== "select" ||
+      selectedElementIdsRef.current.length !== 1
+    )
+      return;
+    const id = selectedElementIdsRef.current[0];
+    const element = elementsRef.current.find((item) => item.id === id);
+    if (!element || element.groupId) return;
+    const points = lineHandlePoints(element);
+    const fabric = fabricModuleRef.current;
+    if (!fabric || points.length < 2) return;
+    points.forEach((point, pointIndex) => {
+      const internal = pointIndex > 0 && pointIndex < points.length - 1;
+      const handle = new fabric.Circle({
+        left: point.x,
+        top: point.y,
+        originX: "center",
+        originY: "center",
+        radius: internal ? 4.6 : 5,
+        fill: internal ? "#168c88" : "#2563eb",
+        stroke: "#ffffff",
+        strokeWidth: 2,
+        strokeUniform: true,
+        hasControls: false,
+        hasBorders: false,
+        selectable: true,
+        evented: true,
+        hoverCursor: "grab",
+        moveCursor: "grabbing",
+        excludeFromExport: true,
+        objectCaching: false,
+      });
+      const meta = handle as FabricObjectWithDroMapMeta;
+      meta.__dromapLineHandle = true;
+      meta.__dromapLineHandleParentId = id;
+      meta.__dromapLineHandlePointIndex = pointIndex;
+      canvas.add(handle);
+      canvas.bringObjectToFront?.(handle);
+    });
+  }
+
+  function createLineVisual(element: DroMapDrawnMarkerElement) {
+    const fabric = fabricModuleRef.current;
+    if (!fabric) return null;
+    const object =
+      element.type === "path"
+        ? makePathObject(fabric, element)
+        : element.type === "line" || element.type === "arrow"
+          ? makeLineObject(fabric, element)
+          : null;
+    if (!object) return null;
+    configureInteractiveObject(object, element);
+    const meta = object as FabricObjectWithDroMapMeta;
+    meta.__dromapElementId = element.id;
+    meta.__dromapBaseElement = cloneElement(element);
+    object.setCoords?.();
+    meta.__dromapInitialMatrix = [...object.calcTransformMatrix()] as Matrix;
+    return object;
+  }
+
+  function replaceLineVisual(canvas: any, element: DroMapDrawnMarkerElement) {
+    const previous = canvas
+      .getObjects()
+      .find(
+        (object: any) =>
+          !(object as FabricObjectWithDroMapMeta).__dromapLineHandle &&
+          getObjectId(object) === element.id,
+      );
+    const replacement = createLineVisual(element);
+    if (!replacement) return;
+    const index = previous ? canvas.getObjects().indexOf(previous) : -1;
+    if (previous) canvas.remove(previous);
+    canvas.add(replacement);
+    if (index >= 0) canvas.moveObjectTo?.(replacement, index);
+    canvas
+      .getObjects()
+      .filter(
+        (object: any) =>
+          (object as FabricObjectWithDroMapMeta).__dromapLineHandle,
+      )
+      .forEach((handle: any) => canvas.bringObjectToFront?.(handle));
+  }
+
+  function previewLineHandleMove(canvas: any, handle: any) {
+    const meta = handle as FabricObjectWithDroMapMeta;
+    const parentId = meta.__dromapLineHandleParentId;
+    const pointIndex = meta.__dromapLineHandlePointIndex;
+    if (!parentId || pointIndex === undefined) return;
+    const current =
+      meta.__dromapPendingElement ??
+      elementsRef.current.find((element) => element.id === parentId);
+    if (!current) return;
+    const controlPoints = lineHandlePoints(current);
+    const raw = clampPoint({ x: handle.left ?? 0, y: handle.top ?? 0 });
+    const opposite =
+      pointIndex === 0
+        ? controlPoints[controlPoints.length - 1]
+        : controlPoints[0];
+    const point =
+      current.type === "path" && current.lineVariant === "curved" &&
+      pointIndex > 0 && pointIndex < controlPoints.length - 1
+        ? snapPoint(raw, elementsRef.current, [parentId])
+        : snapLinePoint(raw, opposite, elementsRef.current, [parentId]);
+    handle.set({ left: point.x, top: point.y });
+    handle.setCoords?.();
+    let next: DroMapDrawnMarkerElement = current;
+    if (current.type === "line" || current.type === "arrow") {
+      next = pointIndex === 0
+        ? { ...current, x1: point.x, y1: point.y }
+        : { ...current, x2: point.x, y2: point.y };
+    } else if (current.type === "path") {
+      const actualIndex =
+        current.lineVariant === "curved"
+          ? pointIndex
+          : pointIndex === 0
+            ? 0
+            : getMarkerPathHandles(current).length - 1;
+      next = updateMarkerPathHandle(current, actualIndex, point);
+    }
+    meta.__dromapPendingElement = next;
+    replaceLineVisual(canvas, next);
+    canvas.requestRenderAll();
+  }
+
+  function syncLineHandlesToMovingObject(canvas: any, object: any) {
+    const id = getObjectId(object);
+    const meta = object as FabricObjectWithDroMapMeta;
+    if (!id || !meta.__dromapBaseElement || !meta.__dromapInitialMatrix) return;
+    const preview = applyFabricTransform(
+      meta.__dromapBaseElement,
+      meta.__dromapInitialMatrix as Matrix,
+      [...object.calcTransformMatrix()] as Matrix,
+    );
+    const points = lineHandlePoints(preview);
+    canvas
+      .getObjects()
+      .filter(
+        (candidate: any) =>
+          (candidate as FabricObjectWithDroMapMeta).__dromapLineHandleParentId === id,
+      )
+      .forEach((handle: any) => {
+        const pointIndex = (handle as FabricObjectWithDroMapMeta)
+          .__dromapLineHandlePointIndex ?? 0;
+        const point = points[pointIndex];
+        if (point) {
+          handle.set({ left: point.x, top: point.y });
+          handle.setCoords?.();
+          canvas.bringObjectToFront?.(handle);
+        }
+      });
+  }
+
+  function commitLineHandle(handle: any) {
+    const meta = handle as FabricObjectWithDroMapMeta;
+    const nextElement = meta.__dromapPendingElement;
+    if (!nextElement) return;
+    const next = elementsRef.current.map((element) =>
+      element.id === nextElement.id ? nextElement : element,
+    );
+    elementsRef.current = next;
+    onCommitElementsRef.current(next);
+    onSelectElementsRef.current([nextElement.id]);
+    meta.__dromapPendingElement = undefined;
+  }
+
   function addGuide(canvas: any, vertical: boolean, value: number) {
     const fabric = fabricModuleRef.current;
     if (!fabric) return;
@@ -1158,8 +1490,8 @@ export function CustomMarkerFabricCanvas({
 
   function snapMovingObject(canvas: any, object: any) {
     clearGuides(canvas);
-    const movingId = getObjectId(object);
-    if (!movingId) return;
+    const movingIds = collectTransformObjects(object).map((o: any) => getObjectId(o));
+    if (!movingIds.length) return;
     const bounds = object.getBoundingRect();
     const xValues = [bounds.left, bounds.left + bounds.width / 2, bounds.left + bounds.width];
     const yValues = [bounds.top, bounds.top + bounds.height / 2, bounds.top + bounds.height];
@@ -1168,7 +1500,8 @@ export function CustomMarkerFabricCanvas({
 
     canvas.getObjects().forEach((candidate: any) => {
       const candidateId = getObjectId(candidate);
-      if (!candidateId || candidateId === movingId) return;
+      if (candidate === object || collectTransformObjects(candidate).some((o: any) => movingIds.includes(getObjectId(o)))) return;
+      if (!candidateId && !collectTransformObjects(candidate).length) return;
       const box = candidate.getBoundingRect();
       targetsX.push(box.left, box.left + box.width / 2, box.left + box.width);
       targetsY.push(box.top, box.top + box.height / 2, box.top + box.height);
@@ -1216,29 +1549,71 @@ export function CustomMarkerFabricCanvas({
     });
     if (!selectMode) {
       canvas.discardActiveObject();
-      onSelectElementRef.current(null);
+      if (selectedElementIdsRef.current.length) onSelectElementsRef.current([]);
     }
     canvas.requestRenderAll();
   }
 
-  function rebuildCanvas() {
+  async function rebuildCanvas() {
     const canvas = fabricCanvasRef.current;
     const fabric = fabricModuleRef.current;
     if (!canvas || !fabric) return;
     const token = ++syncTokenRef.current;
-    const currentSelection = selectedElementIdRef.current;
+    rebuildingRef.current = true;
+    const objects = await Promise.all(elementsRef.current.map((element) => createFabricObject(fabric, element)));
+    if (token !== syncTokenRef.current || fabricCanvasRef.current !== canvas) return;
+    objects.forEach(object => {
+      if (object.__dromapBaseElement?.type === "text" && object.enterEditing) {
+        // Fabric positions its textarea in page coordinates; keep it on body to avoid
+        // scrolling the clipped canvas when the browser focuses the caret.
+        object.on("editing:entered", () => object.hiddenTextarea?.addEventListener("keydown", (event: KeyboardEvent) => event.stopPropagation()));
+      }
+    });
     canvas.discardActiveObject();
     canvas.getObjects().forEach((object: any) => canvas.remove(object));
-
-    const objects = elementsRef.current.map((element) => createFabricObject(fabric, element));
-    if (token !== syncTokenRef.current) return;
-    objects.forEach((object) => canvas.add(object));
+    const grouped = new Set<string>();
+    const topObjects = objects.flatMap(object => {
+      const groupId = object.__dromapBaseElement?.groupId;
+      if (!groupId) return [object];
+      if (grouped.has(groupId)) return [];
+      grouped.add(groupId);
+      const group = new fabric.Group(objects.filter(o => o.__dromapBaseElement?.groupId === groupId), { subTargetCheck: false, objectCaching: false });
+      configureInteractiveObject(group, object.__dromapBaseElement);
+      group.set({
+        hasControls: true,
+        hasBorders: true,
+        lockScalingX: false,
+        lockScalingY: false,
+        lockRotation: false,
+      });
+      return [group];
+    });
+    topObjects.forEach((object) => canvas.add(object));
     updateObjectMode(canvas);
+    syncSelection();
+    rebuildingRef.current = false;
+    canvas.requestRenderAll();
+  }
 
-    if (activeToolRef.current === "select" && currentSelection) {
-      const selected = objects.find((object) => getObjectId(object) === currentSelection);
-      if (selected) canvas.setActiveObject(selected);
+  function syncSelection() {
+    const canvas = fabricCanvasRef.current, fabric = fabricModuleRef.current;
+    if (!canvas || !fabric || activeToolRef.current !== "select") return;
+    const wanted = selectedElementIdsRef.current;
+    const active = canvas.getActiveObject() as FabricObjectWithDroMapMeta | null;
+    const actual = active?.__dromapLineHandleParentId
+      ? [active.__dromapLineHandleParentId]
+      : collectTransformObjects(active).map((o: any) => getObjectId(o));
+    if (actual.length === wanted.length && actual.every((id: string) => wanted.includes(id))) {
+      refreshLineHandles(canvas);
+      return;
     }
+    const busy = rebuildingRef.current; rebuildingRef.current = true;
+    canvas.discardActiveObject();
+    const selected = canvas.getObjects().filter((o: any) => collectTransformObjects(o).some((child: any) => { const id = getObjectId(child); return id !== null && wanted.includes(id); }));
+    if (selected.length === 1) canvas.setActiveObject(selected[0]);
+    else if (selected.length > 1) canvas.setActiveObject(new fabric.ActiveSelection(selected, { canvas }));
+    refreshLineHandles(canvas);
+    rebuildingRef.current = busy;
     canvas.requestRenderAll();
   }
 
@@ -1262,8 +1637,6 @@ export function CustomMarkerFabricCanvas({
       transformedById.set(id, nextElement);
       meta.__dromapBaseElement = cloneElement(nextElement);
       meta.__dromapInitialMatrix = current;
-      object.scaleX = 1;
-      object.scaleY = 1;
     }
 
     if (transformedById.size === 0) return;
@@ -1271,8 +1644,8 @@ export function CustomMarkerFabricCanvas({
       transformedById.get(element.id) ?? element,
     );
     elementsRef.current = next;
-    skipNextElementsSyncRef.current = true;
-    onCommitElementsRef.current(next, "fabric-transform");
+    // Only object:modified commits: one completed gesture = one undo entry.
+    onCommitElementsRef.current(next);
     canvas.requestRenderAll();
   }
 
@@ -1307,7 +1680,17 @@ export function CustomMarkerFabricCanvas({
     const fabric = fabricModuleRef.current;
     if (!fabric) return;
     if (draft.preview) canvas.remove(draft.preview);
-    const points = draft.pointer ? [...draft.points, draft.pointer] : draft.points;
+    const rawPoints = draft.pointer ? [...draft.points, draft.pointer] : draft.points;
+    const points = draft.tool === "curved-line" && rawPoints.length === 2
+      ? createCurvedMarkerPoints([
+          rawPoints[0],
+          {
+            x: (rawPoints[0].x + rawPoints[1].x) / 2,
+            y: (rawPoints[0].y + rawPoints[1].y) / 2,
+          },
+          rawPoints[1],
+        ])
+      : rawPoints;
     if (points.length < 2) return;
     const closed = draft.tool === "polygon";
     const preview = closed
@@ -1356,6 +1739,8 @@ export function CustomMarkerFabricCanvas({
         zonePresetRef.current,
       );
       onCommitElementsRef.current([...elementsRef.current, element]);
+      onSelectElementsRef.current([element.id]);
+      onSwitchToSelectRef.current();
     }
     draftRef.current = null;
     canvas.requestRenderAll();
@@ -1377,6 +1762,7 @@ export function CustomMarkerFabricCanvas({
         height: CUSTOM_MARKER_CANVAS_SIZE,
         preserveObjectStacking: true,
         selection: true,
+        selectionKey: "shiftKey",
         selectionColor: "rgba(37,99,235,0.08)",
         selectionBorderColor: DROMAP_BLUE,
         selectionLineWidth: 1,
@@ -1401,16 +1787,51 @@ export function CustomMarkerFabricCanvas({
         window.addEventListener("resize", windowResizeHandler);
       }
 
-      canvas.on("selection:created", (event: any) => {
-        const selected = event.selected ?? canvas.getActiveObjects();
-        onSelectElementRef.current(selected.length === 1 ? getObjectId(selected[0]) : null);
+      const publishSelection = () => {
+        if (rebuildingRef.current) return;
+        const active = canvas.getActiveObject() as unknown as
+          | FabricObjectWithDroMapMeta
+          | null;
+        if (
+          active?.__dromapLineHandleParentId &&
+          selectedElementIdsRef.current.length === 1 &&
+          selectedElementIdsRef.current[0] === active.__dromapLineHandleParentId
+        )
+          return;
+        const ids = active?.__dromapLineHandleParentId
+          ? [active.__dromapLineHandleParentId]
+          : collectTransformObjects(active).map((o: any) => getObjectId(o));
+        if (
+          ids.length === selectedElementIdsRef.current.length &&
+          ids.every((id: string) => selectedElementIdsRef.current.includes(id))
+        )
+          return;
+        onSelectElementsRef.current(ids);
+      };
+      canvas.on("selection:created", publishSelection);
+      canvas.on("selection:updated", publishSelection);
+      canvas.on("selection:cleared", publishSelection);
+      canvas.on("text:changed", (event: any) => {
+        const object = event.target;
+        const base = object.__dromapBaseElement;
+        if (base?.type !== "text") return;
+        const nextElement = { ...base, text: object.text, width: object.width, height: object.height, x: object.left - object.width / 2, y: object.top - object.height / 2 };
+        const next = elementsRef.current.map(e => e.id === base.id ? nextElement : e);
+        object.__dromapBaseElement = nextElement;
+        object.__dromapInitialMatrix = [...object.calcTransformMatrix()];
+        elementsRef.current = next;
+        skipNextElementsSyncRef.current = true;
+        onCommitElementsRef.current(next, `text:${base.id}`);
       });
-      canvas.on("selection:updated", (event: any) => {
-        const selected = event.selected ?? canvas.getActiveObjects();
-        onSelectElementRef.current(selected.length === 1 ? getObjectId(selected[0]) : null);
+      canvas.on("object:moving", (event: any) => {
+        const target = event.target as FabricObjectWithDroMapMeta;
+        if (target?.__dromapLineHandle) {
+          previewLineHandleMove(canvas, target);
+          return;
+        }
+        snapMovingObject(canvas, target);
+        syncLineHandlesToMovingObject(canvas, target);
       });
-      canvas.on("selection:cleared", () => onSelectElementRef.current(null));
-      canvas.on("object:moving", (event: any) => snapMovingObject(canvas, event.target));
       canvas.on("object:scaling", (event: any) => {
         const target = event.target;
         const object = collectTransformObjects(target)[0];
@@ -1420,7 +1841,7 @@ export function CustomMarkerFabricCanvas({
         if (
           target &&
           element &&
-          (element.type === "text" ||
+          (collectTransformObjects(target).length > 1 || element.type === "text" ||
             (element.type === "shape" && element.shape === "circle"))
         ) {
           const scale = Math.max(Math.abs(target.scaleX ?? 1), Math.abs(target.scaleY ?? 1));
@@ -1428,26 +1849,39 @@ export function CustomMarkerFabricCanvas({
           target.scaleY = Math.sign(target.scaleY || 1) * scale;
         }
       });
-      canvas.on("object:modified", (event: any) => commitFabricTransform(event.target));
+      canvas.on("object:modified", (event: any) => {
+        if ((event.target as FabricObjectWithDroMapMeta)?.__dromapLineHandle) {
+          commitLineHandle(event.target);
+          return;
+        }
+        commitFabricTransform(event.target);
+      });
 
       canvas.on("mouse:down", (event: any) => {
         const tool = activeToolRef.current;
         if (tool === "select") return;
         if (event.target) return;
         const raw = getCanvasPoint(canvas, event);
-        const point = snapPoint(raw, elementsRef.current);
+        let point = snapPoint(raw, elementsRef.current);
 
         if (tool === "text") {
           const element = createTextElement(point, textPresetRef.current);
           onCommitElementsRef.current([...elementsRef.current, element]);
-          onSelectElementRef.current(element.id);
+          onSelectElementsRef.current([element.id]);
           onSwitchToSelectRef.current();
           return;
         }
 
-        if (tool === "line" || tool === "arrow" || tool === "polygon") {
+        if (tool === "line" || tool === "curved-line" || tool === "arrow" || tool === "polygon") {
           const current = draftRef.current;
           if (current?.kind === "polyline" && current.tool === tool) {
+            if (tool !== "polygon") {
+              point = snapLinePoint(
+                raw,
+                current.points[current.points.length - 1],
+                elementsRef.current,
+              );
+            }
             if (
               tool === "polygon" &&
               current.points.length >= 3 &&
@@ -1458,6 +1892,10 @@ export function CustomMarkerFabricCanvas({
             }
             current.points = [...current.points, point];
             current.pointer = point;
+            if (tool === "line" || tool === "curved-line" || tool === "arrow") {
+              finishPolylineDraft();
+              return;
+            }
             updatePolylinePreview(canvas, current);
           } else {
             draftRef.current = {
@@ -1493,7 +1931,10 @@ export function CustomMarkerFabricCanvas({
         const draft = draftRef.current;
         if (!draft || activeToolRef.current === "select") return;
         const raw = getCanvasPoint(canvas, event);
-        const point = snapPoint(raw, elementsRef.current);
+        const point =
+          draft.kind === "polyline" && draft.points.length > 0 && draft.tool !== "polygon"
+            ? snapLinePoint(raw, draft.points[draft.points.length - 1], elementsRef.current)
+            : snapPoint(raw, elementsRef.current);
 
         if (draft.kind === "polyline") {
           draft.pointer = point;
@@ -1564,8 +2005,10 @@ export function CustomMarkerFabricCanvas({
               zonePresetRef.current,
             );
             onCommitElementsRef.current([...elementsRef.current, element]);
+            onSelectElementsRef.current([element.id]);
+            onSwitchToSelectRef.current();
           }
-        } else if (draft.points.length >= 2 && distance(draft.points[0], draft.points[draft.points.length - 1]) >= MIN_ELEMENT_SIZE) {
+        } else if (draft.points.length >= 2) {
           const element = createFreehandElement(
             draft.closed,
             draft.points,
@@ -1573,13 +2016,77 @@ export function CustomMarkerFabricCanvas({
             zonePresetRef.current,
           );
           onCommitElementsRef.current([...elementsRef.current, element]);
+          onSelectElementsRef.current([element.id]);
+          onSwitchToSelectRef.current();
         }
         draftRef.current = null;
         canvas.requestRenderAll();
       });
 
-      canvas.on("mouse:dblclick", () => {
-        if (draftRef.current?.kind === "polyline") finishPolylineDraft();
+      canvas.on("mouse:dblclick", (event: any) => {
+        if (draftRef.current?.kind === "polyline") { finishPolylineDraft(); return; }
+        const object = event.target;
+        const lineElement = object?.__dromapBaseElement as
+          | DroMapDrawnMarkerElement
+          | undefined;
+        if (
+          activeToolRef.current === "select" &&
+          lineElement?.type === "path" &&
+          lineElement.lineVariant === "curved"
+        ) {
+          const pointer = getCanvasPoint(canvas, event);
+          const handles = getMarkerPathHandles(lineElement);
+          if (handles.length >= 32) return;
+          let insertion = 1;
+          let bestDistance = Number.POSITIVE_INFINITY;
+          let insertedPoint = pointer;
+          for (let index = 0; index < handles.length - 1; index += 1) {
+            const start = handles[index];
+            const end = handles[index + 1];
+            const dx = end.x - start.x;
+            const dy = end.y - start.y;
+            const lengthSquared = dx * dx + dy * dy;
+            if (lengthSquared === 0) continue;
+            const ratio = Math.max(
+              0,
+              Math.min(
+                1,
+                ((pointer.x - start.x) * dx + (pointer.y - start.y) * dy) /
+                  lengthSquared,
+              ),
+            );
+            const projected = {
+              x: start.x + dx * ratio,
+              y: start.y + dy * ratio,
+            };
+            const candidateDistance = distance(pointer, projected);
+            if (candidateDistance < bestDistance) {
+              bestDistance = candidateDistance;
+              insertion = index + 1;
+              insertedPoint = pointer;
+            }
+          }
+          const nextHandles = [...handles];
+          nextHandles.splice(insertion, 0, insertedPoint);
+          const nextElement = {
+            ...lineElement,
+            rawPoints: nextHandles,
+            points: createCurvedMarkerPoints(nextHandles),
+          };
+          const next = elementsRef.current.map((element) =>
+            element.id === nextElement.id ? nextElement : element,
+          );
+          elementsRef.current = next;
+          onCommitElementsRef.current(next);
+          onSelectElementsRef.current([nextElement.id]);
+          return;
+        }
+        if (activeToolRef.current === "select" && object?.__dromapBaseElement?.type === "text" && object.enterEditing) {
+          canvas.setActiveObject(object);
+          object.enterEditing();
+          object.hiddenTextarea?.focus();
+          canvas.requestRenderAll();
+        }
       });
 
       rebuildCanvas();
@@ -1637,15 +2144,15 @@ export function CustomMarkerFabricCanvas({
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    updateObjectMode(canvas);
-    if (activeTool === "select" && selectedElementId) {
-      const object = canvas
-        .getObjects()
-        .find((candidate: any) => getObjectId(candidate) === selectedElementId);
-      if (object) canvas.setActiveObject(object);
+    if (activeTool === "select" && draftRef.current) {
+      removeDraftPreview(canvas);
+      draftRef.current = null;
     }
+    updateObjectMode(canvas);
+    syncSelection();
+    // Fabric functions intentionally read the latest props through refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTool, selectedElementId]);
+  }, [activeTool, selectedElementIds]);
 
   return (
     <div
@@ -1659,15 +2166,12 @@ export function CustomMarkerFabricCanvas({
               ? "text"
               : "crosshair",
         backgroundImage:
-          "linear-gradient(45deg,#f1f5f9 25%,transparent 25%),linear-gradient(-45deg,#f1f5f9 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#f1f5f9 75%),linear-gradient(-45deg,transparent 75%,#f1f5f9 75%)",
+          "linear-gradient(45deg,#f7f9f8 25%,transparent 25%),linear-gradient(-45deg,#f7f9f8 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#f7f9f8 75%),linear-gradient(-45deg,transparent 75%,#f7f9f8 75%)",
         backgroundSize: "28px 28px",
         backgroundPosition: "0 0,0 14px,14px -14px,-14px 0px",
       }}
     >
       <canvas ref={canvasElementRef} aria-label="Zone de dessin du marqueur" />
-      <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-slate-200/90 bg-white/90 px-2.5 py-1.5 text-[10px] font-bold text-slate-600 shadow-sm backdrop-blur">
-        Maj + clic : sélection multiple · poignées : taille et rotation
-      </div>
     </div>
   );
 }

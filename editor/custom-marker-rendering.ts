@@ -1,5 +1,10 @@
-import { getDromapRuntimeFontFamily } from "@/lib/dromap/font-family";
+import { getMarkerTextFontFamily as getDromapRuntimeFontFamily, measureMarkerText } from "./custom-marker-font";
 import type { DroMapFeature } from "@/lib/dromap/feature";
+import { getBuiltinMarkerCompositionSvg } from "./marker-symbol";
+import {
+  markerArrowHeadLength,
+  trimMarkerLineForArrowheads,
+} from "./custom-marker-line-geometry";
 import {
   CUSTOM_MARKER_CANVAS_SIZE,
   getCustomMarkerById,
@@ -99,10 +104,16 @@ function renderShapePrimitive(
       element.height / 2,
     )}" ${attributes}${transform} />`;
   }
-  return `<rect x="${element.x}" y="${element.y}" width="${element.width}" height="${element.height}" rx="${Math.min(18, element.width / 8, element.height / 8)}" ${attributes}${transform} />`;
+  return `<rect x="${element.x}" y="${element.y}" width="${element.width}" height="${element.height}" rx="${element.cornerRadius ?? Math.min(18, element.width / 8, element.height / 8)}" ${attributes}${transform} />`;
 }
 
 function renderShapeElement(element: DroMapDrawnMarkerShapeElement) {
+  if (element.symbolId) {
+    const paths = getBuiltinMarkerCompositionSvg(element.symbolId, element.fillColor)
+      .replace(/^<svg\b[^>]*>/, "").replace(/<\/svg>$/, "");
+    // Keep one SVG viewport and ordinary painter order for all composition parts.
+    return `<g${getShapeTransform(element)} opacity="${element.fillOpacity ?? 1}"><g transform="translate(${element.x} ${element.y}) scale(${element.width / 24} ${element.height / 24})" fill="none" stroke="${escapeXml(element.fillColor)}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths}</g></g>`;
+  }
   const parts: string[] = [];
   if (element.fillEnabled) {
     parts.push(
@@ -156,11 +167,14 @@ function renderPathPrimitive(
 function renderPathElement(element: DroMapDrawnMarkerPathElement) {
   if (!element.closed) {
     const dash = getDashArray(element.dashStyle, element.strokeWidth);
+    const shaftPoints = trimMarkerLineForArrowheads(
+      element.points,
+      element.strokeWidth,
+      element.arrowStart === true,
+      element.arrowEnd === true,
+    );
     const parts = [
-      renderPathPrimitive(
-        element,
-        `fill="none" stroke="${escapeXml(element.strokeColor)}" stroke-opacity="${element.strokeOpacity ?? 1}" stroke-width="${element.strokeWidth}"${dash ? ` stroke-dasharray="${dash}"` : ""} stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"`,
-      ),
+      `<polyline points="${pathPoints(shaftPoints)}" fill="none" stroke="${escapeXml(element.strokeColor)}" stroke-opacity="${element.strokeOpacity ?? 1}" stroke-width="${element.strokeWidth}"${dash ? ` stroke-dasharray="${dash}"` : ""} stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" />`,
     ];
     if (element.arrowStart && element.points.length >= 2) {
       parts.push(
@@ -239,9 +253,16 @@ function renderTextElement(element: DroMapDrawnMarkerTextElement) {
       `<rect x="${element.x}" y="${element.y}" width="${element.width}" height="${element.height}" rx="8" fill="${element.backgroundEnabled ? escapeXml(element.backgroundColor ?? "#ffffff") : "none"}" fill-opacity="${element.backgroundEnabled ? (element.backgroundOpacity ?? 0.85) : 0}" stroke="${element.borderEnabled ? escapeXml(element.borderColor ?? "#111827") : "none"}" stroke-width="${element.borderEnabled ? (element.borderWidth ?? 2) : 0}" transform="${transform}" />`,
     );
   }
-  parts.push(
-    `<text x="${centerX}" y="${centerY}" fill="${escapeXml(element.color)}" fill-opacity="${element.opacity ?? 1}" font-family="${escapeXml(getDromapRuntimeFontFamily())}" font-size="${element.fontSize}" font-weight="700" text-anchor="middle" dominant-baseline="middle" transform="${transform}">${escapeXml(element.text)}</text>`,
-  );
+  const lines = element.text.split("\n");
+  // IText does not automatically wrap: preserve exactly the user's explicit lines.
+  const textWidth = measureMarkerText(element).width;
+  const align = element.textAlign ?? "center";
+  const x = centerX + (align === "left" ? -textWidth / 2 : align === "right" ? textWidth / 2 : 0);
+  const anchor = align === "left" ? "start" : align === "right" ? "end" : "middle";
+  const lineHeight = element.fontSize * 1.16;
+  // Explicit positions on each text node work in both the sanitized inline SVG
+  // and standalone image/export renderers (without relying on tspan layout).
+  parts.push(...lines.map((line, i) => `<text x="${x}" y="${centerY + (i - (lines.length - 1) / 2) * lineHeight}" fill="${escapeXml(element.color)}" fill-opacity="${element.opacity ?? 1}" font-family="${escapeXml(getDromapRuntimeFontFamily())}" font-size="${element.fontSize}" font-weight="${element.fontWeight ?? 700}" text-anchor="${anchor}" dominant-baseline="middle" transform="${transform}">${escapeXml(line)}</text>`));
   return `<g>${parts.join("")}</g>`;
 }
 
@@ -261,7 +282,7 @@ function renderArrowHead(
   const unitY = deltaY / length;
   const normalX = -unitY;
   const normalY = unitX;
-  const headLength = Math.max(12, strokeWidth * 3.2);
+  const headLength = markerArrowHeadLength(strokeWidth);
   const headHalfWidth = Math.max(7, strokeWidth * 1.8);
   const baseX = tipX - unitX * headLength;
   const baseY = tipY - unitY * headLength;
@@ -302,44 +323,17 @@ function renderElement(element: DroMapDrawnMarkerElement) {
         element.strokeWidth,
       )
     : null;
-  const startX = startHead
-    ? startHead.baseX +
-      ((element.x2 - element.x1) /
-        Math.max(
-          1,
-          Math.hypot(element.x2 - element.x1, element.y2 - element.y1),
-        )) *
-        element.strokeWidth
-    : element.x1;
-  const startY = startHead
-    ? startHead.baseY +
-      ((element.y2 - element.y1) /
-        Math.max(
-          1,
-          Math.hypot(element.x2 - element.x1, element.y2 - element.y1),
-        )) *
-        element.strokeWidth
-    : element.y1;
-  const endX = endHead
-    ? endHead.baseX +
-      ((element.x1 - element.x2) /
-        Math.max(
-          1,
-          Math.hypot(element.x2 - element.x1, element.y2 - element.y1),
-        )) *
-        element.strokeWidth
-    : element.x2;
-  const endY = endHead
-    ? endHead.baseY +
-      ((element.y1 - element.y2) /
-        Math.max(
-          1,
-          Math.hypot(element.x2 - element.x1, element.y2 - element.y1),
-        )) *
-        element.strokeWidth
-    : element.y2;
+  const [shaftStart, shaftEnd] = trimMarkerLineForArrowheads(
+    [
+      { x: element.x1, y: element.y1 },
+      { x: element.x2, y: element.y2 },
+    ],
+    element.strokeWidth,
+    arrowStart,
+    arrowEnd,
+  );
   const dash = getDashArray(element.dashStyle, element.strokeWidth);
-  return `<g><line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" stroke="${escapeXml(element.strokeColor)}" stroke-opacity="${opacity}" stroke-width="${element.strokeWidth}"${dash ? ` stroke-dasharray="${dash}"` : ""} stroke-linecap="round" />${startHead?.markup ?? ""}${endHead?.markup ?? ""}</g>`;
+  return `<g><line x1="${shaftStart.x}" y1="${shaftStart.y}" x2="${shaftEnd.x}" y2="${shaftEnd.y}" stroke="${escapeXml(element.strokeColor)}" stroke-opacity="${opacity}" stroke-width="${element.strokeWidth}"${dash ? ` stroke-dasharray="${dash}"` : ""} stroke-linecap="round" />${startHead?.markup ?? ""}${endHead?.markup ?? ""}</g>`;
 }
 
 function renderPatternDefinitions(elements: DroMapDrawnMarkerElement[]) {
@@ -416,11 +410,14 @@ function getElementBounds(element: DroMapDrawnMarkerElement): Bounds {
       x: element.x + element.width / 2,
       y: element.y + element.height / 2,
     };
+    const measured = element.type === "text" ? measureMarkerText(element) : element;
+    const width = element.type === "text" && (element.backgroundEnabled || element.borderEnabled) ? Math.max(measured.width, element.width) : measured.width;
+    const height = element.type === "text" && (element.backgroundEnabled || element.borderEnabled) ? Math.max(measured.height, element.height) : measured.height;
     const corners = [
-      { x: element.x, y: element.y },
-      { x: element.x + element.width, y: element.y },
-      { x: element.x + element.width, y: element.y + element.height },
-      { x: element.x, y: element.y + element.height },
+      { x: center.x - width / 2, y: center.y - height / 2 },
+      { x: center.x + width / 2, y: center.y - height / 2 },
+      { x: center.x + width / 2, y: center.y + height / 2 },
+      { x: center.x - width / 2, y: center.y + height / 2 },
     ].map((point) => rotatePoint(point, center, element.rotation));
     const padding = element.type === "shape" ? element.strokeWidth / 2 + 3 : 4;
     return boundsFromPoints(corners, padding);
@@ -462,14 +459,19 @@ function getContentViewBox(elements: DroMapDrawnMarkerElement[]) {
   return `${centerX - finalSize / 2} ${centerY - finalSize / 2} ${finalSize} ${finalSize}`;
 }
 
-export function createDrawnMarkerSvg(elements: DroMapDrawnMarkerElement[]) {
+export function createDrawnMarkerSvg(elements: DroMapDrawnMarkerElement[], fontCss = "") {
   const viewBox = getContentViewBox(elements);
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="512" height="512" preserveAspectRatio="xMidYMid meet">${renderPatternDefinitions(elements)}${elements.map(renderElement).join("")}</svg>`;
+  const content = elements.map(element => {
+    const svg = renderElement(element);
+    // Preserve legacy markers; new compositions scale their contours with the symbol.
+    return element.type !== "text" && element.strokeScales ? svg.replaceAll(' vector-effect="non-scaling-stroke"', "") : svg;
+  }).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="512" height="512" preserveAspectRatio="xMidYMid meet">${fontCss && elements.some(e => e.type === "text") ? `<style>${escapeXml(fontCss)}</style>` : ""}${renderPatternDefinitions(elements)}${content}</svg>`;
 }
 
-export function createDrawnMarkerDataUrl(elements: DroMapDrawnMarkerElement[]) {
+export function createDrawnMarkerDataUrl(elements: DroMapDrawnMarkerElement[], fontCss = "") {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-    createDrawnMarkerSvg(elements),
+    createDrawnMarkerSvg(elements, fontCss),
   )}`;
 }
 

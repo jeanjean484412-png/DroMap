@@ -19,13 +19,15 @@ function getDeviceId() {
 
 export function DromapSingleDeviceGuard() {
   const userMode = useDromapProductStore((state) => state.userMode);
+  const accountUserId = useDromapProductStore((state) => state.accountUserId);
   const signOutAccount = useDromapProductStore((state) => state.signOutAccount);
+  const refreshAccountSession = useDromapProductStore((state) => state.refreshAccountSession);
   const [blocked, setBlocked] = useState(false);
   const [checking, setChecking] = useState(false);
   const deviceIdRef = useRef<string | null>(null);
 
   const claim = useCallback(async (heartbeat = false) => {
-    if (userMode !== "authenticated") return;
+    if (userMode !== "authenticated" || !accountUserId) return;
     const deviceId = deviceIdRef.current ?? getDeviceId();
     deviceIdRef.current = deviceId;
     if (!heartbeat) setChecking(true);
@@ -34,15 +36,21 @@ export function DromapSingleDeviceGuard() {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId, heartbeat }),
+        body: JSON.stringify({ deviceId, heartbeat, accountUserId }),
       });
-      setBlocked(response.status === 409);
+      const payload = (await response.json().catch(() => null)) as { code?: unknown } | null;
+      if (response.status === 409 && payload?.code === "ACCOUNT_SESSION_CHANGED") {
+        setBlocked(false);
+        await refreshAccountSession();
+        return;
+      }
+      setBlocked(response.status === 409 && payload?.code === "DEVICE_LEASE_CONFLICT");
     } catch {
       // Une panne réseau ne verrouille pas DroMap : le mode hors ligne reste utilisable.
     } finally {
       if (!heartbeat) setChecking(false);
     }
-  }, [userMode]);
+  }, [accountUserId, refreshAccountSession, userMode]);
 
   const release = useCallback(async (keepalive = false) => {
     const deviceId = deviceIdRef.current;

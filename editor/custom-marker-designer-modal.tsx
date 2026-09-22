@@ -1,1697 +1,823 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- Local vector data URLs must use the same native SVG renderer as saved markers. */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-
-import {
-  type DroMapCustomMarkerDefinition,
-  type DroMapDrawnMarkerDashStyle,
-  type DroMapDrawnMarkerElement,
-  type DroMapDrawnMarkerHatchingStyle,
-  type DroMapDrawnMarkerPoint,
+import type {
+  DroMapCustomMarkerDefinition,
+  DroMapDrawnMarkerElement as Element,
+  DroMapDrawnMarkerShapeKind,
 } from "@/stores/editor-custom-markers";
-import { ColorPicker } from "./color-picker";
-import { CustomMarkerFabricCanvas } from "./custom-marker-fabric-canvas";
+import {
+  CustomMarkerFabricCanvas,
+  type DesignerTool,
+} from "./custom-marker-fabric-canvas";
 import { createDrawnMarkerDataUrl } from "./custom-marker-rendering";
+import {
+  DROMAP_BUILTIN_MARKER_SYMBOLS,
+  getBuiltinMarkerCompositionSvg,
+} from "./marker-symbol";
+import {
+  alignMarkerElements,
+  markerElementLabel,
+  translateMarkerElement,
+  type MarkerAlignment,
+} from "./custom-marker-composition";
+import {
+  MarkerProperties,
+  ColorField,
+  NumberField,
+} from "./custom-marker-properties";
+import styles from "./custom-marker-designer.module.css";
+import { loadMarkerFontCss } from "./custom-marker-font";
 
-type DesignerTool =
-  | "select"
-  | "line"
-  | "arrow"
-  | "freehand-line"
-  | "freehand-zone"
-  | "polygon"
-  | "rectangle"
-  | "circle"
-  | "ellipse"
-  | "triangle"
-  | "diamond"
-  | "star"
-  | "text";
-
-type Point = DroMapDrawnMarkerPoint;
-
-type LinePreset = {
-  color: string;
-  opacity: number;
-  weight: number;
-  dashStyle: DroMapDrawnMarkerDashStyle;
-  arrowStart: boolean;
-  arrowEnd: boolean;
-  smoothing: number;
-};
-
-type ZonePreset = {
-  strokeEnabled: boolean;
-  color: string;
-  opacity: number;
-  weight: number;
-  dashStyle: DroMapDrawnMarkerDashStyle;
-  fillEnabled: boolean;
-  fillColor: string;
-  fillOpacity: number;
-  hatchingStyle: DroMapDrawnMarkerHatchingStyle;
-  hatchingColor: string;
-  hatchingWeight: number;
-  hatchingSpacing: number;
-  dotsEnabled: boolean;
-  dotsColor: string;
-  dotsRadius: number;
-  dotsSpacing: number;
-  smoothing: number;
-};
-
-type TextPreset = {
-  color: string;
-  opacity: number;
-  fontSize: number;
-  backgroundEnabled: boolean;
-  backgroundColor: string;
-  backgroundOpacity: number;
-  borderEnabled: boolean;
-  borderColor: string;
-  borderWidth: number;
-};
-
-type CustomMarkerDesignerModalProps = {
+type Props = {
   initialMarker?: DroMapCustomMarkerDefinition | null;
   onCancel: () => void;
   onSave: (input: {
     name: string;
-    elements: DroMapDrawnMarkerElement[];
+    elements: Element[];
     dataUrl: string;
   }) => void;
 };
-
-const DEFAULT_LINE_PRESET: LinePreset = {
-  color: "#111827",
-  opacity: 1,
-  weight: 2,
-  dashStyle: "solid",
-  arrowStart: false,
-  arrowEnd: false,
-  smoothing: 45,
-};
-const DEFAULT_ZONE_PRESET: ZonePreset = {
+const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+const id = () => `marker-element-${crypto.randomUUID()}`;
+const ZONE = {
   strokeEnabled: true,
-  color: "#111827",
+  color: "#194858",
   opacity: 1,
   weight: 2,
-  dashStyle: "solid",
-  fillEnabled: false,
-  fillColor: "#2563eb",
-  fillOpacity: 0.25,
-  hatchingStyle: "none",
-  hatchingColor: "#111827",
+  dashStyle: "solid" as const,
+  fillEnabled: true,
+  fillColor: "#2bada3",
+  fillOpacity: 1,
+  hatchingStyle: "none" as const,
+  hatchingColor: "#194858",
   hatchingWeight: 2,
   hatchingSpacing: 14,
   dotsEnabled: false,
-  dotsColor: "#111827",
+  dotsColor: "#194858",
   dotsRadius: 2,
   dotsSpacing: 14,
   smoothing: 45,
 };
-const DEFAULT_TEXT_PRESET: TextPreset = {
-  color: "#111827",
+const TEXT = {
+  color: "#194858",
   opacity: 1,
   fontSize: 42,
   backgroundEnabled: false,
   backgroundColor: "#ffffff",
-  backgroundOpacity: 0.85,
+  backgroundOpacity: 1,
   borderEnabled: false,
-  borderColor: "#111827",
-  borderWidth: 2,
+  borderColor: "#194858",
+  borderWidth: 0,
 };
-
-const TOOL_GROUPS: Array<{
-  label: string;
-  tools: Array<{ id: DesignerTool; label: string; icon: string }>;
-}> = [
-  {
-    label: "Sélection",
-    tools: [{ id: "select", label: "Sélection", icon: "↖" }],
-  },
-  {
-    label: "Traits",
-    tools: [
-      { id: "line", label: "Trait", icon: "╱" },
-      { id: "arrow", label: "Flèche", icon: "→" },
-      { id: "freehand-line", label: "Dessin libre", icon: "〰" },
-    ],
-  },
-  {
-    label: "Zones",
-    tools: [
-      { id: "polygon", label: "Zone", icon: "⬠" },
-      { id: "freehand-zone", label: "Zone libre", icon: "⌁" },
-      { id: "rectangle", label: "Rectangle", icon: "▭" },
-      { id: "circle", label: "Cercle", icon: "○" },
-      { id: "ellipse", label: "Ellipse", icon: "⬭" },
-      { id: "triangle", label: "Triangle", icon: "△" },
-      { id: "diamond", label: "Losange", icon: "◇" },
-      { id: "star", label: "Étoile", icon: "☆" },
-    ],
-  },
-  {
-    label: "Texte",
-    tools: [{ id: "text", label: "Texte", icon: "T" }],
-  },
+const SHAPES: [DroMapDrawnMarkerShapeKind, string, string, number?][] = [
+  ["circle", "Cercle", "○"],
+  ["ellipse", "Ellipse", "⬭"],
+  ["rectangle", "Rectangle", "▭", 0],
+  ["rectangle", "Rectangle arrondi", "▢", 18],
+  ["triangle", "Triangle", "△"],
 ];
-
-function cloneElement<T extends DroMapDrawnMarkerElement>(element: T): T {
-  return JSON.parse(JSON.stringify(element)) as T;
-}
-
-function cloneElements(elements: DroMapDrawnMarkerElement[]) {
-  return elements.map(cloneElement);
-}
-
-function elementsEqual(
-  first: DroMapDrawnMarkerElement[],
-  second: DroMapDrawnMarkerElement[],
-) {
-  return JSON.stringify(first) === JSON.stringify(second);
-}
-
-function smoothPath(points: Point[], smoothing: number, closed: boolean) {
-  if (points.length < 3 || smoothing <= 0)
-    return points.map((point) => ({ ...point }));
-  const passes = Math.max(1, Math.round((smoothing / 100) * 4));
-  let current = points.map((point) => ({ ...point }));
-  for (let pass = 0; pass < passes; pass += 1) {
-    const next: Point[] = [];
-    if (!closed) next.push(current[0]);
-    const limit = closed ? current.length : current.length - 1;
-    for (let index = 0; index < limit; index += 1) {
-      const first = current[index];
-      const second = current[(index + 1) % current.length];
-      next.push({
-        x: first.x * 0.75 + second.x * 0.25,
-        y: first.y * 0.75 + second.y * 0.25,
-      });
-      next.push({
-        x: first.x * 0.25 + second.x * 0.75,
-        y: first.y * 0.25 + second.y * 0.75,
-      });
-    }
-    if (!closed) next.push(current[current.length - 1]);
-    current = next;
-  }
-  return current;
-}
-
-
-function ToolButton({
-  tool,
-  activeTool,
-  onChoose,
-}: {
-  tool: { id: DesignerTool; label: string; icon: string };
-  activeTool: DesignerTool;
-  onChoose: (tool: DesignerTool) => void;
-}) {
-  const active = activeTool === tool.id;
-  return (
-    <button
-      type="button"
-      data-dromap-tool-control="true"
-      aria-pressed={active}
-      onClick={() => onChoose(tool.id)}
-      className={[
-        "flex h-14 min-w-0 flex-col items-center justify-center gap-0.5 rounded-2xl border px-1 text-center shadow-sm transition",
-        active
-          ? "border-blue-700 bg-blue-600 text-white shadow-blue-200/70"
-          : "border-slate-200 bg-white text-slate-800 hover:border-blue-300 hover:bg-blue-50/60",
-      ].join(" ")}
-      title={tool.label}
-    >
-      <span className="flex h-7 items-center justify-center text-xl leading-none">
-        {tool.icon}
-      </span>
-      <span className="max-w-full text-[9px] font-extrabold uppercase leading-none tracking-wide">
-        {tool.label}
-      </span>
-    </button>
-  );
-}
-
-function SettingSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-      <h3 className="mb-3 text-xs font-black text-slate-950">{title}</h3>
-      <div className="space-y-3">{children}</div>
-    </section>
-  );
-}
-
-function ColorRow({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="dromap-marker-setting-row flex items-center justify-between gap-3 text-xs">
-      <span>{label}</span>
-      <ColorPicker value={value} onChange={onChange} ariaLabel={label} />
-    </div>
-  );
-}
-
-function RangeRow({
-  label,
-  value,
-  min,
-  max,
-  step = 1,
-  suffix = "",
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step?: number;
-  suffix?: string;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="dromap-marker-setting-row block text-xs">
-      <span className="mb-1 flex items-center justify-between gap-2">
-        <span>{label}</span>
-        <strong>
-          {Number.isInteger(value) ? value : value.toFixed(2)}
-          {suffix}
-        </strong>
-      </span>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full accent-blue-600"
-      />
-    </label>
-  );
-}
-
-function CheckRow({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="dromap-marker-setting-row flex items-center justify-between gap-3 text-xs">
-      <span>{label}</span>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        className="h-4 w-4 rounded border-slate-300 accent-blue-600"
-      />
-    </label>
-  );
-}
-
-function DashRow({
-  value,
-  onChange,
-}: {
-  value: DroMapDrawnMarkerDashStyle;
-  onChange: (value: DroMapDrawnMarkerDashStyle) => void;
-}) {
-  return (
-    <label className="dromap-marker-setting-row flex items-center justify-between gap-3 text-xs">
-      <span>Trait</span>
-      <select
-        value={value}
-        onChange={(event) =>
-          onChange(event.target.value as DroMapDrawnMarkerDashStyle)
-        }
-        className="w-36 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900"
-      >
-        <option value="solid">Plein</option>
-        <option value="dashed">Tireté</option>
-        <option value="dotted">Pointillé</option>
-      </select>
-    </label>
-  );
-}
-
-function HatchingRow({
-  value,
-  onChange,
-}: {
-  value: DroMapDrawnMarkerHatchingStyle;
-  onChange: (value: DroMapDrawnMarkerHatchingStyle) => void;
-}) {
-  return (
-    <label className="dromap-marker-setting-row flex items-center justify-between gap-3 text-xs">
-      <span>Hachures</span>
-      <select
-        value={value}
-        onChange={(event) =>
-          onChange(event.target.value as DroMapDrawnMarkerHatchingStyle)
-        }
-        className="w-36 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900"
-      >
-        <option value="none">Aucune</option>
-        <option value="diagonal-right">Diagonale /</option>
-        <option value="diagonal-left">Diagonale \</option>
-        <option value="horizontal">Horizontale</option>
-        <option value="vertical">Verticale</option>
-      </select>
-    </label>
-  );
-}
-
-function toolTitle(tool: DesignerTool) {
-  return (
-    TOOL_GROUPS.flatMap((group) => group.tools).find((item) => item.id === tool)
-      ?.label ?? "Outil"
-  );
-}
+const ALIGN: [MarkerAlignment, string][] = [
+  ["centerX", "Centrer horizontalement"],
+  ["centerY", "Centrer verticalement"],
+  ["left", "Aligner à gauche"],
+  ["right", "Aligner à droite"],
+  ["top", "Aligner en haut"],
+  ["bottom", "Aligner en bas"],
+];
+const normalizeSearch = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 
 export function CustomMarkerDesignerModal({
   initialMarker,
   onCancel,
   onSave,
-}: CustomMarkerDesignerModalProps) {
-  const initialElements = useMemo(
-    () => initialMarker?.elements?.map(cloneElement) ?? [],
-    [initialMarker],
+}: Props) {
+  const [elements, setElements] = useState<Element[]>(() =>
+    clone(initialMarker?.elements ?? []),
   );
-  const [name, setName] = useState(
-    initialMarker?.name ?? "Mon marqueur dessiné",
-  );
-  const [elements, setElements] =
-    useState<DroMapDrawnMarkerElement[]>(initialElements);
   const elementsRef = useRef(elements);
-  const [selectedElementId, setSelectedElementId] = useState<string | null>(
-    initialElements[0]?.id ?? null,
-  );
-  const [activeTool, setActiveTool] = useState<DesignerTool>("select");
-  const [linePreset, setLinePreset] = useState<LinePreset>(DEFAULT_LINE_PRESET);
-  const [zonePreset, setZonePreset] = useState<ZonePreset>(DEFAULT_ZONE_PRESET);
-  const [textPreset, setTextPreset] = useState<TextPreset>(DEFAULT_TEXT_PRESET);
-  const historyRef = useRef<DroMapDrawnMarkerElement[][]>([
-    cloneElements(initialElements),
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [tool, setTool] = useState<DesignerTool>("select");
+  const [drawer, setDrawer] = useState<"shapes" | "symbols" | null>(null);
+  const [search, setSearch] = useState("");
+  const [name, setName] = useState(initialMarker?.name ?? "");
+  const [error, setError] = useState("");
+  const [fontCss, setFontCss] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [recent, setRecent] = useState([
+    "#194858",
+    "#2bada3",
+    "#a7f3d0",
+    "#ffffff",
+    "#ef4444",
+    "#f59e0b",
+    "#2563eb",
+    "#111827",
   ]);
-  const historyIndexRef = useRef(0);
-  const lastCoalescedRef = useRef<{ key: string; time: number } | null>(null);
-  const [historyVersion, setHistoryVersion] = useState(0);
-  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useEffect(() => {
-    elementsRef.current = elements;
-  }, [elements]);
-
-  const selectedElement = useMemo(
-    () => elements.find((element) => element.id === selectedElementId) ?? null,
-    [elements, selectedElementId],
+  const [linePreset, setLinePreset] = useState({
+    color: "#194858",
+    opacity: 1,
+    weight: 4,
+    dashStyle: "solid" as "solid" | "dashed" | "dotted",
+    arrowStart: false,
+    arrowEnd: false,
+    smoothing: 45,
+  });
+  const history = useRef<Element[][]>([clone(elements)]);
+  const index = useRef(0);
+  const coalesced = useRef<{ key: string; time: number } | null>(null);
+  const [, refreshHistory] = useState(0);
+  const clipboard = useRef<Element[]>([]);
+  const dialog = useRef<HTMLElement>(null);
+  const selected = elements.filter((e) => selectedIds.includes(e.id));
+  const current = selected.length === 1 ? selected[0] : null;
+  const svgUrl = useMemo(
+    () => createDrawnMarkerDataUrl(elements, fontCss),
+    [elements, fontCss],
   );
-  const selectedShape =
-    selectedElement?.type === "shape" ? selectedElement : null;
-  const selectedLine =
-    selectedElement?.type === "line" || selectedElement?.type === "arrow"
-      ? selectedElement
-      : null;
-  const selectedPath =
-    selectedElement?.type === "path" ? selectedElement : null;
+  const results = useMemo(() => {
+    const query = normalizeSearch(search.trim());
+    return DROMAP_BUILTIN_MARKER_SYMBOLS.filter((s) =>
+      normalizeSearch(`${s.label} ${s.keywords.join(" ")}`).includes(query),
+    ).slice(0, 90);
+  }, [search]);
 
-  const canUndo = historyVersion >= 0 && historyIndexRef.current > 0;
-  const canRedo =
-    historyVersion >= 0 &&
-    historyIndexRef.current < historyRef.current.length - 1;
-
-  function setElementsWithoutHistory(next: DroMapDrawnMarkerElement[]) {
+  function commit(next: Element[], key?: string) {
+    if (JSON.stringify(next) === JSON.stringify(elementsRef.current)) return;
+    const time = Date.now();
+    if (
+      key &&
+      coalesced.current?.key === key &&
+      time - coalesced.current.time < 550 &&
+      index.current === history.current.length - 1
+    )
+      history.current[index.current] = clone(next);
+    else {
+      history.current = [
+        ...history.current.slice(0, index.current + 1),
+        clone(next),
+      ];
+      index.current++;
+    }
+    coalesced.current = key ? { key, time } : null;
     elementsRef.current = next;
     setElements(next);
+    setError("");
+    refreshHistory((v) => v + 1);
   }
-
-  function commitElements(
-    nextInput: DroMapDrawnMarkerElement[],
-    coalesceKey?: string,
+  function travel(delta: number) {
+    const nextIndex = index.current + delta;
+    if (nextIndex < 0 || nextIndex >= history.current.length) return;
+    index.current = nextIndex;
+    coalesced.current = null;
+    const next = clone(history.current[nextIndex]);
+    elementsRef.current = next;
+    setElements(next);
+    setSelectedIds((ids) =>
+      ids.filter((value) => next.some((e) => e.id === value)),
+    );
+    refreshHistory((v) => v + 1);
+  }
+  function patch(fn: (e: Element) => Element, key: string) {
+    commit(
+      elementsRef.current.map((e) => (selectedIds.includes(e.id) ? fn(e) : e)),
+      `${selectedIds.join()}:${key}`,
+    );
+  }
+  function add(element: Element) {
+    commit([
+      ...elementsRef.current,
+      element.type === "text" ? element : { ...element, strokeScales: true },
+    ]);
+    setSelectedIds([element.id]);
+    setTool("select");
+    setDrawer(null);
+  }
+  function shape(
+    kind: DroMapDrawnMarkerShapeKind,
+    radius?: number,
+    symbolId?: string,
   ) {
-    const next = cloneElements(nextInput);
-    const current = elementsRef.current;
-    if (elementsEqual(current, next)) return;
-
-    const now = Date.now();
-    const canCoalesce =
-      coalesceKey &&
-      lastCoalescedRef.current?.key === coalesceKey &&
-      now - lastCoalescedRef.current.time < 550 &&
-      historyIndexRef.current === historyRef.current.length - 1;
-
-    if (canCoalesce) {
-      historyRef.current[historyIndexRef.current] = cloneElements(next);
+    add({
+      id: id(),
+      type: "shape",
+      shape: kind,
+      x: 90,
+      y: kind === "ellipse" ? 120 : 90,
+      width: 180,
+      height: kind === "ellipse" ? 120 : 180,
+      rotation: 0,
+      fillEnabled: true,
+      fillColor: symbolId ? "#194858" : ZONE.fillColor,
+      fillOpacity: 1,
+      strokeEnabled: !symbolId,
+      strokeColor: ZONE.color,
+      strokeWidth: symbolId ? 0 : 2,
+      strokeOpacity: 1,
+      cornerRadius: radius,
+      symbolId,
+    });
+  }
+  function remove() {
+    commit(elementsRef.current.filter((e) => !selectedIds.includes(e.id)));
+    setSelectedIds([]);
+  }
+  function paste(source = clipboard.current) {
+    if (!source.length) return;
+    const groups = new Map<string, string>();
+    const copies = source.map((e) => {
+      if (e.groupId && !groups.has(e.groupId)) groups.set(e.groupId, id());
+      return {
+        ...translateMarkerElement(clone(e), 12, 12),
+        id: id(),
+        groupId: e.groupId ? groups.get(e.groupId) : undefined,
+      };
+    });
+    commit([...elementsRef.current, ...copies]);
+    setSelectedIds(copies.map((e) => e.id));
+    setTool("select");
+  }
+  function order(direction: "front" | "back" | "up" | "down") {
+    let next = [...elementsRef.current];
+    if (direction === "front" || direction === "back") {
+      const chosen = next.filter((e) => selectedIds.includes(e.id)),
+        rest = next.filter((e) => !selectedIds.includes(e.id));
+      next =
+        direction === "front" ? [...rest, ...chosen] : [...chosen, ...rest];
     } else {
-      historyRef.current = historyRef.current.slice(
-        0,
-        historyIndexRef.current + 1,
-      );
-      historyRef.current.push(cloneElements(next));
-      historyIndexRef.current += 1;
+      const units: Element[][] = [];
+      for (const e of next) {
+        const previous = units.at(-1);
+        if (e.groupId && previous?.[0].groupId === e.groupId) previous.push(e);
+        else units.push([e]);
+      }
+      const chosen = (unit: Element[]) =>
+        unit.some((e) => selectedIds.includes(e.id));
+      if (direction === "up") {
+        for (let i = units.length - 2; i >= 0; i--)
+          if (chosen(units[i]) && !chosen(units[i + 1]))
+            [units[i], units[i + 1]] = [units[i + 1], units[i]];
+      } else {
+        for (let i = 1; i < units.length; i++)
+          if (chosen(units[i]) && !chosen(units[i - 1]))
+            [units[i], units[i - 1]] = [units[i - 1], units[i]];
+      }
+      next = units.flat();
     }
-
-    lastCoalescedRef.current = coalesceKey
-      ? { key: coalesceKey, time: now }
-      : null;
-    setElementsWithoutHistory(next);
-    setHistoryVersion((value) => value + 1);
+    commit(next);
   }
-
-  function undo() {
-    if (historyIndexRef.current <= 0) return;
-    historyIndexRef.current -= 1;
-    const next = cloneElements(historyRef.current[historyIndexRef.current]);
-    setElementsWithoutHistory(next);
-    setSelectedElementId((current) =>
-      current && next.some((element) => element.id === current)
-        ? current
-        : null,
-    );
-    setHistoryVersion((value) => value + 1);
-  }
-
-  function redo() {
-    if (historyIndexRef.current >= historyRef.current.length - 1) return;
-    historyIndexRef.current += 1;
-    const next = cloneElements(historyRef.current[historyIndexRef.current]);
-    setElementsWithoutHistory(next);
-    setSelectedElementId((current) =>
-      current && next.some((element) => element.id === current)
-        ? current
-        : null,
-    );
-    setHistoryVersion((value) => value + 1);
+  function group() {
+    const groupId = id();
+    const rest = elementsRef.current.filter((e) => !selectedIds.includes(e.id));
+    commit([...rest, ...selected.map((e) => ({ ...e, groupId }))]);
   }
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const isEditing =
-        target?.tagName === "INPUT" ||
-        target?.tagName === "TEXTAREA" ||
-        target?.tagName === "SELECT" ||
-        target?.isContentEditable;
-      const modifier = event.ctrlKey || event.metaKey;
-
-      if (!isEditing && modifier && event.key.toLowerCase() === "z") {
-        event.preventDefault();
-        if (event.shiftKey) redo();
-        else undo();
-        return;
-      }
-      if (!isEditing && modifier && event.key.toLowerCase() === "y") {
-        event.preventDefault();
-        redo();
-        return;
-      }
-      if (
-        !isEditing &&
-        (event.key === "Delete" || event.key === "Backspace") &&
-        selectedElementId
-      ) {
-        event.preventDefault();
-        commitElements(
-          elementsRef.current.filter(
-            (element) => element.id !== selectedElementId,
-          ),
-        );
-        setSelectedElementId(null);
-        return;
-      }
-      if (!isEditing && event.key === "Escape") {
-        event.preventDefault();
-        if (activeTool !== "select") setActiveTool("select");
-        else setSelectedElementId(null);
-      }
+    const previous = document.activeElement as HTMLElement | null;
+    let active = true;
+    void loadMarkerFontCss()
+      .then((css) => {
+        if (active) setFontCss(css);
+      })
+      .catch(() => {
+        /* Retry and report only if text is saved. */
+      });
+    dialog.current?.focus();
+    return () => {
+      active = false;
+      previous?.focus();
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+  useEffect(() => {
+    function keydown(event: KeyboardEvent) {
+      event.stopPropagation();
+      const target = event.target as HTMLElement;
+      if (event.key === "Tab") {
+        const controls = Array.from(
+          dialog.current?.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), input, textarea, select, [tabindex="0"]',
+          ) ?? [],
+        ).filter((e) => e.getClientRects().length);
+        if (
+          event.shiftKey &&
+          (target === controls[0] || target === dialog.current)
+        ) {
+          event.preventDefault();
+          controls.at(-1)?.focus();
+        } else if (!event.shiftKey && target === controls.at(-1)) {
+          event.preventDefault();
+          controls[0]?.focus();
+        }
+        return;
+      }
+      if (target.matches("input, textarea, select") || target.isContentEditable)
+        return;
+      const mod = event.ctrlKey || event.metaKey,
+        key = event.key.toLowerCase();
+      if (mod && ["z", "y", "c", "v", "d"].includes(key)) {
+        event.preventDefault();
+        if (key === "z") travel(event.shiftKey ? 1 : -1);
+        if (key === "y") travel(1);
+        if (key === "c") clipboard.current = clone(selected);
+        if (key === "v") paste();
+        if (key === "d") paste(selected);
+      } else if (key === "delete" || key === "backspace") {
+        event.preventDefault();
+        remove();
+      } else if (key.startsWith("arrow") && selected.length) {
+        event.preventDefault();
+        const d = event.shiftKey ? 10 : 1;
+        patch(
+          (e) =>
+            translateMarkerElement(
+              e,
+              key === "arrowleft" ? -d : key === "arrowright" ? d : 0,
+              key === "arrowup" ? -d : key === "arrowdown" ? d : 0,
+            ),
+          "nudge",
+        );
+      } else if (key === "escape") {
+        event.preventDefault();
+        setTool("select");
+        setDrawer(null);
+        setSelectedIds([]);
+      }
+    }
+    const node = dialog.current;
+    node?.addEventListener("keydown", keydown);
+    return () => node?.removeEventListener("keydown", keydown);
   });
-
-  function chooseTool(tool: DesignerTool) {
-    setSelectedElementId(null);
-    setActiveTool((current) =>
-      current === tool && tool !== "select" ? "select" : tool,
-    );
-  }
-
-  function updateSelectedCommitted(
-    updater: (element: DroMapDrawnMarkerElement) => DroMapDrawnMarkerElement,
-    key: string,
-  ) {
-    if (!selectedElementId) return;
-    commitElements(
-      elementsRef.current.map((element) =>
-        element.id === selectedElementId ? updater(element) : element,
-      ),
-      `selected:${selectedElementId}:${key}`,
-    );
-  }
-
-  function deleteSelectedElement() {
-    if (!selectedElementId) return;
-    commitElements(
-      elementsRef.current.filter((element) => element.id !== selectedElementId),
-    );
-    setSelectedElementId(null);
-  }
-
-  function moveSelectedElement(direction: "front" | "back") {
-    if (!selectedElementId) return;
-    const index = elementsRef.current.findIndex(
-      (element) => element.id === selectedElementId,
-    );
-    if (index < 0) return;
-    const next = [...elementsRef.current];
-    const [element] = next.splice(index, 1);
-    if (direction === "front") next.push(element);
-    else next.unshift(element);
-    commitElements(next);
-  }
-
-  function renderLinePresetSettings() {
-    return (
-      <SettingSection title={`Paramètres — ${toolTitle(activeTool)}`}>
-        <ColorRow
-          label="Couleur"
-          value={linePreset.color}
-          onChange={(color) =>
-            setLinePreset((current) => ({ ...current, color }))
-          }
-        />
-        <DashRow
-          value={linePreset.dashStyle}
-          onChange={(dashStyle) =>
-            setLinePreset((current) => ({ ...current, dashStyle }))
-          }
-        />
-        <div className="grid grid-cols-2 gap-2 rounded-xl bg-white p-2">
-          <CheckRow
-            label="Flèche début"
-            checked={activeTool === "arrow" ? false : linePreset.arrowStart}
-            onChange={(arrowStart) =>
-              setLinePreset((current) => ({ ...current, arrowStart }))
-            }
-          />
-          <CheckRow
-            label="Flèche fin"
-            checked={activeTool === "arrow" ? true : linePreset.arrowEnd}
-            onChange={(arrowEnd) =>
-              setLinePreset((current) => ({ ...current, arrowEnd }))
-            }
-          />
-        </div>
-        <RangeRow
-          label="Épaisseur"
-          value={linePreset.weight}
-          min={1}
-          max={24}
-          suffix="px"
-          onChange={(weight) =>
-            setLinePreset((current) => ({ ...current, weight }))
-          }
-        />
-        {activeTool === "freehand-line" ? (
-          <RangeRow
-            label="Lissage"
-            value={linePreset.smoothing}
-            min={0}
-            max={100}
-            suffix="%"
-            onChange={(smoothing) =>
-              setLinePreset((current) => ({ ...current, smoothing }))
-            }
-          />
-        ) : null}
-        <RangeRow
-          label="Opacité"
-          value={linePreset.opacity}
-          min={0.1}
-          max={1}
-          step={0.05}
-          suffix=""
-          onChange={(opacity) =>
-            setLinePreset((current) => ({ ...current, opacity }))
-          }
-        />
-      </SettingSection>
-    );
-  }
-
-  function renderZonePresetSettings() {
-    return (
-      <SettingSection title={`Paramètres — ${toolTitle(activeTool)}`}>
-        <div className="grid grid-cols-2 gap-2 rounded-xl bg-white p-2">
-          <CheckRow
-            label="Contour"
-            checked={zonePreset.strokeEnabled}
-            onChange={(strokeEnabled) =>
-              setZonePreset((current) => ({ ...current, strokeEnabled }))
-            }
-          />
-          <CheckRow
-            label="Fond"
-            checked={zonePreset.fillEnabled}
-            onChange={(fillEnabled) =>
-              setZonePreset((current) => ({ ...current, fillEnabled }))
-            }
-          />
-        </div>
-        <ColorRow
-          label="Couleur contour"
-          value={zonePreset.color}
-          onChange={(color) =>
-            setZonePreset((current) => ({ ...current, color }))
-          }
-        />
-        <ColorRow
-          label="Couleur fond"
-          value={zonePreset.fillColor}
-          onChange={(fillColor) =>
-            setZonePreset((current) => ({ ...current, fillColor }))
-          }
-        />
-        <DashRow
-          value={zonePreset.dashStyle}
-          onChange={(dashStyle) =>
-            setZonePreset((current) => ({ ...current, dashStyle }))
-          }
-        />
-        <RangeRow
-          label="Épaisseur contour"
-          value={zonePreset.weight}
-          min={1}
-          max={24}
-          suffix="px"
-          onChange={(weight) =>
-            setZonePreset((current) => ({ ...current, weight }))
-          }
-        />
-        <RangeRow
-          label="Opacité contour"
-          value={zonePreset.opacity}
-          min={0.1}
-          max={1}
-          step={0.05}
-          onChange={(opacity) =>
-            setZonePreset((current) => ({ ...current, opacity }))
-          }
-        />
-        <RangeRow
-          label="Opacité fond"
-          value={zonePreset.fillOpacity}
-          min={0}
-          max={1}
-          step={0.05}
-          onChange={(fillOpacity) =>
-            setZonePreset((current) => ({ ...current, fillOpacity }))
-          }
-        />
-        {activeTool === "freehand-zone" ? (
-          <RangeRow
-            label="Lissage"
-            value={zonePreset.smoothing}
-            min={0}
-            max={100}
-            suffix="%"
-            onChange={(smoothing) =>
-              setZonePreset((current) => ({ ...current, smoothing }))
-            }
-          />
-        ) : null}
-        <HatchingRow
-          value={zonePreset.hatchingStyle}
-          onChange={(hatchingStyle) =>
-            setZonePreset((current) => ({ ...current, hatchingStyle }))
-          }
-        />
-        {zonePreset.hatchingStyle !== "none" ? (
-          <>
-            <ColorRow
-              label="Couleur hachures"
-              value={zonePreset.hatchingColor}
-              onChange={(hatchingColor) =>
-                setZonePreset((current) => ({ ...current, hatchingColor }))
-              }
-            />
-            <RangeRow
-              label="Épaisseur hachures"
-              value={zonePreset.hatchingWeight}
-              min={0.5}
-              max={12}
-              step={0.5}
-              suffix="px"
-              onChange={(hatchingWeight) =>
-                setZonePreset((current) => ({ ...current, hatchingWeight }))
-              }
-            />
-            <RangeRow
-              label="Resserrement"
-              value={zonePreset.hatchingSpacing}
-              min={3}
-              max={60}
-              suffix="px"
-              onChange={(hatchingSpacing) =>
-                setZonePreset((current) => ({ ...current, hatchingSpacing }))
-              }
-            />
-          </>
-        ) : null}
-        <CheckRow
-          label="Points"
-          checked={zonePreset.dotsEnabled}
-          onChange={(dotsEnabled) =>
-            setZonePreset((current) => ({ ...current, dotsEnabled }))
-          }
-        />
-        {zonePreset.dotsEnabled ? (
-          <>
-            <ColorRow
-              label="Couleur points"
-              value={zonePreset.dotsColor}
-              onChange={(dotsColor) =>
-                setZonePreset((current) => ({ ...current, dotsColor }))
-              }
-            />
-            <RangeRow
-              label="Rayon points"
-              value={zonePreset.dotsRadius}
-              min={0.5}
-              max={10}
-              step={0.5}
-              suffix="px"
-              onChange={(dotsRadius) =>
-                setZonePreset((current) => ({ ...current, dotsRadius }))
-              }
-            />
-            <RangeRow
-              label="Espacement points"
-              value={zonePreset.dotsSpacing}
-              min={3}
-              max={60}
-              suffix="px"
-              onChange={(dotsSpacing) =>
-                setZonePreset((current) => ({ ...current, dotsSpacing }))
-              }
-            />
-          </>
-        ) : null}
-      </SettingSection>
-    );
-  }
-
-  function renderTextPresetSettings() {
-    return (
-      <SettingSection title="Paramètres — Texte">
-        <ColorRow
-          label="Couleur"
-          value={textPreset.color}
-          onChange={(color) =>
-            setTextPreset((current) => ({ ...current, color }))
-          }
-        />
-        <RangeRow
-          label="Opacité"
-          value={textPreset.opacity}
-          min={0.1}
-          max={1}
-          step={0.05}
-          onChange={(opacity) =>
-            setTextPreset((current) => ({ ...current, opacity }))
-          }
-        />
-        <RangeRow
-          label="Taille"
-          value={textPreset.fontSize}
-          min={10}
-          max={120}
-          suffix="px"
-          onChange={(fontSize) =>
-            setTextPreset((current) => ({ ...current, fontSize }))
-          }
-        />
-        <div className="grid grid-cols-2 gap-2 rounded-xl bg-white p-2">
-          <CheckRow
-            label="Fond"
-            checked={textPreset.backgroundEnabled}
-            onChange={(backgroundEnabled) =>
-              setTextPreset((current) => ({ ...current, backgroundEnabled }))
-            }
-          />
-          <CheckRow
-            label="Cadre"
-            checked={textPreset.borderEnabled}
-            onChange={(borderEnabled) =>
-              setTextPreset((current) => ({ ...current, borderEnabled }))
-            }
-          />
-        </div>
-        {textPreset.backgroundEnabled ? (
-          <>
-            <ColorRow
-              label="Couleur fond"
-              value={textPreset.backgroundColor}
-              onChange={(backgroundColor) =>
-                setTextPreset((current) => ({ ...current, backgroundColor }))
-              }
-            />
-            <RangeRow
-              label="Opacité fond"
-              value={textPreset.backgroundOpacity}
-              min={0}
-              max={1}
-              step={0.05}
-              onChange={(backgroundOpacity) =>
-                setTextPreset((current) => ({ ...current, backgroundOpacity }))
-              }
-            />
-          </>
-        ) : null}
-        {textPreset.borderEnabled ? (
-          <>
-            <ColorRow
-              label="Couleur cadre"
-              value={textPreset.borderColor}
-              onChange={(borderColor) =>
-                setTextPreset((current) => ({ ...current, borderColor }))
-              }
-            />
-            <RangeRow
-              label="Épaisseur cadre"
-              value={textPreset.borderWidth}
-              min={1}
-              max={12}
-              suffix="px"
-              onChange={(borderWidth) =>
-                setTextPreset((current) => ({ ...current, borderWidth }))
-              }
-            />
-          </>
-        ) : null}
-      </SettingSection>
-    );
-  }
-
-  function renderSelectedSettings() {
-    if (!selectedElement) return null;
-    const patch = (
-      updater: (element: DroMapDrawnMarkerElement) => DroMapDrawnMarkerElement,
-      key: string,
-    ) => updateSelectedCommitted(updater, key);
-
-    return (
-      <SettingSection title="Élément sélectionné">
-        {selectedElement.type === "text" ? (
-          <>
-            <label className="dromap-marker-setting-row block text-xs">
-              <span className="mb-1 block">Contenu</span>
-              <textarea
-                ref={textAreaRef}
-                value={selectedElement.text}
-                onChange={(event) =>
-                  patch(
-                    (element) =>
-                      element.type === "text"
-                        ? { ...element, text: event.target.value || "Texte" }
-                        : element,
-                    "text",
-                  )
-                }
-                rows={3}
-                className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900"
-              />
-            </label>
-            <ColorRow
-              label="Couleur"
-              value={selectedElement.color}
-              onChange={(color) =>
-                patch(
-                  (element) =>
-                    element.type === "text" ? { ...element, color } : element,
-                  "color",
-                )
-              }
-            />
-            <RangeRow
-              label="Opacité"
-              value={selectedElement.opacity ?? 1}
-              min={0.1}
-              max={1}
-              step={0.05}
-              onChange={(opacity) =>
-                patch(
-                  (element) =>
-                    element.type === "text" ? { ...element, opacity } : element,
-                  "opacity",
-                )
-              }
-            />
-            <RangeRow
-              label="Taille"
-              value={selectedElement.fontSize}
-              min={10}
-              max={120}
-              suffix="px"
-              onChange={(fontSize) =>
-                patch(
-                  (element) =>
-                    element.type === "text"
-                      ? { ...element, fontSize }
-                      : element,
-                  "font-size",
-                )
-              }
-            />
-            <div className="grid grid-cols-2 gap-2 rounded-xl bg-white p-2">
-              <CheckRow
-                label="Fond"
-                checked={selectedElement.backgroundEnabled === true}
-                onChange={(backgroundEnabled) =>
-                  patch(
-                    (element) =>
-                      element.type === "text"
-                        ? { ...element, backgroundEnabled }
-                        : element,
-                    "background-enabled",
-                  )
-                }
-              />
-              <CheckRow
-                label="Cadre"
-                checked={selectedElement.borderEnabled === true}
-                onChange={(borderEnabled) =>
-                  patch(
-                    (element) =>
-                      element.type === "text"
-                        ? { ...element, borderEnabled }
-                        : element,
-                    "border-enabled",
-                  )
-                }
-              />
-            </div>
-            {selectedElement.backgroundEnabled ? (
-              <>
-                <ColorRow
-                  label="Couleur fond"
-                  value={selectedElement.backgroundColor ?? "#ffffff"}
-                  onChange={(backgroundColor) =>
-                    patch(
-                      (element) =>
-                        element.type === "text"
-                          ? { ...element, backgroundColor }
-                          : element,
-                      "background-color",
-                    )
-                  }
-                />
-                <RangeRow
-                  label="Opacité fond"
-                  value={selectedElement.backgroundOpacity ?? 0.85}
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  onChange={(backgroundOpacity) =>
-                    patch(
-                      (element) =>
-                        element.type === "text"
-                          ? { ...element, backgroundOpacity }
-                          : element,
-                      "background-opacity",
-                    )
-                  }
-                />
-              </>
-            ) : null}
-            {selectedElement.borderEnabled ? (
-              <>
-                <ColorRow
-                  label="Couleur cadre"
-                  value={selectedElement.borderColor ?? "#111827"}
-                  onChange={(borderColor) =>
-                    patch(
-                      (element) =>
-                        element.type === "text"
-                          ? { ...element, borderColor }
-                          : element,
-                      "border-color",
-                    )
-                  }
-                />
-                <RangeRow
-                  label="Épaisseur cadre"
-                  value={selectedElement.borderWidth ?? 2}
-                  min={1}
-                  max={12}
-                  suffix="px"
-                  onChange={(borderWidth) =>
-                    patch(
-                      (element) =>
-                        element.type === "text"
-                          ? { ...element, borderWidth }
-                          : element,
-                      "border-width",
-                    )
-                  }
-                />
-              </>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <ColorRow
-              label="Couleur contour"
-              value={selectedElement.strokeColor}
-              onChange={(strokeColor) =>
-                patch(
-                  (element) =>
-                    element.type === "text"
-                      ? element
-                      : { ...element, strokeColor },
-                  "stroke-color",
-                )
-              }
-            />
-            <DashRow
-              value={selectedElement.dashStyle ?? "solid"}
-              onChange={(dashStyle) =>
-                patch(
-                  (element) =>
-                    element.type === "text"
-                      ? element
-                      : { ...element, dashStyle },
-                  "dash-style",
-                )
-              }
-            />
-            <RangeRow
-              label="Épaisseur"
-              value={selectedElement.strokeWidth}
-              min={1}
-              max={24}
-              suffix="px"
-              onChange={(strokeWidth) =>
-                patch(
-                  (element) =>
-                    element.type === "text"
-                      ? element
-                      : { ...element, strokeWidth },
-                  "stroke-width",
-                )
-              }
-            />
-            <RangeRow
-              label="Opacité contour"
-              value={selectedElement.strokeOpacity ?? 1}
-              min={0.1}
-              max={1}
-              step={0.05}
-              onChange={(strokeOpacity) =>
-                patch(
-                  (element) =>
-                    element.type === "text"
-                      ? element
-                      : { ...element, strokeOpacity },
-                  "stroke-opacity",
-                )
-              }
-            />
-            {selectedLine ? (
-              <div className="grid grid-cols-2 gap-2 rounded-xl bg-white p-2">
-                <CheckRow
-                  label="Flèche début"
-                  checked={selectedLine.arrowStart === true}
-                  onChange={(arrowStart) =>
-                    patch(
-                      (element) =>
-                        element.type === "line" || element.type === "arrow"
-                          ? { ...element, arrowStart }
-                          : element,
-                      "arrow-start",
-                    )
-                  }
-                />
-                <CheckRow
-                  label="Flèche fin"
-                  checked={
-                    selectedLine.arrowEnd === true ||
-                    selectedLine.type === "arrow"
-                  }
-                  onChange={(arrowEnd) =>
-                    patch(
-                      (element) =>
-                        element.type === "line" || element.type === "arrow"
-                          ? { ...element, type: "line", arrowEnd }
-                          : element,
-                      "arrow-end",
-                    )
-                  }
-                />
-              </div>
-            ) : null}
-            {selectedPath && !selectedPath.closed ? (
-              <div className="grid grid-cols-2 gap-2 rounded-xl bg-white p-2">
-                <CheckRow
-                  label="Flèche début"
-                  checked={selectedPath.arrowStart === true}
-                  onChange={(arrowStart) =>
-                    patch(
-                      (element) =>
-                        element.type === "path" && !element.closed
-                          ? { ...element, arrowStart }
-                          : element,
-                      "path-arrow-start",
-                    )
-                  }
-                />
-                <CheckRow
-                  label="Flèche fin"
-                  checked={selectedPath.arrowEnd === true}
-                  onChange={(arrowEnd) =>
-                    patch(
-                      (element) =>
-                        element.type === "path" && !element.closed
-                          ? { ...element, arrowEnd }
-                          : element,
-                      "path-arrow-end",
-                    )
-                  }
-                />
-              </div>
-            ) : null}
-          </>
-        )}
-
-        {selectedShape || selectedPath?.closed ? (
-          <>
-            <div className="grid grid-cols-2 gap-2 rounded-xl bg-white p-2">
-              <CheckRow
-                label="Contour"
-                checked={
-                  selectedShape
-                    ? selectedShape.strokeEnabled !== false
-                    : selectedPath?.strokeEnabled !== false
-                }
-                onChange={(strokeEnabled) =>
-                  patch(
-                    (element) =>
-                      element.type === "shape" ||
-                      (element.type === "path" && element.closed)
-                        ? { ...element, strokeEnabled }
-                        : element,
-                    "stroke-enabled",
-                  )
-                }
-              />
-              <CheckRow
-                label="Fond"
-                checked={
-                  selectedShape?.fillEnabled ??
-                  selectedPath?.fillEnabled ??
-                  false
-                }
-                onChange={(fillEnabled) =>
-                  patch(
-                    (element) =>
-                      element.type === "shape" ||
-                      (element.type === "path" && element.closed)
-                        ? { ...element, fillEnabled }
-                        : element,
-                    "fill-enabled",
-                  )
-                }
-              />
-            </div>
-            <ColorRow
-              label="Couleur fond"
-              value={
-                selectedShape?.fillColor ?? selectedPath?.fillColor ?? "#2563eb"
-              }
-              onChange={(fillColor) =>
-                patch(
-                  (element) =>
-                    element.type === "shape" ||
-                    (element.type === "path" && element.closed)
-                      ? { ...element, fillColor }
-                      : element,
-                  "fill-color",
-                )
-              }
-            />
-            <RangeRow
-              label="Opacité fond"
-              value={
-                selectedShape?.fillOpacity ?? selectedPath?.fillOpacity ?? 0.25
-              }
-              min={0}
-              max={1}
-              step={0.05}
-              onChange={(fillOpacity) =>
-                patch(
-                  (element) =>
-                    element.type === "shape" ||
-                    (element.type === "path" && element.closed)
-                      ? { ...element, fillOpacity }
-                      : element,
-                  "fill-opacity",
-                )
-              }
-            />
-            <HatchingRow
-              value={
-                selectedShape?.hatchingStyle ??
-                selectedPath?.hatchingStyle ??
-                "none"
-              }
-              onChange={(hatchingStyle) =>
-                patch(
-                  (element) =>
-                    element.type === "shape" ||
-                    (element.type === "path" && element.closed)
-                      ? { ...element, hatchingStyle }
-                      : element,
-                  "hatching-style",
-                )
-              }
-            />
-            {(selectedShape?.hatchingStyle ?? selectedPath?.hatchingStyle) &&
-            (selectedShape?.hatchingStyle ?? selectedPath?.hatchingStyle) !==
-              "none" ? (
-              <>
-                <ColorRow
-                  label="Couleur hachures"
-                  value={
-                    selectedShape?.hatchingColor ??
-                    selectedPath?.hatchingColor ??
-                    "#111827"
-                  }
-                  onChange={(hatchingColor) =>
-                    patch(
-                      (element) =>
-                        element.type === "shape" ||
-                        (element.type === "path" && element.closed)
-                          ? { ...element, hatchingColor }
-                          : element,
-                      "hatching-color",
-                    )
-                  }
-                />
-                <RangeRow
-                  label="Épaisseur hachures"
-                  value={
-                    selectedShape?.hatchingWeight ??
-                    selectedPath?.hatchingWeight ??
-                    2
-                  }
-                  min={0.5}
-                  max={12}
-                  step={0.5}
-                  suffix="px"
-                  onChange={(hatchingWeight) =>
-                    patch(
-                      (element) =>
-                        element.type === "shape" ||
-                        (element.type === "path" && element.closed)
-                          ? { ...element, hatchingWeight }
-                          : element,
-                      "hatching-weight",
-                    )
-                  }
-                />
-                <RangeRow
-                  label="Resserrement"
-                  value={
-                    selectedShape?.hatchingSpacing ??
-                    selectedPath?.hatchingSpacing ??
-                    14
-                  }
-                  min={3}
-                  max={60}
-                  suffix="px"
-                  onChange={(hatchingSpacing) =>
-                    patch(
-                      (element) =>
-                        element.type === "shape" ||
-                        (element.type === "path" && element.closed)
-                          ? { ...element, hatchingSpacing }
-                          : element,
-                      "hatching-spacing",
-                    )
-                  }
-                />
-              </>
-            ) : null}
-            <CheckRow
-              label="Points"
-              checked={
-                selectedShape?.dotsEnabled ?? selectedPath?.dotsEnabled ?? false
-              }
-              onChange={(dotsEnabled) =>
-                patch(
-                  (element) =>
-                    element.type === "shape" ||
-                    (element.type === "path" && element.closed)
-                      ? { ...element, dotsEnabled }
-                      : element,
-                  "dots-enabled",
-                )
-              }
-            />
-            {(selectedShape?.dotsEnabled ?? selectedPath?.dotsEnabled) ? (
-              <>
-                <ColorRow
-                  label="Couleur points"
-                  value={
-                    selectedShape?.dotsColor ??
-                    selectedPath?.dotsColor ??
-                    "#111827"
-                  }
-                  onChange={(dotsColor) =>
-                    patch(
-                      (element) =>
-                        element.type === "shape" ||
-                        (element.type === "path" && element.closed)
-                          ? { ...element, dotsColor }
-                          : element,
-                      "dots-color",
-                    )
-                  }
-                />
-                <RangeRow
-                  label="Rayon points"
-                  value={
-                    selectedShape?.dotsRadius ?? selectedPath?.dotsRadius ?? 2
-                  }
-                  min={0.5}
-                  max={10}
-                  step={0.5}
-                  suffix="px"
-                  onChange={(dotsRadius) =>
-                    patch(
-                      (element) =>
-                        element.type === "shape" ||
-                        (element.type === "path" && element.closed)
-                          ? { ...element, dotsRadius }
-                          : element,
-                      "dots-radius",
-                    )
-                  }
-                />
-                <RangeRow
-                  label="Espacement points"
-                  value={
-                    selectedShape?.dotsSpacing ??
-                    selectedPath?.dotsSpacing ??
-                    14
-                  }
-                  min={3}
-                  max={60}
-                  suffix="px"
-                  onChange={(dotsSpacing) =>
-                    patch(
-                      (element) =>
-                        element.type === "shape" ||
-                        (element.type === "path" && element.closed)
-                          ? { ...element, dotsSpacing }
-                          : element,
-                      "dots-spacing",
-                    )
-                  }
-                />
-              </>
-            ) : null}
-          </>
-        ) : null}
-
-        {selectedPath?.rawPoints ? (
-          <RangeRow
-            label="Lissage"
-            value={selectedPath.smoothing ?? 45}
-            min={0}
-            max={100}
-            suffix="%"
-            onChange={(smoothing) =>
-              patch(
-                (element) =>
-                  element.type === "path" && element.rawPoints
-                    ? {
-                        ...element,
-                        smoothing,
-                        points: smoothPath(
-                          element.rawPoints,
-                          smoothing,
-                          element.closed,
-                        ),
-                      }
-                    : element,
-                "smoothing",
-              )
-            }
-          />
-        ) : null}
-
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => moveSelectedElement("back")}
-            className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-100"
-          >
-            Arrière-plan
-          </button>
-          <button
-            type="button"
-            onClick={() => moveSelectedElement("front")}
-            className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-100"
-          >
-            Premier plan
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={deleteSelectedElement}
-          className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700 hover:bg-red-100"
-        >
-          Supprimer cet élément
-        </button>
-      </SettingSection>
-    );
-  }
-
-  function renderContextSettings() {
-    if (selectedElement) return renderSelectedSettings();
-    if (
-      activeTool === "line" ||
-      activeTool === "arrow" ||
-      activeTool === "freehand-line"
-    ) {
-      return renderLinePresetSettings();
+  async function save() {
+    if (!elements.length) {
+      setError("Ajoutez au moins un élément avant d’enregistrer.");
+      return;
     }
-    if (
-      activeTool === "polygon" ||
-      activeTool === "freehand-zone" ||
-      activeTool === "rectangle" ||
-      activeTool === "circle" ||
-      activeTool === "ellipse" ||
-      activeTool === "triangle" ||
-      activeTool === "diamond" ||
-      activeTool === "star"
-    ) {
-      return renderZonePresetSettings();
+    if (!name.trim()) {
+      setError("Donnez un nom à votre marqueur.");
+      dialog.current
+        ?.querySelector<HTMLInputElement>('[name="marker-name"]')
+        ?.focus();
+      return;
     }
-    if (activeTool === "text") return renderTextPresetSettings();
-    return (
-      <SettingSection title="Sélection">
-        <p className="text-xs leading-relaxed text-slate-700">
-          Clique sur un élément pour afficher uniquement ses paramètres.
-          Recliquer sur un outil actif revient à la sélection, comme dans
-          l’éditeur de carte.
-        </p>
-        <div className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800">
-          Aimantation activée entre les centres, angles et extrémités.
-        </div>
-      </SettingSection>
-    );
+    setSaving(true);
+    try {
+      const css = elements.some((e) => e.type === "text")
+        ? fontCss || (await loadMarkerFontCss())
+        : "";
+      onSave({
+        name: name.trim(),
+        elements,
+        dataUrl: createDrawnMarkerDataUrl(elements, css),
+      });
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Impossible de préparer le marqueur.",
+      );
+    } finally {
+      setSaving(false);
+    }
   }
-
-  const content = (
-    <div
-      data-dromap-tool-settings-panel="true"
-      className="dromap-custom-marker-designer fixed inset-0 z-[6000] flex items-center justify-center bg-slate-950/70 p-4"
-    >
-      <style jsx global>{`
-        .dromap-custom-marker-designer .dromap-designer-settings,
-        .dromap-custom-marker-designer .dromap-designer-settings label,
-        .dromap-custom-marker-designer
-          .dromap-designer-settings
-          .dromap-marker-setting-row,
-        .dromap-custom-marker-designer
-          .dromap-designer-settings
-          .dromap-marker-setting-row
-          span,
-        .dromap-custom-marker-designer
-          .dromap-designer-settings
-          .dromap-marker-setting-row
-          strong {
-          color: #334155 !important;
-          opacity: 1 !important;
-        }
-        .dromap-custom-marker-designer .dromap-designer-settings input,
-        .dromap-custom-marker-designer .dromap-designer-settings textarea,
-        .dromap-custom-marker-designer .dromap-designer-settings select {
-          color: #0f172a !important;
-          opacity: 1 !important;
-        }
-        .dromap-custom-marker-designer input[type="range"] {
-          opacity: 1 !important;
-        }
-      `}</style>
-      <section className="flex h-[min(920px,calc(100vh-2rem))] w-[min(1400px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-white/15 bg-white shadow-lg">
-        <header className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-3">
-          <div className="min-w-0">
-            <h2 className="text-lg font-black text-slate-950">
-              {initialMarker ? "Modifier le marqueur" : "Dessiner un marqueur"}
-            </h2>
-            <p className="truncate text-xs text-slate-600">
-              Sélectionne, déplace, redimensionne et fais pivoter directement,
-              dans l’interface DroMap habituelle.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={undo}
-              disabled={!canUndo}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-              title="Annuler — Ctrl+Z"
-            >
-              ↶
-            </button>
-            <button
-              type="button"
-              onClick={redo}
-              disabled={!canRedo}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-              title="Rétablir — Ctrl+Y"
-            >
-              ↷
-            </button>
-            <button
-              type="button"
-              onClick={onCancel}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-            >
-              Fermer
-            </button>
-          </div>
-        </header>
-
-        <div className="grid min-h-0 flex-1 grid-cols-[190px_minmax(0,1fr)_300px]">
-          <aside className="overflow-y-auto border-r border-slate-200 bg-slate-50 p-3">
-            {TOOL_GROUPS.map((group) => (
-              <div key={group.label} className="mb-4">
-                <div className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-600">
-                  {group.label}
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {group.tools.map((tool) => (
-                    <ToolButton
-                      key={tool.id}
-                      tool={tool}
-                      activeTool={activeTool}
-                      onChoose={chooseTool}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </aside>
-
-          <main className="min-h-0 overflow-auto bg-slate-100 p-4">
-            <div className="relative mx-auto aspect-square w-full max-w-[760px] overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-lg">
-              <CustomMarkerFabricCanvas
-                elements={elements}
-                activeTool={activeTool}
-                selectedElementId={selectedElementId}
-                linePreset={linePreset}
-                zonePreset={zonePreset}
-                textPreset={textPreset}
-                onSelectElement={setSelectedElementId}
-                onCommitElements={commitElements}
-                onSwitchToSelect={() => setActiveTool("select")}
-              />
-            </div>
-          </main>
-
-          <aside className="dromap-designer-settings overflow-y-auto border-l border-slate-200 bg-white p-4 text-slate-900">
-            <label className="block">
-              <span className="mb-1 block text-xs font-bold text-slate-800">
-                Nom du marqueur
-              </span>
-              <input
-                type="text"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </label>
-            <div className="mt-4">{renderContextSettings()}</div>
-          </aside>
-        </div>
-
-        <footer className="flex items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-3">
-          <span className="text-xs text-slate-600">
-            {elements.length} élément{elements.length > 1 ? "s" : ""} · Ctrl+Z
-            pour annuler
-          </span>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-            >
-              Annuler
-            </button>
-            <button
-              type="button"
-              disabled={elements.length === 0 || name.trim().length === 0}
-              onClick={() =>
-                onSave({
-                  name: name.trim(),
-                  elements,
-                  dataUrl: createDrawnMarkerDataUrl(elements),
-                })
-              }
-              className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-black text-white shadow-lg shadow-blue-200 hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-            >
-              Enregistrer dans Mes marqueurs
-            </button>
-          </div>
-        </footer>
-      </section>
-    </div>
+  function choose(next: DesignerTool) {
+    setTool(next);
+    setDrawer(null);
+    setSelectedIds([]);
+  }
+  const button = (
+    label: string,
+    icon: string,
+    action: () => void,
+    active = false,
+  ) => (
+    <button type="button" title={label} aria-pressed={active} onClick={action}>
+      <span aria-hidden="true">{icon}</span>
+      {label}
+    </button>
   );
-
   return typeof document === "undefined"
     ? null
-    : createPortal(content, document.body);
+    : createPortal(
+        <div className={styles.backdrop} data-dromap-tool-settings-panel="true">
+          <section
+            ref={dialog}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="marker-designer-title"
+            className={styles.dialog}
+          >
+            <header className={styles.header}>
+              <div>
+                <h2 id="marker-designer-title">
+                  {initialMarker ? "Modifier le marqueur" : "Créer un marqueur"}
+                </h2>
+                <p>Composez votre symbole, directement dans le dessin.</p>
+              </div>
+              <div className={styles.actions}>
+                <button
+                  type="button"
+                  disabled={index.current === 0}
+                  onClick={() => travel(-1)}
+                  title="Annuler — Ctrl+Z"
+                >
+                  ↶ Annuler
+                </button>
+                <button
+                  type="button"
+                  disabled={index.current === history.current.length - 1}
+                  onClick={() => travel(1)}
+                  title="Rétablir — Ctrl+Y"
+                >
+                  ↷ Rétablir
+                </button>
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  aria-label="Fermer le créateur"
+                >
+                  ×
+                </button>
+              </div>
+            </header>
+            <div className={styles.workspace}>
+              <aside className={styles.tools} aria-label="Ajouter au marqueur">
+                {button(
+                  "Sélection",
+                  "↖",
+                  () => choose("select"),
+                  tool === "select" && !drawer,
+                )}
+                {button(
+                  "Symbole",
+                  "✣",
+                  () => {
+                    choose("select");
+                    setDrawer(drawer === "symbols" ? null : "symbols");
+                  },
+                  drawer === "symbols",
+                )}
+                {button(
+                  "Formes",
+                  "○",
+                  () => {
+                    choose("select");
+                    setDrawer(drawer === "shapes" ? null : "shapes");
+                  },
+                  drawer === "shapes",
+                )}
+                {drawer === "shapes" && (
+                  <div className={styles.shapeChoices}>
+                    {SHAPES.map(([kind, label, icon, radius]) => (
+                      <button
+                        key={label}
+                        type="button"
+                        title={label}
+                        onClick={() => shape(kind, radius)}
+                      >
+                        <span aria-hidden="true">{icon}</span>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {button("Ligne", "╱", () => choose("line"), tool === "line")}
+                {button(
+                  "Trait courbe",
+                  "⌒",
+                  () => choose("curved-line"),
+                  tool === "curved-line",
+                )}
+                {button("Flèche", "→", () => choose("arrow"), tool === "arrow")}
+                {button(
+                  "Polygone",
+                  "⬠",
+                  () => choose("polygon"),
+                  tool === "polygon",
+                )}
+                {button("Texte", "T", () => {
+                  setDrawer(null);
+                  add({
+                    id: id(),
+                    type: "text",
+                    x: 80,
+                    y: 145,
+                    width: 200,
+                    height: 70,
+                    rotation: 0,
+                    text: "Texte",
+                    fontSize: 42,
+                    fontWeight: 700,
+                    textAlign: "center",
+                    color: "#194858",
+                    opacity: 1,
+                  });
+                })}
+                {button(
+                  "Dessin libre",
+                  "〰",
+                  () => choose("freehand-line"),
+                  tool === "freehand-line",
+                )}
+              </aside>
+              <main className={styles.stage}>
+                {drawer === "symbols" && (
+                  <section
+                    className={styles.symbols}
+                    aria-label="Bibliothèque de symboles"
+                  >
+                    <div className={styles.symbolSearch}>
+                      <input
+                        autoFocus
+                        aria-label="Rechercher un symbole"
+                        placeholder="Église, gare, croix…"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setDrawer(null)}
+                        aria-label="Fermer les symboles"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <div className={styles.symbolGrid}>
+                      {results.map((s) => (
+                        <button
+                          type="button"
+                          key={s.id}
+                          title={s.label}
+                          aria-label={`Ajouter ${s.label}`}
+                          onClick={() => {
+                            shape("rectangle", 0, s.id);
+                            setDrawer(null);
+                          }}
+                        >
+                          <img
+                            src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(getBuiltinMarkerCompositionSvg(s.id, "#194858"))}`}
+                            alt=""
+                          />
+                          <span>{s.label}</span>
+                        </button>
+                      ))}
+                      {!results.length && <p>Aucun symbole trouvé.</p>}
+                    </div>
+                  </section>
+                )}
+                <div className={styles.canvas}>
+                  <CustomMarkerFabricCanvas
+                    elements={elements}
+                    activeTool={tool}
+                    selectedElementIds={selectedIds}
+                    linePreset={linePreset}
+                    zonePreset={ZONE}
+                    textPreset={TEXT}
+                    onSelectElements={setSelectedIds}
+                    onCommitElements={commit}
+                    onSwitchToSelect={() => setTool("select")}
+                  />
+                  {elements.length === 0 && tool === "select" && (
+                    <p className={styles.empty}>
+                      Ajoutez une forme, un symbole, du texte ou dessinez
+                      directement.
+                    </p>
+                  )}
+                </div>
+                <p className={styles.hint}>
+                  {tool === "polygon"
+                    ? "Cliquez pour ajouter un sommet. Double-cliquez ou cliquez sur le premier point pour terminer. Échap pour annuler."
+                    : tool === "line" || tool === "curved-line" || tool === "arrow"
+                      ? tool === "curved-line"
+                        ? "Cliquez au départ, puis à l’arrivée. Déplacez ensuite la poignée centrale ; double-cliquez sur le trait pour en ajouter une."
+                        : "Cliquez au départ, puis à l’arrivée. Les directions parallèles et à 90° s’aimantent. Échap pour annuler."
+                      : tool === "freehand-line"
+                        ? "Cliquez et glissez pour dessiner. Relâchez pour terminer."
+                        : "Déplacez, redimensionnez et tournez avec les poignées. Fond transparent."}
+                </p>
+              </main>
+              <aside
+                className={styles.properties}
+                aria-label="Propriétés de la sélection"
+              >
+                <h3>
+                  {current
+                    ? markerElementLabel(current)
+                    : selected.length
+                      ? `${selected.length} éléments sélectionnés`
+                      : "Votre sélection"}
+                </h3>
+                {!selected.length && tool === "select" && (
+                  <p className={styles.muted}>
+                    Cliquez sur un élément du dessin pour le modifier.
+                  </p>
+                )}
+                {!selected.length &&
+                  ["line", "curved-line", "arrow", "freehand-line"].includes(tool) && (
+                    <>
+                      <ColorField
+                        label="Couleur du trait"
+                        value={linePreset.color}
+                        recent={recent}
+                        onChange={(color) =>
+                          setLinePreset((p) => ({ ...p, color }))
+                        }
+                      />
+                      <NumberField
+                        label="Épaisseur"
+                        value={linePreset.weight}
+                        min={1}
+                        max={24}
+                        onChange={(weight) =>
+                          setLinePreset((p) => ({ ...p, weight }))
+                        }
+                      />
+                    </>
+                  )}
+                {selected.length > 0 && (
+                  <>
+                    <MarkerProperties
+                      selected={selected}
+                      recent={recent}
+                      rememberColor={(value) =>
+                        setRecent((r) =>
+                          [value, ...r.filter((c) => c !== value)].slice(0, 8),
+                        )
+                      }
+                      patch={patch}
+                    />
+                    <div className={styles.section}>
+                      <h4>
+                        Aligner{" "}
+                        {selected.length === 1
+                          ? "sur le marqueur"
+                          : "la sélection"}
+                      </h4>
+                      <div className={styles.smallGrid}>
+                        {ALIGN.filter(
+                          (_, i) => selected.length > 1 || i < 2,
+                        ).map(([direction, label]) => (
+                          <button
+                            type="button"
+                            key={direction}
+                            title={label}
+                            onClick={() =>
+                              commit(
+                                alignMarkerElements(
+                                  elementsRef.current,
+                                  selectedIds,
+                                  direction,
+                                ),
+                              )
+                            }
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className={styles.section}>
+                      <h4>Superposition</h4>
+                      <div className={styles.smallGrid}>
+                        {(
+                          [
+                            ["front", "Premier plan"],
+                            ["up", "Avancer"],
+                            ["down", "Reculer"],
+                            ["back", "Arrière-plan"],
+                          ] as const
+                        ).map(([d, label]) => (
+                          <button
+                            type="button"
+                            key={d}
+                            onClick={() => order(d)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className={styles.smallGrid}>
+                      {selected.length > 1 && (
+                        <button type="button" onClick={group}>
+                          Grouper
+                        </button>
+                      )}
+                      {selected.some((e) => e.groupId) && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            patch(
+                              (e) => ({ ...e, groupId: undefined }),
+                              "ungroup",
+                            )
+                          }
+                        >
+                          Dégrouper
+                        </button>
+                      )}
+                      <button type="button" onClick={() => paste(selected)}>
+                        Dupliquer
+                      </button>
+                      <button type="button" onClick={remove}>
+                        Supprimer
+                      </button>
+                    </div>
+                  </>
+                )}
+                {!!elements.length && (
+                  <details className={styles.section}>
+                    <summary>Éléments ({elements.length})</summary>
+                    <div className={styles.elementList}>
+                      {elements
+                        .filter(
+                          (e, i, all) =>
+                            !e.groupId ||
+                            all.findIndex((x) => x.groupId === e.groupId) === i,
+                        )
+                        .slice()
+                        .reverse()
+                        .map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            aria-pressed={selectedIds.includes(e.id)}
+                            onClick={() => {
+                              setTool("select");
+                              setSelectedIds(
+                                e.groupId
+                                  ? elements
+                                      .filter((x) => x.groupId === e.groupId)
+                                      .map((x) => x.id)
+                                  : [e.id],
+                              );
+                            }}
+                          >
+                            {markerElementLabel(e)}
+                          </button>
+                        ))}
+                    </div>
+                  </details>
+                )}
+                <div className={styles.preview}>
+                  <h4>Aperçu sur la carte</h4>
+                  <div>
+                    {([24, 40, 64] as const).map((size, i) => (
+                      <figure key={size}>
+                        <img
+                          src={svgUrl}
+                          width={size}
+                          height={size}
+                          alt={`Aperçu ${["petit", "normal", "grand"][i]}`}
+                        />
+                        <figcaption>
+                          {["Petit", "Normal", "Grand"][i]}
+                        </figcaption>
+                      </figure>
+                    ))}
+                  </div>
+                </div>
+              </aside>
+            </div>
+            <footer className={styles.footer}>
+              <div>
+                <p className={styles.shortcuts}>
+                  Maj + clic : sélection multiple · Suppr : supprimer · Ctrl+Z :
+                  annuler
+                </p>
+                {error && (
+                  <p role="alert" className={styles.error}>
+                    {error}
+                  </p>
+                )}
+              </div>
+              <label>
+                Nom du marqueur
+                <input
+                  name="marker-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Mon marqueur"
+                  maxLength={100}
+                />
+              </label>
+              <button
+                type="button"
+                className={styles.save}
+                disabled={saving}
+                onClick={save}
+              >
+                {saving ? "Enregistrement…" : "Enregistrer le marqueur"}
+              </button>
+            </footer>
+          </section>
+        </div>,
+        document.body,
+      );
 }

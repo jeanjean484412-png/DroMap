@@ -33,8 +33,8 @@ import {
   MAX_DASH_LENGTH,
   MIN_DASH_GAP,
   MIN_DASH_LENGTH,
-  MAX_MARKER_SIZE,
-  MIN_MARKER_SIZE,
+  clampMarkerSizeForSymbol,
+  getMarkerSizeLimitsForSymbol,
 } from "./feature-style";
 import {
   DROMAP_BUILTIN_MARKER_SYMBOLS,
@@ -1553,6 +1553,11 @@ export default function ModeToolbar({
   );
 
   const selectedMarkerIsBuiltin = markerSymbol.type === "builtin";
+  const markerSizeLimits = getMarkerSizeLimitsForSymbol(markerSymbol);
+  const displayedMarkerSize = clampMarkerSizeForSymbol(
+    markerStyle.markerSize,
+    markerSymbol,
+  );
   const selectedMarkerSymbolId: DroMapMarkerBuiltinSymbol =
     selectedMarkerIsBuiltin ? markerSymbol.id : "circle";
   const markerStrokeWeight = markerStyle.weight ?? DEFAULT_MARKER_STROKE_WIDTH;
@@ -2385,9 +2390,15 @@ export default function ModeToolbar({
                                 type="button"
                                 onClick={() => {
                                   setMarkerBuiltinSymbol(option.id);
-                                  if (markerSymbolSupportsFill(option.id)) {
-                                    updateMarkerStyle({ markerFilled: true });
-                                  }
+                                  updateMarkerStyle({
+                                    markerSize: clampMarkerSizeForSymbol(
+                                      markerStyle.markerSize,
+                                      { type: "builtin", id: option.id },
+                                    ),
+                                    ...(markerSymbolSupportsFill(option.id)
+                                      ? { markerFilled: true }
+                                      : {}),
+                                  });
                                   setActiveTool("marker");
                                   setMarkerSettingsStep("style");
                                   scrollMarkerSettingsToTop();
@@ -2428,6 +2439,12 @@ export default function ModeToolbar({
                     selectedSymbol={markerSymbol}
                     onSelect={(symbol) => {
                       setMarkerSymbol(symbol);
+                      updateMarkerStyle({
+                        markerSize: clampMarkerSizeForSymbol(
+                          markerStyle.markerSize,
+                          symbol,
+                        ),
+                      });
                       setActiveTool("marker");
                       setMarkerSettingsStep("style");
                       scrollMarkerSettingsToTop();
@@ -2520,21 +2537,43 @@ export default function ModeToolbar({
                 <label className="block">
                   <div className="mb-1 flex justify-between">
                     <span>Taille</span>
-                    <span>{markerStyle.markerSize}px</span>
+                    <span>{displayedMarkerSize}px</span>
                   </div>
-                  <input
-                    className="w-full"
-                    type="range"
-                    min={MIN_MARKER_SIZE}
-                    max={MAX_MARKER_SIZE}
-                    step="0.5"
-                    value={markerStyle.markerSize}
-                    onChange={(event) =>
-                      updateMarkerStyle({
-                        markerSize: Number(event.target.value),
-                      })
-                    }
-                  />
+                  <div className="grid grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-2">
+                    <input
+                      className="w-full"
+                      type="range"
+                      min={markerSizeLimits.min}
+                      max={markerSizeLimits.max}
+                      step="0.5"
+                      value={displayedMarkerSize}
+                      onChange={(event) =>
+                        updateMarkerStyle({
+                          markerSize: Number(event.target.value),
+                        })
+                      }
+                      aria-label="Taille du marqueur"
+                    />
+                    <input
+                      type="number"
+                      min={markerSizeLimits.min}
+                      max={markerSizeLimits.max}
+                      step="0.5"
+                      value={displayedMarkerSize}
+                      onChange={(event) => {
+                        const markerSize = Number(event.target.value);
+                        if (!Number.isFinite(markerSize)) return;
+                        updateMarkerStyle({
+                          markerSize: clampMarkerSizeForSymbol(
+                            markerSize,
+                            markerSymbol,
+                          ),
+                        });
+                      }}
+                      className="rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-xs font-semibold tabular-nums text-neutral-700 outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
+                      aria-label="Taille exacte du marqueur"
+                    />
+                  </div>
                 </label>
 
                 {selectedMarkerHasStroke ? (
