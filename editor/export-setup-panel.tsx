@@ -17,7 +17,6 @@ import {
 import {
   getGeoJsonLayerLoadedFeatureCount,
   getRenderableGeoJsonLayers,
-  parseGeoJsonTextToDromapGeoJsonLayer,
   type DromapGeoJsonLayer,
   type DromapGeoJsonPrecisionMode,
   useEditorGeoJsonLayersStore,
@@ -78,6 +77,12 @@ import {
 import { getExportLegendGlobalSymbolScale } from "./export-legend-layout";
 import { RenderKeyboardHistory } from "./render-keyboard-history";
 import { getFeatureIdsOutsideWorkspace } from "./workspace-feature-intersection";
+import {
+  GeoJsonFileImportError,
+  importGeoJsonFileAutomatically,
+  type GeoJsonFileImportProgress,
+  type GeoJsonFileImportSummary,
+} from "./geojson-file-import";
 
 const GeoJsonLibraryBrowser = dynamic(
   () =>
@@ -347,6 +352,10 @@ export function ExportSetupPanel() {
   const [isImportingGeoJson, setIsImportingGeoJson] = useState(false);
   const [pendingGeoJsonImport, setPendingGeoJsonImport] =
     useState<DromapGeoJsonLayer | null>(null);
+  const [pendingGeoJsonImportSummary, setPendingGeoJsonImportSummary] =
+    useState<GeoJsonFileImportSummary | null>(null);
+  const [geoJsonImportProgress, setGeoJsonImportProgress] =
+    useState<GeoJsonFileImportProgress | null>(null);
   const [pendingProjectImport, setPendingProjectImport] =
     useState<PendingDromapProjectImport | null>(null);
   const [useImportedBasemap, setUseImportedBasemap] = useState(false);
@@ -370,6 +379,7 @@ export function ExportSetupPanel() {
   );
   const importProjectInputRef = useRef<HTMLInputElement | null>(null);
   const importGeoJsonInputRef = useRef<HTMLInputElement | null>(null);
+  const geoJsonImportAbortRef = useRef<AbortController | null>(null);
 
   const isExportPanelOpen = useEditorExportStore(
     (state) => state.isExportPanelOpen,
@@ -631,6 +641,14 @@ export function ExportSetupPanel() {
       setPanelZIndex(bringFloatingPanelToFront());
     }
   }, [isExportPanelOpen, isImportPanelOpen]);
+
+  useEffect(
+    () => () => {
+      geoJsonImportAbortRef.current?.abort();
+      geoJsonImportAbortRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (isExportPanelOpen) {
@@ -1380,33 +1398,51 @@ export function ExportSetupPanel() {
     }
 
     try {
+      const abortController = new AbortController();
+      geoJsonImportAbortRef.current = abortController;
       setIsImportingGeoJson(true);
+      setGeoJsonImportProgress(null);
+      setPendingGeoJsonImportSummary(null);
       setDownloadStatus("Lecture du GeoJSON...");
 
-      const text = await file.text();
-      const importedLayer = parseGeoJsonTextToDromapGeoJsonLayer(text, {
-        sourceName: file.name,
+      const result = await importGeoJsonFileAutomatically(file, {
+        workspaceBounds,
         existingLayerCount: geoJsonLayers.length,
         precisionMode: geoJsonImportPrecision,
+        signal: abortController.signal,
+        onProgress: (progress) => {
+          setGeoJsonImportProgress(progress);
+          setDownloadStatus(
+            `Analyse du GeoJSON : ${progress.percent}% · ${progress.parsedFeatures.toLocaleString("fr-FR")} entité${progress.parsedFeatures > 1 ? "s" : ""} lue${progress.parsedFeatures > 1 ? "s" : ""}.`,
+          );
+        },
       });
+      const importedLayer = result.layer;
 
       setPendingGeoJsonImport(importedLayer);
+      setPendingGeoJsonImportSummary(result.summary);
       setDownloadStatus(
         `GeoJSON analysé (${formatImportFileSize(file.size)}) : ${importedLayer.featureCount.toLocaleString("fr-FR")} entité${
           importedLayer.featureCount > 1 ? "s" : ""
-        } et ${importedLayer.coordinateCount.toLocaleString("fr-FR")} coordonnée${
+        } conservée${importedLayer.featureCount > 1 ? "s" : ""} dans la zone et ${importedLayer.coordinateCount.toLocaleString("fr-FR")} coordonnée${
           importedLayer.coordinateCount > 1 ? "s" : ""
         }. Choisis maintenant le mode d’import.`,
       );
     } catch (error) {
       console.error(error);
+      if (error instanceof GeoJsonFileImportError && error.code === "cancelled") {
+        setDownloadStatus("Import GeoJSON annulé.");
+      } else {
       setDownloadStatus(
         error instanceof Error
           ? error.message
           : "Import GeoJSON impossible : le fichier est invalide ou vide.",
       );
+      }
     } finally {
+      geoJsonImportAbortRef.current = null;
       setIsImportingGeoJson(false);
+      setGeoJsonImportProgress(null);
     }
   }
 
@@ -1415,6 +1451,16 @@ export function ExportSetupPanel() {
   ) {
     const importedLayer = pendingGeoJsonImport;
     if (!importedLayer) return;
+
+    if (
+      mode === "dromap" &&
+      importedLayer.featureCount >= GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD
+    ) {
+      setDownloadStatus(
+        "Conversion bloquée pour protéger les performances : conserve ce fichier comme calque GeoJSON.",
+      );
+      return;
+    }
 
     clearSelectedFeatureId();
     setRenderPreviewUrl(null);
@@ -1430,6 +1476,7 @@ export function ExportSetupPanel() {
         )} entité${importedLayer.featureCount > 1 ? "s" : ""}.`,
       );
       setPendingGeoJsonImport(null);
+      setPendingGeoJsonImportSummary(null);
       return;
     }
 
@@ -1480,6 +1527,7 @@ export function ExportSetupPanel() {
         } à partir du GeoJSON.`,
       );
       setPendingGeoJsonImport(null);
+      setPendingGeoJsonImportSummary(null);
     } catch (error) {
       deleteLayer(layerId);
       setDownloadStatus(
@@ -1556,7 +1604,10 @@ export function ExportSetupPanel() {
 
             <button
               type="button"
-              onClick={closeImportPanel}
+              onClick={() => {
+                geoJsonImportAbortRef.current?.abort();
+                closeImportPanel();
+              }}
               className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 hover:bg-slate-100"
             >
               Fermer
@@ -1671,6 +1722,34 @@ export function ExportSetupPanel() {
                     {isImportingGeoJson ? "Import GeoJSON…" : "Importer GeoJSON depuis mes fichiers"}
                   </button>
                 </div>
+                {isImportingGeoJson ? (
+                  <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3">
+                    <div className="flex items-center justify-between gap-3 text-xs font-bold text-sky-900">
+                      <span>
+                        Lecture progressive hors de l’interface
+                        {geoJsonImportProgress
+                          ? ` · ${geoJsonImportProgress.percent}%`
+                          : "…"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => geoJsonImportAbortRef.current?.abort()}
+                        className="rounded-lg border border-sky-300 bg-white px-2.5 py-1.5 text-xs font-black text-sky-800 hover:bg-sky-100"
+                      >
+                        Annuler
+                      </button>
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-sky-100">
+                      <div
+                        className="h-full rounded-full bg-sky-600 transition-[width] duration-200"
+                        style={{ width: `${geoJsonImportProgress?.percent ?? 2}%` }}
+                      />
+                    </div>
+                    <p className="mt-2 text-[11px] leading-5 text-sky-800">
+                      Les entités hors de la zone de travail sont écartées pendant la lecture pour éviter de saturer la mémoire.
+                    </p>
+                  </div>
+                ) : null}
               </div>
 
               <div className="rounded-2xl border border-teal-200 bg-white p-4 shadow-sm">
@@ -1774,7 +1853,10 @@ export function ExportSetupPanel() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setPendingGeoJsonImport(null)}
+                  onClick={() => {
+                    setPendingGeoJsonImport(null);
+                    setPendingGeoJsonImportSummary(null);
+                  }}
                   className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
                   aria-label="Annuler l’import"
                 >
@@ -1802,6 +1884,19 @@ export function ExportSetupPanel() {
                   </div>
                 </div>
 
+                {pendingGeoJsonImportSummary?.progressive ? (
+                  <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-900">
+                    <strong>Mode lourd automatique activé.</strong>{" "}
+                    {pendingGeoJsonImportSummary.parsedFeatures.toLocaleString("fr-FR")} entité{pendingGeoJsonImportSummary.parsedFeatures > 1 ? "s ont" : " a"} été lue{pendingGeoJsonImportSummary.parsedFeatures > 1 ? "s" : ""} hors du fil principal ; {pendingGeoJsonImportSummary.outsideWorkspaceFeatures.toLocaleString("fr-FR")} située{pendingGeoJsonImportSummary.outsideWorkspaceFeatures > 1 ? "s" : ""} hors de la zone n’ont pas été conservée{pendingGeoJsonImportSummary.outsideWorkspaceFeatures > 1 ? "s" : ""}.
+                    {pendingGeoJsonImportSummary.automaticallyOptimized
+                      ? " La précision légère a été sélectionnée automatiquement."
+                      : ""}
+                    {pendingGeoJsonImportSummary.serverProcessingCandidate
+                      ? " Le traitement local a suffi : aucune donnée n’a été envoyée au serveur."
+                      : ""}
+                  </div>
+                ) : null}
+
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   <button
                     type="button"
@@ -1823,8 +1918,12 @@ export function ExportSetupPanel() {
                   <button
                     type="button"
                     onClick={() => confirmPendingGeoJsonImport("dromap")}
+                    disabled={
+                      pendingGeoJsonImport.featureCount >=
+                      GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD
+                    }
                     className={[
-                      "rounded-2xl border-2 p-4 text-left transition",
+                      "rounded-2xl border-2 p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-65",
                       pendingGeoJsonImport.featureCount >=
                       GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD
                         ? "border-amber-300 bg-amber-50 hover:border-amber-500 hover:bg-amber-100"
@@ -1841,8 +1940,8 @@ export function ExportSetupPanel() {
                     {pendingGeoJsonImport.featureCount >=
                     GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD ? (
                       <div className="mt-2 rounded-lg bg-amber-100 px-2 py-1.5 text-[11px] font-bold text-amber-900">
-                        Fichier lourd : cette conversion peut ralentir le
-                        navigateur.
+                        Conversion désactivée : créer autant d’objets séparés
+                        risquerait de bloquer le navigateur.
                       </div>
                     ) : null}
                     <span className="mt-3 inline-flex rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-black text-white">

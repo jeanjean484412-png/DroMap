@@ -570,28 +570,32 @@ function collectGeometryCoordinates(
 function getGeoJsonGeometryLoadingBounds(
   geometry: DromapGeoJsonGeometry,
 ): DromapLoadingBounds | null {
-  const lngs: number[] = [];
-  const lats: number[] = [];
+  let west = Number.POSITIVE_INFINITY;
+  let east = Number.NEGATIVE_INFINITY;
+  let south = Number.POSITIVE_INFINITY;
+  let north = Number.NEGATIVE_INFINITY;
 
   collectGeometryCoordinates(geometry, ([lng, lat]) => {
     if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
       return;
     }
 
-    lngs.push(lng);
-    lats.push(lat);
+    west = Math.min(west, lng);
+    east = Math.max(east, lng);
+    south = Math.min(south, lat);
+    north = Math.max(north, lat);
   });
 
-  if (lngs.length === 0 || lats.length === 0) {
+  if (
+    !Number.isFinite(west) ||
+    !Number.isFinite(east) ||
+    !Number.isFinite(south) ||
+    !Number.isFinite(north)
+  ) {
     return null;
   }
 
-  return {
-    south: Math.min(...lats),
-    west: Math.min(...lngs),
-    north: Math.max(...lats),
-    east: Math.max(...lngs),
-  };
+  return { south, west, north, east };
 }
 
 export function isGeoJsonFeatureLoadedInWorkspace(
@@ -907,36 +911,28 @@ export function getGeoJsonLayerDisplayCoordinateCount(layer: DromapGeoJsonLayer)
 export function getGeoJsonLayerBoundsFromFeatures(
   features: DromapGeoJsonFeature[],
 ): WorkspaceBounds | null {
-  const lngs: number[] = [];
-  const lats: number[] = [];
-
-  for (const feature of features) {
-    collectGeometryCoordinates(feature.geometry, ([lng, lat]) => {
-      lngs.push(lng);
-      lats.push(lat);
-    });
-  }
-
-  if (lngs.length === 0 || lats.length === 0) {
-    return null;
-  }
-
   let west = Number.POSITIVE_INFINITY;
   let east = Number.NEGATIVE_INFINITY;
   let south = Number.POSITIVE_INFINITY;
   let north = Number.NEGATIVE_INFINITY;
 
-  // Ne jamais utiliser Math.min(...tableau) / Math.max(...tableau) ici :
-  // les GeoJSON ADM4/ADM5 peuvent contenir des centaines de milliers de
-  // coordonnées et dépasser la limite d'arguments du moteur JavaScript.
-  for (let index = 0; index < lngs.length; index += 1) {
-    const lng = lngs[index];
-    const lat = lats[index];
+  for (const feature of features) {
+    collectGeometryCoordinates(feature.geometry, ([lng, lat]) => {
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+      west = Math.min(west, lng);
+      east = Math.max(east, lng);
+      south = Math.min(south, lat);
+      north = Math.max(north, lat);
+    });
+  }
 
-    if (lng < west) west = lng;
-    if (lng > east) east = lng;
-    if (lat < south) south = lat;
-    if (lat > north) north = lat;
+  if (
+    !Number.isFinite(west) ||
+    !Number.isFinite(east) ||
+    !Number.isFinite(south) ||
+    !Number.isFinite(north)
+  ) {
+    return null;
   }
   const lngSpan = east - west;
   const latSpan = north - south;
@@ -983,18 +979,22 @@ export type ParseGeoJsonLayerOptions = {
   sourceVersion?: string;
 };
 
-export function parseGeoJsonTextToDromapGeoJsonLayer(
-  jsonText: string,
-  options: ParseGeoJsonLayerOptions = {},
+export type CreateGeoJsonLayerFromFeaturesOptions = ParseGeoJsonLayerOptions & {
+  skippedGeometries?: number;
+  coordinateCount?: number;
+  bounds?: WorkspaceBounds | null;
+};
+
+/**
+ * Construit un calque depuis des entités déjà validées. Ce point d'entrée est
+ * aussi utilisé par l'import progressif exécuté dans un Web Worker : le gros
+ * fichier n'a ainsi jamais besoin d'être reparsé sur le thread de l'interface.
+ */
+export function createDromapGeoJsonLayerFromFeatures(
+  sourceFeatures: DromapGeoJsonFeature[],
+  options: CreateGeoJsonLayerFromFeaturesOptions = {},
 ): DromapGeoJsonLayer {
-  const parsed = JSON.parse(jsonText) as unknown;
-
-  if (!isRecord(parsed)) {
-    throw new Error("Import GeoJSON impossible : le fichier doit contenir un objet GeoJSON.");
-  }
-
-  const flattened = flattenGeoJsonRecord(parsed, {});
-  const features = flattened.features.map((feature, index) => ({
+  const features = sourceFeatures.map((feature, index) => ({
     ...feature,
     id: `geojson-layer-feature-${index + 1}`,
   }));
@@ -1043,13 +1043,45 @@ export function parseGeoJsonTextToDromapGeoJsonLayer(
       ? { sourceVersion: options.sourceVersion.trim() }
       : {}),
     featureCount: features.length,
-    coordinateCount: getGeoJsonLayerCoordinateCount(temporaryLayer),
-    skippedGeometries: flattened.skipped,
-    bounds: getGeoJsonLayerBoundsFromFeatures(features),
+    coordinateCount:
+      options.coordinateCount ?? getGeoJsonLayerCoordinateCount(temporaryLayer),
+    skippedGeometries: options.skippedGeometries ?? 0,
+    bounds:
+      options.bounds === undefined
+        ? getGeoJsonLayerBoundsFromFeatures(features)
+        : options.bounds,
     precisionMode: normalizePrecisionMode(options.precisionMode),
     style: getInitialLayerStyle(features),
     data,
   };
+}
+
+export function parseGeoJsonTextToDromapGeoJsonLayer(
+  jsonText: string,
+  options: ParseGeoJsonLayerOptions = {},
+): DromapGeoJsonLayer {
+  const parsed = JSON.parse(jsonText) as unknown;
+
+  if (!isRecord(parsed)) {
+    throw new Error("Import GeoJSON impossible : le fichier doit contenir un objet GeoJSON.");
+  }
+
+  const flattened = flattenGeoJsonRecord(parsed, {});
+  const features = flattened.features.map((feature, index) => ({
+    ...feature,
+    id: `geojson-layer-feature-${index + 1}`,
+  }));
+
+  if (features.length === 0) {
+    throw new Error(
+      "Import GeoJSON impossible : aucun Point, LineString, Polygon ou Multi* exploitable n’a été trouvé.",
+    );
+  }
+
+  return createDromapGeoJsonLayerFromFeatures(features, {
+    ...options,
+    skippedGeometries: flattened.skipped,
+  });
 }
 
 function normalizeColorKey(value: string) {

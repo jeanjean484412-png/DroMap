@@ -267,12 +267,9 @@ function reconcileOptimizedEntry(
     }
   }
 
-  for (const indexedFeature of entry.index.features) {
-    if (
-      wantedIds.has(indexedFeature.id) &&
-      !entry.mountedLayers.has(indexedFeature.id)
-    ) {
-      if (addMountedFeature(entry, layer, indexedFeature.id)) {
+  for (const featureId of wantedIds) {
+    if (!entry.mountedLayers.has(featureId)) {
+      if (addMountedFeature(entry, layer, featureId)) {
         changed = true;
       }
     }

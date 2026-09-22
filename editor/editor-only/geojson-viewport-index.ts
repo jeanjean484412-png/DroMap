@@ -40,6 +40,10 @@ export type GeoJsonViewportIndex = {
   sourceGeometries: DromapGeoJsonGeometry[];
   features: GeoJsonViewportFeatureEntry[];
   featuresById: Map<string, GeoJsonViewportFeatureEntry>;
+  longitudeBuckets: GeoJsonViewportFeatureEntry[][];
+  longitudeBucketWest: number;
+  longitudeBucketWidth: number;
+  longitudeOverflowFeatures: GeoJsonViewportFeatureEntry[];
 };
 
 export type GeoJsonViewportBounds = DromapLoadingBounds;
@@ -195,6 +199,8 @@ export function createGeoJsonViewportIndex(
   const sourceGeometries: DromapGeoJsonGeometry[] = [];
   const features: GeoJsonViewportFeatureEntry[] = [];
   const featuresById = new Map<string, GeoJsonViewportFeatureEntry>();
+  let layerWest = Number.POSITIVE_INFINITY;
+  let layerEast = Number.NEGATIVE_INFINITY;
 
   for (let featureIndex = 0; featureIndex < layer.data.features.length; featureIndex += 1) {
     const sourceFeature = layer.data.features[featureIndex];
@@ -228,6 +234,43 @@ export function createGeoJsonViewportIndex(
     sourceGeometries.push(sourceFeature.geometry);
     features.push(entry);
     featuresById.set(sourceFeatureId, entry);
+    layerWest = Math.min(layerWest, bounds.west);
+    layerEast = Math.max(layerEast, bounds.east);
+  }
+
+  const bucketCount = Math.max(
+    1,
+    Math.min(256, Math.ceil(Math.sqrt(features.length))),
+  );
+  const longitudeBucketWidth = Math.max(
+    1e-9,
+    (layerEast - layerWest) / bucketCount,
+  );
+  const longitudeBuckets = Array.from(
+    { length: bucketCount },
+    () => [] as GeoJsonViewportFeatureEntry[],
+  );
+  const longitudeOverflowFeatures: GeoJsonViewportFeatureEntry[] = [];
+
+  const getBucketIndex = (longitude: number) =>
+    Math.max(
+      0,
+      Math.min(
+        bucketCount - 1,
+        Math.floor((longitude - layerWest) / longitudeBucketWidth),
+      ),
+    );
+
+  for (const entry of features) {
+    const firstBucket = getBucketIndex(entry.bounds.west);
+    const lastBucket = getBucketIndex(entry.bounds.east);
+    if (lastBucket - firstBucket > 32) {
+      longitudeOverflowFeatures.push(entry);
+      continue;
+    }
+    for (let bucket = firstBucket; bucket <= lastBucket; bucket += 1) {
+      longitudeBuckets[bucket].push(entry);
+    }
   }
 
   return {
@@ -238,6 +281,10 @@ export function createGeoJsonViewportIndex(
     sourceGeometries,
     features,
     featuresById,
+    longitudeBuckets,
+    longitudeBucketWest: layerWest,
+    longitudeBucketWidth,
+    longitudeOverflowFeatures,
   };
 }
 
@@ -268,11 +315,46 @@ export function queryGeoJsonViewportIndex(
 ) {
   const workspaceLoadingBounds = getWorkspaceObjectLoadingBounds(workspaceBounds);
   const wantedIds = new Set<string>();
+  const effectiveBounds = workspaceLoadingBounds
+    ? {
+        south: Math.max(viewportBounds.south, workspaceLoadingBounds.south),
+        west: Math.max(viewportBounds.west, workspaceLoadingBounds.west),
+        north: Math.min(viewportBounds.north, workspaceLoadingBounds.north),
+        east: Math.min(viewportBounds.east, workspaceLoadingBounds.east),
+      }
+    : viewportBounds;
 
-  for (const entry of index.features) {
+  if (
+    effectiveBounds.south > effectiveBounds.north ||
+    effectiveBounds.west > effectiveBounds.east
+  ) {
+    return wantedIds;
+  }
+
+  const bucketCount = index.longitudeBuckets.length;
+  const getBucketIndex = (longitude: number) =>
+    Math.max(
+      0,
+      Math.min(
+        bucketCount - 1,
+        Math.floor(
+          (longitude - index.longitudeBucketWest) / index.longitudeBucketWidth,
+        ),
+      ),
+    );
+  const firstBucket = getBucketIndex(effectiveBounds.west);
+  const lastBucket = getBucketIndex(effectiveBounds.east);
+  const checkedIds = new Set<string>();
+  const candidates = index.longitudeOverflowFeatures.slice();
+  for (let bucket = firstBucket; bucket <= lastBucket; bucket += 1) {
+    candidates.push(...index.longitudeBuckets[bucket]);
+  }
+
+  for (const entry of candidates) {
+    if (checkedIds.has(entry.id)) continue;
+    checkedIds.add(entry.id);
     if (
-      loadingBoundsIntersect(entry.bounds, viewportBounds) &&
-      loadingBoundsIntersect(entry.bounds, workspaceLoadingBounds)
+      loadingBoundsIntersect(entry.bounds, effectiveBounds)
     ) {
       wantedIds.add(entry.id);
     }

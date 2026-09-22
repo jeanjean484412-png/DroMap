@@ -28,10 +28,14 @@ import {
 import { validateWorkspaceBoundsRatio } from "@/lib/dromap/workspace-validation";
 import { getDromapCapabilities } from "@/lib/dromap/product";
 import {
-  parseGeoJsonTextToDromapGeoJsonLayer,
   remapSavedGeoJsonLayerToMap,
   type DromapGeoJsonPrecisionMode,
 } from "@/stores/editor-geojson-layers";
+import {
+  GeoJsonFileImportError,
+  importGeoJsonFileAutomatically,
+  type GeoJsonFileImportProgress,
+} from "@/editor/geojson-file-import";
 import {
   createDefaultDromapLayer,
   useEditorLayersStore,
@@ -984,11 +988,15 @@ function SetupContent({ projectId }: { projectId: string }) {
   const [geoJsonPrecision, setGeoJsonPrecision] =
     useState<DromapGeoJsonPrecisionMode>("original");
   const [geoJsonError, setGeoJsonError] = useState<string | null>(null);
+  const [isImportingGeoJson, setIsImportingGeoJson] = useState(false);
+  const [geoJsonImportProgress, setGeoJsonImportProgress] =
+    useState<GeoJsonFileImportProgress | null>(null);
   const [quitDialogOpen, setQuitDialogOpen] = useState(false);
   const [savedLayersLibraryOpen, setSavedLayersLibraryOpen] = useState(false);
   const [pendingPerformanceBasemapId, setPendingPerformanceBasemapId] =
     useState<DromapBasemapId | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const geoJsonImportAbortRef = useRef<AbortController | null>(null);
   const autoWorkspaceBasemapIdRef = useRef<DromapBasemapId | null>(null);
   const basemapWorkspaceRequestRef = useRef(0);
   const loadSavedLayersFromStorage = useEditorLayersStore(
@@ -1039,6 +1047,14 @@ function SetupContent({ projectId }: { projectId: string }) {
       router.replace(`/projects/${project.id}/editor`);
     }
   }, [project, router]);
+
+  useEffect(
+    () => () => {
+      geoJsonImportAbortRef.current?.abort();
+      geoJsonImportAbortRef.current = null;
+    },
+    [],
+  );
 
   if (!project || project.status === "trashed") {
     return (
@@ -1319,24 +1335,40 @@ function SetupContent({ projectId }: { projectId: string }) {
   async function handleGeoJsonFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0] ?? null;
     event.currentTarget.value = "";
-    if (!file) return;
+    if (!file || isImportingGeoJson) return;
 
     try {
+      const abortController = new AbortController();
+      geoJsonImportAbortRef.current = abortController;
       setGeoJsonError(null);
-      const layer = parseGeoJsonTextToDromapGeoJsonLayer(await file.text(), {
-        sourceName: file.name,
-        layerName: file.name.replace(/\.(geojson|json)$/i, ""),
+      setIsImportingGeoJson(true);
+      setGeoJsonImportProgress(null);
+      const result = await importGeoJsonFileAutomatically(file, {
+        workspaceBounds: workspaceDraft,
         precisionMode: geoJsonPrecision,
+        signal: abortController.signal,
+        onProgress: setGeoJsonImportProgress,
       });
-      setGeoJsonLayer(layer);
+      setGeoJsonLayer(result.layer);
+      if (result.summary.automaticallyOptimized) {
+        setGeoJsonPrecision("light");
+      }
       setSelectedSavedLayerId("");
       setSelectedSavedGeoJsonLayerId("");
       setLayerChoiceKind("geojson");
     } catch (error) {
       setGeoJsonLayer(null);
       setGeoJsonError(
-        error instanceof Error ? error.message : "Import GeoJSON impossible.",
+        error instanceof GeoJsonFileImportError && error.code === "cancelled"
+          ? "Import GeoJSON annulé."
+          : error instanceof Error
+            ? error.message
+            : "Import GeoJSON impossible.",
       );
+    } finally {
+      geoJsonImportAbortRef.current = null;
+      setIsImportingGeoJson(false);
+      setGeoJsonImportProgress(null);
     }
   }
 
@@ -1494,9 +1526,35 @@ function SetupContent({ projectId }: { projectId: string }) {
                   <option value="intermediate">Intermédiaire</option>
                   <option value="light">Légère</option>
                 </select>
-                <DromapButton className="mt-3" onClick={() => fileInputRef.current?.click()}>
-                  Choisir un fichier
+                <DromapButton
+                  className="mt-3"
+                  disabled={isImportingGeoJson}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {isImportingGeoJson
+                    ? `Analyse${geoJsonImportProgress ? ` · ${geoJsonImportProgress.percent}%` : "…"}`
+                    : "Choisir un fichier"}
                 </DromapButton>
+                {isImportingGeoJson ? (
+                  <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900">
+                    <div className="flex items-center justify-between gap-3 font-bold">
+                      <span>Lecture progressive et recadrage automatique</span>
+                      <button
+                        type="button"
+                        onClick={() => geoJsonImportAbortRef.current?.abort()}
+                        className="rounded-lg border border-sky-300 bg-white px-2 py-1 font-black text-sky-800"
+                      >
+                        Annuler
+                      </button>
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-sky-100">
+                      <div
+                        className="h-full rounded-full bg-sky-600 transition-[width] duration-200"
+                        style={{ width: `${geoJsonImportProgress?.percent ?? 2}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : null}
                 {geoJsonLayer ? (
                   <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
                     {geoJsonLayer.name} · {geoJsonLayer.featureCount.toLocaleString("fr-FR")} entité{geoJsonLayer.featureCount > 1 ? "s" : ""}
