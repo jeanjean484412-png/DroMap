@@ -8,12 +8,14 @@ import {
 } from "@/components/dromap-product/legal-page-shell";
 import { DromapLegalContactLink } from "@/components/dromap-product/legal-contact-link";
 import { DROMAP_PLAN_DEFINITIONS } from "@/lib/dromap/plans";
+import { createDromapPublicMetadata } from "@/lib/dromap/seo";
 import { getDromapLegalIdentity } from "@/lib/dromap/server/legal";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createDromapPublicMetadata({
   title: "Conditions générales d’utilisation et de vente",
   description: "Conditions d’utilisation de DroMap et conditions applicables aux abonnements, achats Export Max et achats de cartes publiques.",
-};
+  path: "/conditions-generales",
+});
 
 function euro(value: number) {
   return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(value);

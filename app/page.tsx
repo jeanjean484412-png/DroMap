@@ -2,13 +2,19 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { DromapHomePage } from "@/components/dromap-product/home-page";
+import {
+  createDromapPublicMetadata,
+  DROMAP_HOME_DESCRIPTION,
+  DROMAP_HOME_TITLE,
+} from "@/lib/dromap/seo";
 import { readAuthCookies } from "@/lib/dromap/server/supabase-rest";
 
-export const metadata: Metadata = {
-  title: { absolute: "DroMap — Éditeur cartographique en ligne" },
-  description:
-    "Créez des cartes claires, modifiables et exportables avec DroMap : calques, imports, légende, rendu fidèle et Assistant IA contrôlable.",
-};
+export const metadata: Metadata = createDromapPublicMetadata({
+  title: DROMAP_HOME_TITLE,
+  description: DROMAP_HOME_DESCRIPTION,
+  path: "/",
+  absoluteTitle: true,
+});
 
 export default async function HomePage() {
   // La racine reste l’entrée naturelle : une session existante ouvre directement

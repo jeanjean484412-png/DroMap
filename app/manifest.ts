@@ -1,13 +1,12 @@
 import type { MetadataRoute } from "next";
 
-const DROMAP_DESCRIPTION =
-  "Créez des cartes claires, modifiables et exportables avec DroMap : calques, imports, légende, rendu fidèle et Assistant IA contrôlable.";
+import { DROMAP_HOME_DESCRIPTION } from "@/lib/dromap/seo";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "DroMap — Éditeur cartographique",
+    name: "DroMap — Créer et personnaliser des cartes en ligne",
     short_name: "DroMap",
-    description: DROMAP_DESCRIPTION,
+    description: DROMAP_HOME_DESCRIPTION,
     start_url: "/",
     display: "standalone",
     background_color: "#f7f9f8",

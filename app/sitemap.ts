@@ -5,10 +5,13 @@ import {
   publicationsAdminFetch,
 } from "@/lib/dromap/server/publications";
 import { parseJsonResponse } from "@/lib/dromap/server/supabase-rest";
-import { getDromapSiteUrl } from "@/lib/dromap/site-url";
+import { DROMAP_CANONICAL_ORIGIN } from "@/lib/dromap/seo";
+
+export const revalidate = 3600;
 
 type SitemapPublicationRow = {
   slug?: unknown;
+  published_at?: unknown;
   updated_at?: unknown;
 };
 
@@ -38,7 +41,7 @@ async function readAllPublicationSitemapRows() {
 
   for (let offset = 0; offset < 10_000; offset += pageSize) {
     const response = await publicationsAdminFetch(
-      `/dromap_publications?select=slug,updated_at&order=updated_at.desc&limit=${pageSize}&offset=${offset}`,
+      `/dromap_publications?published_at=not.is.null&select=slug,published_at,updated_at&order=updated_at.desc&limit=${pageSize}&offset=${offset}`,
       { method: "GET" },
     );
     if (!response.ok) break;
@@ -53,26 +56,27 @@ async function readAllPublicationSitemapRows() {
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const siteUrl = getDromapSiteUrl();
-
   const staticEntries: MetadataRoute.Sitemap = STATIC_PUBLIC_ROUTES.map((route) => ({
-    url: `${siteUrl}${route.path}`,
+    url: `${DROMAP_CANONICAL_ORIGIN}${route.path === "/" ? "" : route.path}`,
     changeFrequency: route.changeFrequency,
     priority: route.priority,
   }));
 
   try {
     const publicationRows = await readAllPublicationSitemapRows();
+    const seenSlugs = new Set<string>();
     const publicationEntries: MetadataRoute.Sitemap = publicationRows.flatMap((row) => {
       const slug = cleanString(row.slug);
-      if (!slug) return [];
+      const publishedAt = cleanString(row.published_at);
+      if (!slug || !publishedAt || seenSlugs.has(slug)) return [];
+      seenSlugs.add(slug);
 
       const updatedAt = cleanString(row.updated_at);
       const lastModified = updatedAt ? new Date(updatedAt) : undefined;
 
       return [
         {
-          url: `${siteUrl}/library/${encodeURIComponent(slug)}`,
+          url: `${DROMAP_CANONICAL_ORIGIN}/library/${encodeURIComponent(slug)}`,
           lastModified:
             lastModified && !Number.isNaN(lastModified.getTime()) ? lastModified : undefined,
           changeFrequency: "weekly" as const,

@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 
 import { DromapPublicMapClient } from "@/components/dromap-product/public-map-client";
+import {
+  DROMAP_PRIVATE_ROBOTS,
+  getDromapCanonicalUrl,
+} from "@/lib/dromap/seo";
 import { parseJsonResponse } from "@/lib/dromap/server/supabase-rest";
 import {
   dromapPublicationsConfigured,
@@ -22,6 +26,7 @@ export async function generateMetadata({
     return {
       title: "Carte publique",
       description: PUBLIC_MAP_FALLBACK_DESCRIPTION,
+      robots: DROMAP_PRIVATE_ROBOTS,
     };
   }
 
@@ -36,20 +41,38 @@ export async function generateMetadata({
       return {
         title: "Carte publique",
         description: PUBLIC_MAP_FALLBACK_DESCRIPTION,
+        robots: DROMAP_PRIVATE_ROBOTS,
       };
     }
 
     const description = publication.description.trim() || PUBLIC_MAP_FALLBACK_DESCRIPTION;
     const shareImageUrl = publication.thumbnailDataUrl;
+    const canonical = getDromapCanonicalUrl(
+      `/library/${encodeURIComponent(publication.slug)}`,
+    );
 
     return {
       title: publication.title,
       description,
+      alternates: {
+        canonical,
+      },
+      robots: {
+        index: true,
+        follow: true,
+        googleBot: {
+          index: true,
+          follow: true,
+          "max-image-preview": "large",
+          "max-snippet": -1,
+          "max-video-preview": -1,
+        },
+      },
       openGraph: {
         type: "article",
         locale: "fr_FR",
         siteName: "DroMap",
-        url: `/library/${encodeURIComponent(publication.slug)}`,
+        url: canonical,
         title: publication.title,
         description,
         publishedTime: publication.publishedAt,
@@ -74,6 +97,7 @@ export async function generateMetadata({
     return {
       title: "Carte publique",
       description: PUBLIC_MAP_FALLBACK_DESCRIPTION,
+      robots: DROMAP_PRIVATE_ROBOTS,
     };
   }
 }

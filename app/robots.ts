@@ -1,10 +1,8 @@
 import type { MetadataRoute } from "next";
 
-import { getDromapSiteUrl } from "@/lib/dromap/site-url";
+import { DROMAP_CANONICAL_ORIGIN } from "@/lib/dromap/seo";
 
 export default function robots(): MetadataRoute.Robots {
-  const siteUrl = getDromapSiteUrl();
-
   return {
     rules: {
       userAgent: "*",
@@ -24,7 +22,7 @@ export default function robots(): MetadataRoute.Robots {
         "/confirmation",
       ],
     },
-    sitemap: `${siteUrl}/sitemap.xml`,
-    host: siteUrl,
+    sitemap: `${DROMAP_CANONICAL_ORIGIN}/sitemap.xml`,
+    host: DROMAP_CANONICAL_ORIGIN,
   };
 }

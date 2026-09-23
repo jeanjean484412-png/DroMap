@@ -2,14 +2,12 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 
 import { DromapCheckoutConfirmationClient } from "@/components/dromap-product/checkout-confirmation-client";
+import { DROMAP_PRIVATE_ROBOTS } from "@/lib/dromap/seo";
 
 export const metadata: Metadata = {
   title: "Confirmation du paiement",
   description: "Vérification et confirmation d’un paiement DroMap.",
-  robots: {
-    index: false,
-    follow: false,
-  },
+  robots: DROMAP_PRIVATE_ROBOTS,
 };
 
 function ConfirmationFallback() {

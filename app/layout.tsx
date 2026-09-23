@@ -3,7 +3,14 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import { DromapWebAnalytics } from "@/components/dromap-product/web-analytics";
-import { getDromapSiteUrl } from "@/lib/dromap/site-url";
+import {
+  DROMAP_CANONICAL_ORIGIN,
+  DROMAP_HOME_DESCRIPTION,
+  DROMAP_HOME_TITLE,
+  DROMAP_SOCIAL_IMAGE,
+  DROMAP_SOCIAL_IMAGE_ALT,
+  getDromapSiteVerification,
+} from "@/lib/dromap/seo";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,18 +22,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const DROMAP_SITE_URL = getDromapSiteUrl();
-const DROMAP_DEFAULT_TITLE = "DroMap — Éditeur cartographique en ligne";
-const DROMAP_DEFAULT_DESCRIPTION =
-  "Créez des cartes claires, modifiables et exportables avec DroMap : calques, imports, légende, rendu fidèle et Assistant IA contrôlable.";
-
 export const metadata: Metadata = {
-  metadataBase: new URL(DROMAP_SITE_URL),
+  metadataBase: new URL(DROMAP_CANONICAL_ORIGIN),
   title: {
-    default: DROMAP_DEFAULT_TITLE,
+    default: DROMAP_HOME_TITLE,
     template: "%s — DroMap",
   },
-  description: DROMAP_DEFAULT_DESCRIPTION,
+  description: DROMAP_HOME_DESCRIPTION,
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
@@ -44,23 +46,29 @@ export const metadata: Metadata = {
     type: "website",
     locale: "fr_FR",
     siteName: "DroMap",
-    title: DROMAP_DEFAULT_TITLE,
-    description: DROMAP_DEFAULT_DESCRIPTION,
+    url: DROMAP_CANONICAL_ORIGIN,
+    title: DROMAP_HOME_TITLE,
+    description: DROMAP_HOME_DESCRIPTION,
     images: [
       {
-        url: "/dromap-share.png?v=20260915-3",
+        url: DROMAP_SOCIAL_IMAGE,
         width: 1200,
         height: 630,
-        alt: "DroMap — Éditeur cartographique en ligne",
+        alt: DROMAP_SOCIAL_IMAGE_ALT,
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: DROMAP_DEFAULT_TITLE,
-    description: DROMAP_DEFAULT_DESCRIPTION,
-    images: ["/dromap-share.png?v=20260915-3"],
+    title: DROMAP_HOME_TITLE,
+    description: DROMAP_HOME_DESCRIPTION,
+    images: [DROMAP_SOCIAL_IMAGE],
   },
+  robots: {
+    index: true,
+    follow: true,
+  },
+  verification: getDromapSiteVerification(),
 };
 
 export default function RootLayout({

@@ -27,8 +27,12 @@ export const maxDuration = 60;
 const GENERATE_CONTENT_BASE_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_MODEL = "gemini-3.5-flash";
-const DEFAULT_FALLBACK_MODEL = "gemini-3.1-flash-lite";
-const REQUEST_TIMEOUT_MS = 22_000;
+const DEFAULT_FALLBACK_MODEL = "gemini-2.5-flash";
+const DEFAULT_RESILIENCE_MODEL = "gemini-2.5-flash-lite";
+const GEMINI_TOTAL_BUDGET_MS = 52_000;
+const GEMINI_PRIMARY_TIMEOUT_MS = 34_000;
+const GEMINI_FALLBACK_TIMEOUT_MS = 16_000;
+const GEMINI_MIN_ATTEMPT_MS = 3_000;
 const MAX_PROMPT_LENGTH = 20_000;
 const MAX_COMMANDS = 120;
 
@@ -1072,7 +1076,7 @@ function buildGenerateContentBody(body: Record<string, unknown>) {
     ? body.generation_config
     : {};
   const maxOutputTokens = clamp(
-    asNumber(generationConfig.max_output_tokens) ?? 8_000,
+    asNumber(generationConfig.max_output_tokens) ?? 6_000,
     512,
     16_000,
   );
@@ -1100,9 +1104,10 @@ async function callGeminiOnce(
   apiKey: string,
   body: Record<string, unknown>,
   model: string,
+  timeoutMs: number,
 ) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(
       `${GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(model)}:generateContent`,
@@ -1138,6 +1143,7 @@ async function callGeminiOnce(
       const error = new Error(message) as Error & {
         status?: number;
         retryable?: boolean;
+        code?: string;
       };
       error.status = response.status;
       error.retryable =
@@ -1145,6 +1151,12 @@ async function callGeminiOnce(
         response.status === 500 ||
         response.status === 503 ||
         response.status === 504;
+      error.code =
+        response.status === 429
+          ? "AI_PROVIDER_RATE_LIMIT"
+          : error.retryable
+            ? "AI_PROVIDER_UNAVAILABLE"
+            : "AI_PROVIDER_ERROR";
       throw error;
     }
 
@@ -1154,9 +1166,10 @@ async function callGeminiOnce(
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       const timeoutError = new Error(
-        `Le modèle ${model} a dépassé ${Math.round(REQUEST_TIMEOUT_MS / 1000)} secondes.`,
-      ) as Error & { retryable?: boolean };
+        `Le modèle ${model} a dépassé ${Math.round(timeoutMs / 1000)} secondes.`,
+      ) as Error & { retryable?: boolean; code?: string };
       timeoutError.retryable = true;
+      timeoutError.code = "AI_PROVIDER_TIMEOUT";
       throw timeoutError;
     }
     throw error;
@@ -1191,13 +1204,25 @@ async function callGemini(apiKey: string, body: Record<string, unknown>) {
   const configuredFallback =
     process.env.DROMAP_GEMINI_FALLBACK_MODEL?.trim() || DEFAULT_FALLBACK_MODEL;
   const candidates = Array.from(
-    new Set([requestedModel, configuredFallback]),
+    new Set([requestedModel, configuredFallback, DEFAULT_RESILIENCE_MODEL]),
   ).filter(Boolean);
   let lastError: unknown = null;
+  const startedAt = Date.now();
 
-  for (const model of candidates) {
+  for (const [index, model] of candidates.entries()) {
+    const remainingMs = GEMINI_TOTAL_BUDGET_MS - (Date.now() - startedAt);
+    if (remainingMs < GEMINI_MIN_ATTEMPT_MS) break;
+    const timeoutMs = Math.max(
+      GEMINI_MIN_ATTEMPT_MS,
+      Math.min(
+        index === 0
+          ? GEMINI_PRIMARY_TIMEOUT_MS
+          : GEMINI_FALLBACK_TIMEOUT_MS,
+        remainingMs,
+      ),
+    );
     try {
-      return await callGeminiOnce(apiKey, body, model);
+      return await callGeminiOnce(apiKey, body, model, timeoutMs);
     } catch (error) {
       lastError = error;
       if (
@@ -1216,7 +1241,7 @@ async function callGemini(apiKey: string, body: Record<string, unknown>) {
 }
 
 function shouldResearch(prompt: string) {
-  return /(population|habitant|démograph|demograph|densité|density|pib|gdp|migration|commerce|export|import|production|chômage|histoire|historique|guerre|empire|royaume|frontière|géograph|geograph|fleuve|rivière|riviere|montagne|sommet|altitude|superficie|capitale|métropole|metropole|mer|océan|ocean|lac|climat|relief|langue|religion|ethnie|bataille|traité|traite|alliance|élection|election|résultat|resultat|statistique|nombre|taux|pourcentage|en \d{3,4}|aujourd'hui|actuel|récent|recent|date)/i.test(
+  return /(population|habitant|démograph|demograph|densité|density|pib|gdp|migration|commerce|export|import|production|chômage|histoire|historique|guerre|empire|royaume|frontière|géograph|geograph|fleuve|rivière|riviere|montagne|sommet|altitude|superficie|capitale|métropole|metropole|mer|océan|ocean|lac|climat|relief|langue|religion|ethnie|bataille|traité|traite|alliance|élection|election|résultat|resultat|statistique|nombre|taux|pourcentage|ministère|ministere|gouvernement|institution|administration|siège|siege|localisation|adresse|en \d{3,4}|aujourd'hui|actuel|récent|recent|date)/i.test(
     prompt,
   );
 }
@@ -1422,6 +1447,93 @@ function populationMarkerCityNames(prompt: string) {
     .map((entity) => canonicalPlaceName(entity.name))
     .filter((name) => name.length >= 2);
   return Array.from(new Set(names)).slice(0, 12);
+}
+
+function simpleMarkerTarget(prompt: string) {
+  const normalizedPrompt = normalizeKey(prompt);
+  if (!/\b(marqueur|repere|point|pictogramme|symbole)\b/.test(normalizedPrompt))
+    return null;
+  if (
+    /\b(tous|toutes|plusieurs|chaque|ministere|ministeres)\b/.test(
+      normalizedPrompt,
+    )
+  )
+    return null;
+
+  const match = prompt.match(
+    /(?:mets?|ajoute|place|pose|affiche|crée|cree)\s+(?:moi\s+)?(?:un|une|le|la)?\s*(?:marqueur|repère|repere|point|pictogramme|symbole)\s+(?:sur|à|a|au|aux|dans|devant)\s+(.+?)\s*[.!?]*$/iu,
+  );
+  const rawTarget = match?.[1]?.trim() ?? "";
+  if (
+    !rawTarget ||
+    rawTarget.length > 140 ||
+    /\b(et|puis|ainsi que|pareil|même|meme|celui|celle|ici|là|la-bas)\b/i.test(
+      rawTarget,
+    )
+  )
+    return null;
+
+  const normalizedTarget = normalizeKey(rawTarget);
+  if (/^(?:l )?(?:elise|elysee)$/.test(normalizedTarget)) {
+    return {
+      label: "Palais de l’Élysée",
+      place: "Palais de l’Élysée, 55 rue du Faubourg-Saint-Honoré, Paris, France",
+    };
+  }
+
+  return {
+    label: rawTarget.replace(/^["“”'’]+|["“”'’]+$/g, "").trim(),
+    place: rawTarget,
+  };
+}
+
+function buildSimpleMarkerFastPath(
+  prompt: string,
+  workspaceMode: "manual" | "automatic",
+): DroMapAiPlan | null {
+  const target = simpleMarkerTarget(prompt);
+  if (!target?.label || !target.place) return null;
+
+  const warnings: string[] = [];
+  const rawCommands: unknown[] = [];
+  if (workspaceMode === "automatic") {
+    rawCommands.push({
+      id: "zone-marqueur-lieu",
+      type: "set_workspace_by_place",
+      explanation: `Définir automatiquement une zone autour de ${target.label}.`,
+      place: target.place,
+      paddingRatio: 0.18,
+    });
+  }
+  rawCommands.push(
+    {
+      id: "marqueur-lieu",
+      type: "create_marker",
+      explanation: `Placer un marqueur sur ${target.label}.`,
+      place: target.place,
+      label: target.label,
+      legendLabel: target.label,
+      symbolId: "circle",
+      mapLabelVisibility: "show",
+    },
+    {
+      id: "recadrage-marqueur-lieu",
+      type: "fit_view",
+      explanation: `Centrer la carte sur ${target.label}.`,
+      zoom: 16,
+    },
+  );
+
+  return {
+    summary: `Placer un marqueur sur ${target.label}.`,
+    warnings,
+    facts: [],
+    sources: [],
+    commands: rawCommands.flatMap((command, index) => {
+      const normalized = normalizeCommand(command, index, warnings);
+      return normalized ? [normalized] : [];
+    }),
+  };
 }
 
 function coordinateIsInsideBounds(
@@ -2877,13 +2989,16 @@ async function handlePOST(request: NextRequest) {
           prompt,
         ].join("\n")
       : prompt;
-    const fastPathPlan = conversation.length
-      ? null
-      : await buildPopulationMarkerFastPath(
-          prompt,
-          body.context,
-          workspaceMode,
-        );
+    const simpleMarkerFastPath = buildSimpleMarkerFastPath(prompt, workspaceMode);
+    const fastPathPlan =
+      simpleMarkerFastPath ??
+      (conversation.length
+        ? null
+        : await buildPopulationMarkerFastPath(
+            prompt,
+            body.context,
+            workspaceMode,
+          ));
     if (fastPathPlan && fastPathPlan.commands.length) {
       removeForbiddenBasemapCommands(fastPathPlan);
       enforceWorkspaceModeOnPlan(fastPathPlan, workspaceMode);
@@ -2893,8 +3008,10 @@ async function handlePOST(request: NextRequest) {
         plan: fastPathPlan,
         assistantMessage: fastPathPlan.summary,
         questions: [],
-        model: "DroMap démographie directe (Wikidata)",
-        grounded: true,
+        model: simpleMarkerFastPath
+          ? "DroMap géocodage direct"
+          : "DroMap démographie directe (Wikidata)",
+        grounded: simpleMarkerFastPath ? false : true,
       };
       return NextResponse.json(response);
     }
@@ -3068,16 +3185,38 @@ async function handlePOST(request: NextRequest) {
       error instanceof Error
         ? error.message
         : "Erreur inconnue de l'assistant IA.";
-    const message = /gemini|api[_ -]?key|\.env|modèle|model|réponse non json|commande dromap exploitable/i.test(rawMessage)
-      ? "L’assistant IA n’a pas pu traiter cette demande. Réessaie ou reformule-la."
-      : rawMessage;
-    const status =
+    const rawStatus =
       isRecord(error) &&
       typeof error.status === "number" &&
       error.status >= 400 &&
       error.status <= 599
         ? error.status
         : 500;
+    const code =
+      isRecord(error) && typeof error.code === "string" ? error.code : null;
+    console.error("[dromap-ai] La génération du plan a échoué.", {
+      code,
+      status: rawStatus,
+      name: error instanceof Error ? error.name : "UnknownError",
+      message: rawMessage.slice(0, 500),
+    });
+
+    const isTimeout = code === "AI_PROVIDER_TIMEOUT";
+    const isRateLimited = code === "AI_PROVIDER_RATE_LIMIT" || rawStatus === 429;
+    const isProviderUnavailable =
+      code === "AI_PROVIDER_UNAVAILABLE" || rawStatus >= 500;
+    const message = isTimeout
+      ? "L’assistant IA a mis trop de temps à répondre. Réessaie dans quelques instants."
+      : isRateLimited
+        ? "L’assistant IA reçoit trop de demandes pour le moment. Réessaie dans quelques instants."
+        : isProviderUnavailable
+          ? "Le service IA est momentanément indisponible. Réessaie dans quelques instants."
+          : /gemini|api[_ -]?key|\.env|modèle|model|réponse non json|commande dromap exploitable/i.test(
+                rawMessage,
+              )
+            ? "L’assistant IA n’a pas pu traiter cette demande. Réessaie ou reformule-la."
+            : rawMessage;
+    const status = isTimeout || isProviderUnavailable ? 503 : rawStatus;
     return NextResponse.json({ error: message }, { status });
   }
 }

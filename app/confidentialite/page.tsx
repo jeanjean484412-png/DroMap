@@ -7,12 +7,14 @@ import {
 } from "@/components/dromap-product/legal-page-shell";
 import { DromapLegalContactLink } from "@/components/dromap-product/legal-contact-link";
 import { DROMAP_PRIVACY_LAST_UPDATED } from "@/lib/dromap/legal-public";
+import { createDromapPublicMetadata } from "@/lib/dromap/seo";
 import { getDromapLegalIdentity } from "@/lib/dromap/server/legal";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createDromapPublicMetadata({
   title: "Politique de confidentialité",
   description: "Comment DroMap collecte, utilise, conserve et protège les données personnelles liées aux comptes, projets, paiements, publications, contacts et fonctions d’IA.",
-};
+  path: "/confidentialite",
+});
 
 function IdentityBlock() {
   const identity = getDromapLegalIdentity();
