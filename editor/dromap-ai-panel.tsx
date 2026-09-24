@@ -666,6 +666,7 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
   );
   const requestControllerRef = useRef<AbortController | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesRef = useRef<DroMapAiChatMessage[]>([]);
   const currentTaskPromptRef = useRef("");
 
@@ -729,6 +730,7 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     !isRevisingStep;
   const isAiWorking =
     isGenerating || isApplying || isRevisingStep || isPreparingBuildings || isPreparingRoutes;
+  const showPlanPane = Boolean(plan || prePlanQuestions.length);
   const aiWorkingLabel = isApplying
     ? "Application sur la carte…"
     : isPreparingBuildings
@@ -737,7 +739,16 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
         ? "Analyse des routes…"
     : isRevisingStep
       ? "Vérification de l’étape…"
-      : "Analyse de la demande et préparation du plan…";
+      : "Analyse de la demande…";
+  const assistantStatus = isAiWorking
+    ? aiWorkingLabel
+    : executionResult
+      ? "Plan appliqué"
+      : plan
+        ? "Plan prêt à vérifier"
+        : prePlanQuestions.length
+          ? "Précision nécessaire"
+          : "Disponible";
   const buildingCommandsInPlan = useMemo(
     () => plan?.commands.filter((command) => command.type === "import_buildings") ?? [],
     [plan],
@@ -993,6 +1004,13 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     if (!element) return;
     element.scrollTop = element.scrollHeight;
   }, [messages, isGenerating, isRevisingStep]);
+
+  useEffect(() => {
+    const element = promptTextareaRef.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, 128)}px`;
+  }, [prompt, workspaceMode]);
 
   function persistMessages(nextMessages: DroMapAiChatMessage[]) {
     const limited = nextMessages.slice(-MAX_CHAT_MESSAGES);
@@ -2354,21 +2372,28 @@ Routes validées. Voici la suite du plan.`,
         )
       ) : (
         <section
-          className={`pointer-events-auto flex w-[64rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-teal-200 bg-white shadow-lg ${
+          className={`pointer-events-auto flex max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl ${
+            showPlanPane ? "w-[68rem]" : "w-[48rem]"
+          } ${
             productRuntimeEnabled
               ? "h-[calc(100vh-5.5rem)]"
               : "h-[calc(100vh-2rem)]"
           }`}
           aria-busy={isAiWorking}
         >
-          <header className="flex items-start justify-between gap-3 border-b border-teal-100 bg-teal-50/80 px-5 py-3">
+          <header className="flex items-center justify-between gap-3 border-b border-slate-200 bg-[#f5faf9] px-4 py-3 sm:px-5">
             <div>
-              <div className="flex items-center gap-2 font-semibold text-slate-900">
-                <DromapAiAssistantIcon className="h-4 w-4 text-teal-600" />
-                Assistant IA
+              <div className="flex items-center gap-2.5 font-semibold text-[#173c49]">
+                <span className="flex h-7 w-7 items-center justify-center rounded-md border border-teal-200 bg-white">
+                  <DromapAiAssistantIcon className="h-4 w-4 text-teal-700" />
+                </span>
+                <span>Assistant IA</span>
+                <span className={`hidden rounded-md px-2 py-1 text-[10px] font-semibold sm:inline-flex ${isAiWorking ? "bg-teal-100 text-teal-900" : executionResult ? "bg-emerald-100 text-emerald-900" : "bg-white text-slate-600"}`} role="status" aria-live="polite">
+                  {assistantStatus}
+                </span>
               </div>
-              <p className="mt-0.5 text-xs text-slate-600">
-                Pose une question ou demande une modification de la carte.
+              <p className="mt-1 text-xs text-slate-600">
+                Cartographier, modifier et comprendre votre carte.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -2391,59 +2416,59 @@ Routes validées. Voici la suite du plan.`,
           </header>
 
           {!workspaceMode ? (
-            <div className="min-h-0 flex-1 overflow-y-auto p-6">
-              <div className="mx-auto max-w-2xl space-y-4">
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+              <div className="mx-auto max-w-2xl space-y-3">
                 <div>
-                  <p className="text-base font-black text-slate-900">
-                    Sélection de la zone
+                  <p className="text-base font-semibold text-[#173c49]">
+                    Comment définir la zone de la carte ?
                   </p>
                   <p className="mt-1 text-sm text-slate-500">
-                    La zone manuelle offre le meilleur contrôle du cadrage final.
+                    Choisissez un cadrage manuel ou laissez DroMap l’adapter au résultat.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={chooseManualMode}
-                  className="w-full rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-4 text-left transition hover:border-emerald-500 hover:bg-emerald-100"
+                  className="w-full rounded-lg border border-teal-300 bg-[#f5faf9] p-4 text-left transition hover:border-teal-500 hover:bg-teal-50"
                 >
                   <span className="flex items-center justify-between gap-2">
-                    <span className="font-black text-emerald-950">
+                    <span className="font-semibold text-[#173c49]">
                       Sélection manuelle
                     </span>
-                    <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-white">
+                    <span className="rounded-md bg-teal-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                       Recommandée
                     </span>
                   </span>
-                  <span className="mt-1 block text-sm leading-relaxed text-emerald-900">
-                    Tu traces et valides la zone. Si elle existe déjà, la discussion s'ouvre immédiatement.
+                  <span className="mt-1 block text-sm leading-relaxed text-slate-600">
+                    Tracez et validez la zone sur la carte. Si elle existe déjà, la discussion s’ouvre immédiatement.
                   </span>
                 </button>
                 <button
                   type="button"
                   onClick={chooseAutomaticMode}
-                  className="w-full rounded-2xl border border-teal-200 bg-teal-50 p-4 text-left transition hover:border-teal-400 hover:bg-teal-100"
+                  className="w-full rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-teal-400 hover:bg-[#f5faf9]"
                 >
-                  <span className="font-black text-teal-950">
-                    Sélection automatique par l'IA
+                  <span className="font-semibold text-[#173c49]">
+                    Cadrage automatique
                   </span>
-                  <span className="mt-1 block text-sm leading-relaxed text-teal-900">
-                    La zone actuelle est retirée. DroMap place d'abord les éléments, puis calcule une zone avec une marge autour du résultat.
+                  <span className="mt-1 block text-sm leading-relaxed text-slate-600">
+                    DroMap définit la zone autour des éléments ajoutés. Une zone déjà tracée sera retirée.
                   </span>
                 </button>
               </div>
             </div>
           ) : (
-            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-              <div className="flex min-h-0 flex-col border-b border-slate-200 lg:border-b-0 lg:border-r">
-                <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+            <div className={`grid min-h-0 flex-1 ${showPlanPane ? "grid-cols-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]" : "grid-cols-1"}`}>
+              <div className={`flex min-h-0 flex-col ${showPlanPane ? "border-b border-slate-200 lg:border-b-0 lg:border-r" : ""}`}>
+                <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2.5">
                   <div>
-                    <p className="text-xs font-black text-slate-900">
-                      Discussion · zone {workspaceMode === "manual" ? "manuelle" : "automatique"}
+                    <p className="text-xs font-semibold text-[#173c49]">
+                      Discussion
                     </p>
                     <p className="text-[11px] text-slate-500">
                       {workspaceMode === "manual"
-                        ? "La zone validée restera inchangée."
-                        : "La zone sera calculée autour du résultat."}
+                        ? "Zone manuelle · la sélection validée restera inchangée"
+                        : "Zone automatique · calculée autour du résultat"}
                     </p>
                   </div>
                   <button
@@ -2460,11 +2485,19 @@ Routes validées. Voici la suite du plan.`,
 
                 <div
                   ref={chatScrollRef}
-                  className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50/60 p-4"
+                  className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-[#fbfcfc] p-4 sm:p-5"
                 >
-                  {messages.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-teal-200 bg-white p-3 text-xs leading-relaxed text-slate-600">
-                      Décris ce que tu veux créer, modifier ou comprendre.
+                  {!messages.some((message) => message.role === "user") && !isGenerating ? (
+                    <div className="mx-auto max-w-xl rounded-lg border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-700">
+                      <p className="font-semibold text-[#173c49]">Que souhaitez-vous faire sur cette carte ?</p>
+                      <p className="mt-1 text-xs text-slate-600">Décrivez le résultat avec vos mots. Je répondrai directement ou vous proposerai des étapes à vérifier avant toute modification.</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {["Place un marqueur à Paris", "Colorie la France en rouge", "Comment créer une légende ?"].map((example) => (
+                          <button key={example} type="button" onClick={() => setPrompt(example)} className="rounded-md border border-teal-200 bg-[#f5faf9] px-2.5 py-1.5 text-xs font-medium text-teal-900 hover:bg-teal-50">
+                            {example}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   ) : null}
                   {messages.map((message) => {
@@ -2477,9 +2510,9 @@ Routes validées. Voici la suite du plan.`,
                         className={`flex ${isUser ? "justify-end" : "justify-start"}`}
                       >
                         <div
-                          className={`max-w-[88%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm leading-relaxed ${
+                          className={`max-w-[88%] rounded-lg px-3 py-2 text-sm leading-relaxed ${
                             isUser
-                              ? "bg-teal-600 text-white"
+                              ? "bg-[#176e6a] text-white"
                               : isError
                                 ? "border border-red-200 bg-red-50 text-red-800"
                                 : isSystem
@@ -2487,7 +2520,10 @@ Routes validées. Voici la suite du plan.`,
                                   : "border border-slate-200 bg-white text-slate-800"
                           }`}
                         >
-                          {message.text}
+                          <span className={`mb-1 block text-[10px] font-semibold ${isUser ? "text-teal-50" : "text-slate-500"}`}>
+                            {isUser ? "Vous" : isError ? "Impossible pour le moment" : isSystem ? "Information" : "Assistant DroMap"}
+                          </span>
+                          <span className="whitespace-pre-wrap">{message.text}</span>
                         </div>
                       </div>
                     );
@@ -2508,8 +2544,12 @@ Routes validées. Voici la suite du plan.`,
                   ) : null}
                 </div>
 
-                <div className="border-t border-slate-200 bg-white p-3">
+                <div className="border-t border-slate-200 bg-white p-3 sm:p-4">
+                  {error && !showPlanPane ? (
+                    <p className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800" role="alert">{error}</p>
+                  ) : null}
                   <textarea
+                    ref={promptTextareaRef}
                     value={prompt}
                     onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
                       setPrompt(event.target.value)
@@ -2524,12 +2564,13 @@ Routes validées. Voici la suite du plan.`,
                       }
                     }}
                     rows={2}
-                    placeholder="Écris ta demande…"
-                    className="min-h-12 max-h-32 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                    placeholder="Décrivez ce que vous voulez voir sur la carte…"
+                    aria-label="Votre demande à l'assistant IA"
+                    className="min-h-12 max-h-32 w-full resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
                   />
                   <div className="mt-2 flex items-center justify-between gap-2">
                     <span className="text-[11px] text-slate-500">
-                      Ctrl+Entrée pour envoyer
+                      Entrée : nouvelle ligne · Ctrl+Entrée : envoyer
                     </span>
                     <button
                       type="button"
@@ -2543,7 +2584,7 @@ Routes validées. Voici la suite du plan.`,
                 </div>
               </div>
 
-              <div className="flex min-h-0 flex-col bg-white">
+              {showPlanPane ? <div className="flex min-h-0 flex-col bg-white">
                 <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5">
                   <div>
                     <p className="text-xs font-black text-slate-900">
@@ -3048,7 +3089,7 @@ Routes validées. Voici la suite du plan.`,
                     </button>
                   ) : null}
                 </footer>
-              </div>
+              </div> : null}
             </div>
           )}
         </section>
