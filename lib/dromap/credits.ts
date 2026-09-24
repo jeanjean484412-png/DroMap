@@ -197,12 +197,12 @@ export const DROMAP_THIRD_PARTY_CREDITS: DromapThirdPartyCredit[] = [
     href: "https://geoman.io/",
   },
   {
-    id: "gemini-api",
-    title: "Google Gemini API",
+    id: "openai-api",
+    title: "OpenAI API",
     category: "bibliotheques",
-    license: "Conditions de service Google Gemini API",
+    license: "Conditions de service OpenAI API",
     usage: "Service utilisé par l’assistant IA lorsque cette fonction est disponible.",
-    href: "https://ai.google.dev/gemini-api/terms",
+    href: "https://openai.com/policies/service-terms/",
   },
   {
     id: "stripe-services",

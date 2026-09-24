@@ -20,6 +20,7 @@ import { useDromapProductStore } from "@/stores/dromap-product";
 import { bringFloatingPanelToFront, getInitialFloatingPanelZIndex } from "./floating-panel-z-index";
 
 import { buildDroMapAiProjectContext } from "./dromap-ai-context";
+import { getAiPlanDependents, validateAiPlan } from "./dromap-ai-validator";
 import {
   canUndoLastDroMapAiPlan,
   cancelDroMapAiPreview,
@@ -730,9 +731,13 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     isGenerating || isApplying || isRevisingStep || isPreparingBuildings || isPreparingRoutes;
   const aiWorkingLabel = isApplying
     ? "Application sur la carte…"
+    : isPreparingBuildings
+      ? "Analyse des bâtiments…"
+      : isPreparingRoutes
+        ? "Analyse des routes…"
     : isRevisingStep
-      ? "Ajustement de l’étape…"
-      : "L’IA prépare sa réponse…";
+      ? "Vérification de l’étape…"
+      : "Analyse de la demande et préparation du plan…";
   const buildingCommandsInPlan = useMemo(
     () => plan?.commands.filter((command) => command.type === "import_buildings") ?? [],
     [plan],
@@ -1861,6 +1866,11 @@ Routes validées. Voici la suite du plan.`,
       return false;
     }
     if (!plan || plan.commands.length === 0 || isApplying) return false;
+    const issues = validateAiPlan(plan, buildDroMapAiProjectContext(), workspaceMode);
+    if (issues.length) {
+      setError(issues[0].question);
+      return false;
+    }
 
     setError(null);
     setIsApplying(true);
@@ -1893,6 +1903,11 @@ Routes validées. Voici la suite du plan.`,
 
   async function viewRender() {
     if (!workspaceMode || !plan || executionResult || previewResult || isApplying) {
+      return;
+    }
+    const issues = validateAiPlan(plan, buildDroMapAiProjectContext(), workspaceMode);
+    if (issues.length) {
+      setError(issues[0].question);
       return;
     }
     if (workspaceMode === "manual" && !workspaceValidated) {
@@ -1990,6 +2005,11 @@ Routes validées. Voici la suite du plan.`,
 
   function removePlanStep(command: DroMapAiCommand, index: number) {
     if (executionResult || isApplying || isRevisingStep) return;
+    const dependents = plan ? getAiPlanDependents(plan, command.id) : [];
+    if (dependents.length) {
+      setError(`Cette étape est utilisée par ${dependents.length} étape${dependents.length > 1 ? "s" : ""} suivante${dependents.length > 1 ? "s" : ""}. Ajuste-les avant de la supprimer.`);
+      return;
+    }
     if (previewResult) {
       cancelPreview({ reopenAssistant: true });
     }
@@ -2214,32 +2234,6 @@ Routes validées. Voici la suite du plan.`,
     ? "fixed right-4 top-[4.5rem]"
     : "fixed right-4 top-4";
 
-  if (isOpen && isAiWorking && !previewResult) {
-    return (
-      <div
-        className={`pointer-events-none text-sm ${openedPositionClass}`}
-        style={{ zIndex: panelZIndex }}
-      >
-        <section
-          className={`pointer-events-auto flex w-[64rem] max-w-[calc(100vw-2rem)] items-center justify-center overflow-hidden rounded-2xl border border-teal-200 bg-white shadow-lg ${
-            productRuntimeEnabled
-              ? "h-[calc(100vh-5.5rem)]"
-              : "h-[calc(100vh-2rem)]"
-          }`}
-          aria-live="polite"
-          aria-busy="true"
-        >
-          <div className="flex flex-col items-center gap-4 px-6 text-center">
-            <span
-              className="h-10 w-10 animate-spin rounded-full border-4 border-teal-100 border-t-teal-600"
-              aria-hidden="true"
-            />
-            <p className="text-sm font-black text-slate-900">{aiWorkingLabel}</p>
-          </div>
-        </section>
-      </div>
-    );
-  }
 
   return (
     <>
@@ -2360,17 +2354,18 @@ Routes validées. Voici la suite du plan.`,
         )
       ) : (
         <section
-          className={`pointer-events-auto flex w-[64rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-teal-200 bg-white shadow-lg ${
+          className={`pointer-events-auto flex w-[64rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-teal-200 bg-white shadow-lg ${
             productRuntimeEnabled
               ? "h-[calc(100vh-5.5rem)]"
               : "h-[calc(100vh-2rem)]"
           }`}
+          aria-busy={isAiWorking}
         >
-          <header className="flex items-start justify-between gap-3 border-b border-teal-100 bg-teal-50 px-5 py-3.5">
+          <header className="flex items-start justify-between gap-3 border-b border-teal-100 bg-teal-50/80 px-5 py-3">
             <div>
-              <div className="flex items-center gap-2 font-black text-slate-900">
+              <div className="flex items-center gap-2 font-semibold text-slate-900">
                 <DromapAiAssistantIcon className="h-4 w-4 text-teal-600" />
-                Assistant cartographique DroMap
+                Assistant IA
               </div>
               <p className="mt-0.5 text-xs text-slate-600">
                 Pose une question ou demande une modification de la carte.
@@ -2482,7 +2477,7 @@ Routes validées. Voici la suite du plan.`,
                         className={`flex ${isUser ? "justify-end" : "justify-start"}`}
                       >
                         <div
-                          className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-xs leading-relaxed shadow-sm ${
+                          className={`max-w-[88%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm leading-relaxed ${
                             isUser
                               ? "bg-teal-600 text-white"
                               : isError
@@ -2499,8 +2494,8 @@ Routes validées. Voici la suite du plan.`,
                   })}
                   {isGenerating ? (
                     <div className="flex justify-start">
-                      <div className="rounded-2xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-800">
-                        L’assistant réfléchit, répond et prépare un plan seulement si nécessaire…
+                      <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-800" role="status">
+                        {aiWorkingLabel}
                       </div>
                     </div>
                   ) : null}
@@ -2528,9 +2523,9 @@ Routes validées. Voici la suite du plan.`,
                         void generatePlan();
                       }
                     }}
-                    rows={4}
+                    rows={2}
                     placeholder="Écris ta demande…"
-                    className="w-full resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
+                    className="min-h-12 max-h-32 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
                   />
                   <div className="mt-2 flex items-center justify-between gap-2">
                     <span className="text-[11px] text-slate-500">
@@ -2683,7 +2678,7 @@ Routes validées. Voici la suite du plan.`,
                         <div>
                           <p className="text-sm font-black">Plan appliqué</p>
                           <p className="mt-1 text-xs leading-relaxed text-emerald-900">
-                            Les modifications ont bien été appliquées à la carte. {executionResult.appliedCommandCount} action
+                            {plan.summary} {executionResult.appliedCommandCount} action
                             {executionResult.appliedCommandCount > 1 ? "s" : ""} appliquée
                             {executionResult.appliedCommandCount > 1 ? "s" : ""}.
                           </p>

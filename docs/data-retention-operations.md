@@ -50,7 +50,7 @@ ne prouve pas leur activation sur les comptes des prestataires.
   éventuels drains et destinataires. L'identifiant journalier Analytics de 24 h
   n'est pas la durée de conservation de tous les événements.
 - Infomaniak : activer/organiser la purge et inclure sauvegardes et pièces jointes.
-- Gemini : vérifier le contrat et les durées selon l'offre effectivement utilisée.
+- OpenAI API : vérifier le contrat et les durées selon l'offre effectivement utilisée. Les appels DroMap utilisent `store: false` ; contrôler séparément les journaux et les éventuelles fonctions de recherche web.
 - Les demandes RGPD sont traitées sous un mois en principe ; les prolongations
   prévues par le RGPD doivent être justifiées et annoncées dans ce premier mois.
 

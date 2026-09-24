@@ -1,6 +1,12 @@
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextRequest, NextResponse } from "next/server";
 import { checkAiAccess } from "@/lib/dromap/server/ai-access";
+import { callStructuredOpenAi } from "@/lib/dromap/server/openai-provider";
+import { AI_COMMAND_TYPES, describeAiCapabilities } from "@/editor/dromap-ai-capabilities";
+import { AI_INTERACTION_SCHEMA, AI_RESEARCH_SCHEMA, AI_STEP_REVISION_SCHEMA } from "@/editor/dromap-ai-schema";
+import { chooseAiModel, type AiModelChoice } from "@/editor/dromap-ai-router";
+import { validateAiPlan } from "@/editor/dromap-ai-validator";
+import { repairWithValidation } from "@/editor/dromap-ai-repair";
 
 import type {
   DroMapAiApiRequest,
@@ -22,72 +28,12 @@ import type {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 240;
 
-const GENERATE_CONTENT_BASE_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_MODEL = "gemini-3.5-flash";
-const DEFAULT_FALLBACK_MODEL = "gemini-2.5-flash";
-const DEFAULT_RESILIENCE_MODEL = "gemini-2.5-flash-lite";
-const GEMINI_TOTAL_BUDGET_MS = 52_000;
-const GEMINI_PRIMARY_TIMEOUT_MS = 34_000;
-const GEMINI_FALLBACK_TIMEOUT_MS = 16_000;
-const GEMINI_MIN_ATTEMPT_MS = 3_000;
 const MAX_PROMPT_LENGTH = 20_000;
 const MAX_COMMANDS = 120;
 
-const COMMAND_TYPES = [
-  "set_workspace_by_place",
-  "set_workspace_bounds",
-  "select_world",
-  "fit_view",
-  "set_country_neighbors",
-  "create_layer",
-  "set_active_layer",
-  "configure_layer",
-  "reorder_layer",
-  "delete_layer",
-  "import_geojson_catalog",
-  "import_geojson_url",
-  "create_geojson_layer",
-  "configure_geojson_layer",
-  "reorder_geojson_layer",
-  "delete_geojson_layer",
-  "convert_geojson_to_dromap",
-  "convert_dromap_to_geojson",
-  "import_buildings",
-  "import_routes",
-  "create_custom_marker_svg",
-  "delete_custom_marker",
-  "create_marker",
-  "create_text",
-  "create_line",
-  "create_zone",
-  "create_shape",
-  "fill_boundary",
-  "create_proportional_markers",
-  "create_proportional_flows",
-  "create_choropleth",
-  "update_features",
-  "duplicate_features",
-  "reorder_features",
-  "delete_features",
-  "configure_legend",
-  "configure_map_title",
-  "align_legend_sizes_with_map",
-  "configure_basemap_render",
-  "add_manual_legend_entry",
-  "update_manual_legend_entry",
-  "delete_manual_legend_entry",
-  "configure_legend_group",
-  "configure_feature_legend",
-  "configure_scale",
-  "configure_north_arrow",
-  "configure_map_labels",
-  "select_feature",
-  "clear_selection",
-  "open_export_preview",
-] as const satisfies readonly DroMapAiCommandType[];
+const COMMAND_TYPES = AI_COMMAND_TYPES;
 
 const FEATURE_TYPES = ["marker", "line", "zone", "text"] as const;
 const DASH_STYLES = ["solid", "dashed", "dotted"] as const;
@@ -248,84 +194,7 @@ Règles absolues :
 - La commande renvoyée doit respecter la référence DroMap fournie.
 - N'ajoute aucun texte en dehors du JSON.`;
 
-const COMMAND_REFERENCE = `RÉFÉRENCE COMPACTE DES COMMANDES
-Chaque commande contient au minimum {"id":"identifiant-unique","type":"...","explanation":"..."}. Les champs absents sont ignorés.
-
-Zone, vue et cadrage
-- set_workspace_by_place : place, paddingRatio? ; crée/remplace la zone autour du lieu
-- set_workspace_bounds : bounds={south,west,north,east} ; crée/remplace précisément la zone
-- select_world : sélectionne le monde entier
-- fit_view : bounds? ou coordinate? ou selector? ; zoom?
-- set_country_neighbors : active
-Le fond de carte n’est jamais modifié par l’IA.
-
-Calques DroMap
-- create_layer : layerName
-- set_active_layer : layerRef (id, nom ou id d'une commande create_layer)
-- configure_layer : layerRef, layerName?, visible?, opacity?, locked?, active?
-- reorder_layer : layerRef, layerDirection="up"|"down"
-- delete_layer : layerRef
-
-GeoJSON, bâtiments et routes
-- import_geojson_catalog : geoJsonCatalogId, layerName?, geoJsonPrecision="original"|"intermediate"|"light"
-- import_geojson_url : geoJsonUrl HTTPS, layerName?, geoJsonPrecision?
-- create_geojson_layer : geoJsonData (FeatureCollection GeoJSON), layerName?, geoJsonPrecision?
-- configure_geojson_layer : geoJsonLayerRef, layerName?, visible?, opacity?, locked?, geoJsonPrecision?, geoJsonStyle={strokeColor,strokeWeight,strokeOpacity,fillColor,fillOpacity,markerSize,dashStyle}
-- reorder_geojson_layer : geoJsonLayerRef, layerDirection
-- delete_geojson_layer : geoJsonLayerRef
-- convert_geojson_to_dromap : geoJsonLayerRef, layerName?
-- convert_dromap_to_geojson : layerRef (uniquement un calque provenant d'un GeoJSON)
-- import_buildings : buildingMode="geojson"|"dromap", buildingSelectionMode="all"|"named", buildingQueries?=[noms exacts], place? ou bounds? pour limiter la zone de recherche, layerName?, maxFeatures?. Cette commande déclenche la phase de sélection interactive : DroMap récupère les empreintes IGN/Overture, présélectionne spatialement les candidats plausibles puis ouvre le sélecteur classique pour validation humaine avant tout import définitif.
-- import_routes : roadCategories=["motorways"|"main"|"secondary"|"local", ...], roadSelectionMode="all"|"named", roadQueries?=[références ou noms d’axes], place? ou bounds? pour la zone utile, layerName?. Cette commande déclenche la phase interactive Routes : zone validée → analyse → sélection humaine → réconciliation du calque GeoJSON Routes existant ou création d’un unique calque.
-
-Marqueurs, textes, traits et zones
-- create_custom_marker_svg : label, customMarkerSvg (SVG autonome et sûr)
-- delete_custom_marker : customMarkerRef ou label
-- create_marker : place ou coordinate, label, legendLabel?, layerRef?, symbolId? ou customMarkerRef?, style?, mapLabelVisibility?
-- create_text : place ou coordinate, label=texte affiché, layerRef?, style?
-- create_line : coordinates ou places, label?, legendLabel?, layerRef?, lineVariant="straight"|"freehand"|"traced"|"curved", style?
-- create_zone : rings ou coordinates/places, label?, legendLabel?, layerRef?, zoneVariant="polygon"|"freehand"|"shape"|"boundary-fill", style?
-- create_shape : place ou coordinate, shapeKind="rectangle"|"circle"|"ellipse", bounds? ou style.zoneShapeWidth/zoneShapeHeight, label?, layerRef?, style?
-- fill_boundary : place ou coordinate, label?, legendLabel?, layerRef?, style? ; utilise les polygones GeoJSON visibles ou les frontières vectorielles du fond
-
-Cartographie quantitative
-- create_proportional_markers : seriesItems, proportionalMethod="area" recommandé, minSize?, maxSize?, symbolId?, layerRef?, style?, mapLabelVisibility?, legendTitle?, section?
-- create_proportional_flows : seriesItems avec fromPlace/toPlace ou fromCoordinate/toCoordinate, proportionalMethod="width", minSize?, maxSize?, layerRef?, style?, legendTitle?, section?
-- create_choropleth : geoJsonCatalogId ou geoJsonUrl ou geoJsonData, geoJsonJoinProperties, choroplethValues, classes, layerName?, geoJsonStyle?, legendTitle?, section?
-seriesItems = [{id,label,place?,coordinate?,fromPlace?,toPlace?,fromCoordinate?,toCoordinate?,value,unit?,date?,category?,color?,symbolId?,sourceTitle?,sourceUrl?}]
-choroplethValues = [{key,label?,value,unit?,sourceTitle?,sourceUrl?}]
-classes = [{min?,max?,label,fillColor,fillOpacity}]
-
-Modification des objets
-selector = {featureIds?,labelContains?,legendLabelContains?,layerName?,featureType?="marker"|"line"|"zone"|"text",sourceType?="geojson",all?}
-- update_features : selector obligatoire, label?, legendLabel?, symbolId?, customMarkerRef?, style?, mapLabelVisibility?, locked?, geometryLocked?
-- duplicate_features : selector obligatoire
-- reorder_features : selector obligatoire, layerDirection="up"|"down"
-- delete_features : selector obligatoire
-
-Légende et éléments cartographiques
-- configure_legend : legendTitle?, legendPosition="left"|"right"|"bottom"|"map", legendMapPosition?={x,y}, legendMapTitlePosition?={x,y}, exportFormat="auto"|"16-9"|"4-3"|"a4-landscape"|"a4-portrait"|"square", legendBackgroundColor?, legendSideWidth?, legendBottomHeight?, legendTitleFontSize?, legendItemFontSize?, legendSectionTitleFontSize?, legendSymbolSize?, legendItemGap?, legendLabelGap?, legendLabelLineHeight?, legendSectionGap?, legendMapBorderEnabled?, legendMapBorderColor?, legendMapBorderWidth?, legendMapBorderRadius?, legendMapPadding?
-- configure_map_title : mapTitle?, mapTitlePosition?={x,y}, mapTitleFontSize?, mapTitleColor?
-- align_legend_sizes_with_map : aucune option obligatoire ; aligne les tailles visuelles des figurés automatiques sur leurs objets de carte
-- configure_basemap_render : showBasemapLabels?, basemapDetailDelta? entre -1 et +1 ; agit uniquement sur le rendu, jamais sur le choix du fond
-- add_manual_legend_entry : label, section?, manualLegendSymbol="marker"|"line"|"arrow"|"zone"|"text", symbolId?, style?
-- update_manual_legend_entry : manualLegendEntryId, label?, section?, manualLegendSymbol?, symbolId?, style?
-- delete_manual_legend_entry : manualLegendEntryId
-- configure_legend_group : legendGroupKey, label?, section?, hidden?, orderRefs? (seulement si la clé exacte est fournie dans le contexte)
-- configure_feature_legend : orderRefs=[ids de commandes de création ou ids d'objets] et/ou selector ; label? seulement pour un groupe unique ; section?, hidden?. Cette commande résout les vraies clés automatiques après création des objets et crée automatiquement la sous-légende nommée par section si elle n'existe pas encore. Utilise le titre complet, sans abréviation.
-- configure_scale : active?, scaleStyle="bar"|"alternating"|"line"|"boxed", scalePosition="top-left"|"top-right"|"bottom-left"|"bottom-right", scaleMapPosition?={x,y}
-- configure_north_arrow : active?, northStyle="classic"|"simple"|"compass"|"needle", northPosition comme ci-dessus, northMapPosition?={x,y}
-- configure_map_labels : allMapLabelsEnabled?, geoJsonMapLabelsEnabled?, mapLabelScale? (0.5 à 2.5). allMapLabelsEnabled affiche tous les noms saisis ; geoJsonMapLabelsEnabled seulement les objets issus de GeoJSON.
-- select_feature : selector ou layerRef contenant l'id d'une commande de création
-- clear_selection
-- open_export_preview
-
-style peut contenir : color, weight, opacity, fillColor, fillOpacity, dashStyle, zoneStrokeEnabled, zoneFillEnabled, zoneHatchingStyle, zoneHatchingColor, zoneHatchingWeight, zoneHatchingSpacing, zoneDotsEnabled, zoneDotsColor, zoneDotsRadius, zoneDotsSpacing, zoneShapeWidth, zoneShapeHeight, zoneShapeRotation, markerSize, markerFilled, markerRotation, fontSize, textRotation, textBackgroundEnabled, textBackgroundColor, textBackgroundOpacity, textBorderEnabled, textBorderColor, textBorderWidth, arrowStart, arrowEnd, freehandSmoothing.
-`;
-
-type InteractionPayload = Record<string, unknown> & {
-  error?: { message?: string; status?: string; code?: number };
-};
+const COMMAND_REFERENCE = describeAiCapabilities();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -563,18 +432,6 @@ function normalizeChoroplethValues(value: unknown): DroMapAiChoroplethValue[] {
   });
 }
 
-function selectorHasConstraint(selector: DroMapAiFeatureSelector) {
-  return (
-    selector.all ||
-    selector.featureIds.length > 0 ||
-    selector.labelContains !== null ||
-    selector.legendLabelContains !== null ||
-    selector.layerName !== null ||
-    selector.featureType !== null ||
-    selector.sourceType !== null
-  );
-}
-
 function blankCommand(
   id: string,
   type: DroMapAiCommandType,
@@ -702,18 +559,6 @@ function normalizeCommand(
     return null;
   }
   const selector = normalizeSelector(value.selector);
-  if (
-    [
-      "update_features",
-      "duplicate_features",
-      "reorder_features",
-      "delete_features",
-    ].includes(type) &&
-    !selectorHasConstraint(selector)
-  ) {
-    warnings.push(`Commande ${index + 1} ignorée : sélecteur vide.`);
-    return null;
-  }
   const command = blankCommand(
     asNullableString(value.id) ?? `commande-${index + 1}`,
     type,
@@ -754,7 +599,18 @@ function normalizeCommand(
     active: asBoolean(value.active),
     geoJsonCatalogId: asNullableString(value.geoJsonCatalogId),
     geoJsonUrl: asNullableString(value.geoJsonUrl),
-    geoJsonData: isRecord(value.geoJsonData) ? value.geoJsonData : null,
+    geoJsonData: isRecord(value.geoJsonData)
+      ? value.geoJsonData
+      : typeof value.geoJsonData === "string"
+        ? (() => {
+            try {
+              const parsed: unknown = JSON.parse(value.geoJsonData);
+              return isRecord(parsed) ? parsed : null;
+            } catch {
+              return null;
+            }
+          })()
+        : null,
     geoJsonLayerRef: asNullableString(value.geoJsonLayerRef),
     geoJsonPrecision: asEnum(value.geoJsonPrecision, GEOJSON_PRECISIONS),
     geoJsonStyle: normalizeGeoJsonStyle(value.geoJsonStyle),
@@ -870,109 +726,6 @@ function normalizeFacts(value: unknown): DroMapAiFact[] {
   });
 }
 
-function cleanGeminiJsonText(text: string) {
-  return text
-    .replace(/^\uFEFF/, "")
-    .replace(/```json/gi, "```")
-    .replace(/```/g, "")
-    .trim();
-}
-
-function extractBalancedJsonCandidates(text: string) {
-  const candidates: string[] = [];
-
-  for (let start = 0; start < text.length; start += 1) {
-    const opening = text[start];
-    if (opening !== "{" && opening !== "[") continue;
-
-    const stack: string[] = [];
-    let inString = false;
-    let escaped = false;
-
-    for (let index = start; index < text.length; index += 1) {
-      const character = text[index];
-
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-        } else if (character === "\\") {
-          escaped = true;
-        } else if (character === '"') {
-          inString = false;
-        }
-        continue;
-      }
-
-      if (character === '"') {
-        inString = true;
-        continue;
-      }
-
-      if (character === "{" || character === "[") {
-        stack.push(character);
-        continue;
-      }
-
-      if (character !== "}" && character !== "]") continue;
-
-      const expectedOpening = character === "}" ? "{" : "[";
-      if (stack[stack.length - 1] !== expectedOpening) break;
-
-      stack.pop();
-      if (stack.length === 0) {
-        candidates.push(text.slice(start, index + 1));
-        start = index;
-        break;
-      }
-    }
-  }
-
-  return candidates;
-}
-
-function parseJsonText(text: string) {
-  const cleaned = cleanGeminiJsonText(text);
-
-  try {
-    return JSON.parse(cleaned) as unknown;
-  } catch {
-    // Gemini peut ajouter une explication ou un second bloc après le JSON.
-  }
-
-  const parsedCandidates: unknown[] = [];
-  for (const candidate of extractBalancedJsonCandidates(cleaned)) {
-    try {
-      parsedCandidates.push(JSON.parse(candidate) as unknown);
-    } catch {
-      // Ignore uniquement ce candidat et continue avec les suivants.
-    }
-  }
-
-  const planCandidate = parsedCandidates.find(
-    (candidate) => isRecord(candidate) && Array.isArray(candidate.commands),
-  );
-  if (planCandidate) return planCandidate;
-
-  const researchCandidate = parsedCandidates.find(
-    (candidate) =>
-      isRecord(candidate) &&
-      (Array.isArray(candidate.facts) || Array.isArray(candidate.sources)),
-  );
-  if (researchCandidate) return researchCandidate;
-
-  const firstCandidate = parsedCandidates[0];
-  if (Array.isArray(firstCandidate)) {
-    return { commands: firstCandidate };
-  }
-  if (firstCandidate !== undefined) return firstCandidate;
-
-  const preview = cleaned.slice(0, 1_200);
-  console.error("Réponse Gemini brute non exploitable :", preview);
-  throw new Error(
-    "Gemini a renvoyé une réponse incomplète ou mal formée. Réessaie la même demande.",
-  );
-}
-
 function normalizePlan(value: unknown): DroMapAiPlan {
   const source = isRecord(value) ? value : {};
   const warnings = asStringArray(source.warnings, 80);
@@ -1047,274 +800,26 @@ function normalizeAssistantInteraction(value: unknown) {
   return { plan, questions, assistantMessage };
 }
 
-function extractGenerateContentText(payload: unknown): string {
-  if (!isRecord(payload) || !Array.isArray(payload.candidates)) return "";
-  const chunks: string[] = [];
-  for (const candidate of payload.candidates) {
-    if (
-      !isRecord(candidate) ||
-      !isRecord(candidate.content) ||
-      !Array.isArray(candidate.content.parts)
-    )
-      continue;
-    for (const part of candidate.content.parts) {
-      if (isRecord(part) && typeof part.text === "string")
-        chunks.push(part.text);
-    }
-  }
-  return chunks.join("").trim();
-}
-
-function buildGenerateContentBody(body: Record<string, unknown>) {
-  const input = asString(body.input);
-  const systemInstruction = asString(body.system_instruction);
-  const responseFormat = isRecord(body.response_format)
-    ? body.response_format
-    : {};
-  const mimeType = asString(responseFormat.mime_type) || "application/json";
-  const generationConfig = isRecord(body.generation_config)
-    ? body.generation_config
-    : {};
-  const maxOutputTokens = clamp(
-    asNumber(generationConfig.max_output_tokens) ?? 6_000,
-    512,
-    16_000,
-  );
-  const requestBody: Record<string, unknown> = {
-    contents: [{ role: "user", parts: [{ text: input }] }],
-    generationConfig: {
-      responseMimeType: mimeType,
-      maxOutputTokens,
-      temperature: 0.1,
-    },
-  };
-  if (systemInstruction) {
-    requestBody.systemInstruction = { parts: [{ text: systemInstruction }] };
-  }
-  if (
-    Array.isArray(body.tools) &&
-    body.tools.some((tool) => isRecord(tool) && tool.type === "google_search")
-  ) {
-    requestBody.tools = [{ googleSearch: {} }];
-  }
-  return requestBody;
-}
-
-async function callGeminiOnce(
-  apiKey: string,
-  body: Record<string, unknown>,
-  model: string,
-  timeoutMs: number,
-) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(
-      `${GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(model)}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
-        },
-        body: JSON.stringify(buildGenerateContentBody(body)),
-        signal: controller.signal,
-        cache: "no-store",
-      },
-    );
-
-    const raw = await response.text();
-    let payload: InteractionPayload = {};
-    if (raw) {
-      try {
-        payload = JSON.parse(raw) as InteractionPayload;
-      } catch {
-        if (!response.ok)
-          throw new Error(
-            `Gemini a renvoyé ${response.status} avec une réponse illisible.`,
-          );
-        throw new Error("Gemini a renvoyé une réponse non JSON inattendue.");
-      }
-    }
-
-    if (!response.ok || payload.error) {
-      const message =
-        payload.error?.message ?? `Gemini a renvoyé ${response.status}.`;
-      const error = new Error(message) as Error & {
-        status?: number;
-        retryable?: boolean;
-        code?: string;
-      };
-      error.status = response.status;
-      error.retryable =
-        response.status === 429 ||
-        response.status === 500 ||
-        response.status === 503 ||
-        response.status === 504;
-      error.code =
-        response.status === 429
-          ? "AI_PROVIDER_RATE_LIMIT"
-          : error.retryable
-            ? "AI_PROVIDER_UNAVAILABLE"
-            : "AI_PROVIDER_ERROR";
-      throw error;
-    }
-
-    const text = extractGenerateContentText(payload);
-    if (!text) throw new Error("Gemini n'a renvoyé aucun contenu exploitable.");
-    return { text, payload, model };
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      const timeoutError = new Error(
-        `Le modèle ${model} a dépassé ${Math.round(timeoutMs / 1000)} secondes.`,
-      ) as Error & { retryable?: boolean; code?: string };
-      timeoutError.retryable = true;
-      timeoutError.code = "AI_PROVIDER_TIMEOUT";
-      throw timeoutError;
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function isModelAvailabilityError(status: number, message: string) {
-  const normalized = message.toLowerCase();
-  return (
-    status === 404 ||
-    ((status === 400 || status === 403) &&
-      normalized.includes("model") &&
-      (normalized.includes("not found") ||
-        normalized.includes("no longer available") ||
-        normalized.includes("not supported") ||
-        normalized.includes("unavailable")))
-  );
-}
-
-function shouldFallbackAfterError(error: unknown) {
-  const status =
-    isRecord(error) && typeof error.status === "number" ? error.status : 0;
-  const message = error instanceof Error ? error.message : String(error);
-  const retryable = isRecord(error) && error.retryable === true;
-  return retryable || isModelAvailabilityError(status, message);
-}
-
-async function callGemini(apiKey: string, body: Record<string, unknown>) {
-  const requestedModel = asNullableString(body.model) ?? DEFAULT_MODEL;
-  const configuredFallback =
-    process.env.DROMAP_GEMINI_FALLBACK_MODEL?.trim() || DEFAULT_FALLBACK_MODEL;
-  const candidates = Array.from(
-    new Set([requestedModel, configuredFallback, DEFAULT_RESILIENCE_MODEL]),
-  ).filter(Boolean);
-  let lastError: unknown = null;
-  const startedAt = Date.now();
-
-  for (const [index, model] of candidates.entries()) {
-    const remainingMs = GEMINI_TOTAL_BUDGET_MS - (Date.now() - startedAt);
-    if (remainingMs < GEMINI_MIN_ATTEMPT_MS) break;
-    const timeoutMs = Math.max(
-      GEMINI_MIN_ATTEMPT_MS,
-      Math.min(
-        index === 0
-          ? GEMINI_PRIMARY_TIMEOUT_MS
-          : GEMINI_FALLBACK_TIMEOUT_MS,
-        remainingMs,
-      ),
-    );
-    try {
-      return await callGeminiOnce(apiKey, body, model, timeoutMs);
-    } catch (error) {
-      lastError = error;
-      if (
-        !shouldFallbackAfterError(error) ||
-        model === candidates[candidates.length - 1]
-      )
-        throw error;
-    }
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(
-        "Aucun modèle Gemini compatible n'est disponible pour cette clé API.",
-      );
-}
-
-function shouldResearch(prompt: string) {
-  return /(population|habitant|démograph|demograph|densité|density|pib|gdp|migration|commerce|export|import|production|chômage|histoire|historique|guerre|empire|royaume|frontière|géograph|geograph|fleuve|rivière|riviere|montagne|sommet|altitude|superficie|capitale|métropole|metropole|mer|océan|ocean|lac|climat|relief|langue|religion|ethnie|bataille|traité|traite|alliance|élection|election|résultat|resultat|statistique|nombre|taux|pourcentage|ministère|ministere|gouvernement|institution|administration|siège|siege|localisation|adresse|en \d{3,4}|aujourd'hui|actuel|récent|recent|date)/i.test(
-    prompt,
-  );
-}
-
-const RESEARCH_SCHEMA = {
-  type: "object",
-  properties: {
-    summary: { type: "string" },
-    facts: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          subject: { type: "string" },
-          metric: { type: "string" },
-          value: { type: ["number", "string", "null"] },
-          unit: { type: ["string", "null"] },
-          date: { type: ["string", "null"] },
-          location: { type: ["string", "null"] },
-          sourceTitle: { type: ["string", "null"] },
-          sourceUrl: { type: ["string", "null"] },
-          note: { type: ["string", "null"] },
-        },
-        required: [
-          "subject",
-          "metric",
-          "value",
-          "unit",
-          "date",
-          "location",
-          "sourceTitle",
-          "sourceUrl",
-          "note",
-        ],
-      },
-    },
-    sources: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          title: { type: "string" },
-          url: { type: "string" },
-          publisher: { type: ["string", "null"] },
-          accessedAt: { type: ["string", "null"] },
-          note: { type: ["string", "null"] },
-        },
-        required: ["title", "url", "publisher", "accessedAt", "note"],
-      },
-    },
-  },
-  required: ["summary", "facts", "sources"],
-};
-
-async function researchPrompt(apiKey: string, model: string, prompt: string) {
-  const result = await callGemini(apiKey, {
-    model,
-    input: `Recherche les données factuelles nécessaires pour créer cette carte : ${prompt}\n\nPrivilégie les sources institutionnelles, statistiques officielles, encyclopédies ou travaux scientifiques. Pour chaque chiffre, indique le périmètre exact, l'année, l'unité et l'URL. Ne confonds pas commune, agglomération et aire métropolitaine. Pour les faits historiques, distingue fait établi, frontière exacte et représentation schématique.`,
-    tools: [{ type: "google_search" }],
-    response_format: {
-      type: "text",
-      mime_type: "application/json",
-      schema: RESEARCH_SCHEMA,
-    },
-    generation_config: { thinking_level: "medium" },
-    store: false,
+async function researchPrompt(apiKey: string, choice: AiModelChoice, prompt: string) {
+  const result = await callStructuredOpenAi({
+    apiKey,
+    choice,
+    instructions: "Recherche les faits nécessaires à la carte. Privilégie les sources institutionnelles et distingue les faits établis des représentations schématiques. Cite des URLs vérifiables.",
+    input: prompt,
+    schema: AI_RESEARCH_SCHEMA,
+    schemaName: "dromap_research",
+    webSearch: true,
   });
-  const parsed = parseJsonText(result.text);
+  const parsed = result.parsed;
   return {
     summary: isRecord(parsed) ? asString(parsed.summary) : "",
     facts: isRecord(parsed) ? normalizeFacts(parsed.facts) : [],
     sources: isRecord(parsed) ? normalizeSources(parsed.sources) : [],
   };
+}
+
+function shouldResearch(prompt: string) {
+  return /(population|habitant|démograph|densité|density|pib|gdp|migration|commerce|production|chômage|histoire|historique|guerre|empire|frontière|géograph|fleuve|rivière|montagne|sommet|altitude|superficie|capitale|métropole|océan|climat|élection|résultat|statistique|ministère|gouvernement|institution|localisation|adresse|aujourd'hui|actuel|récent|date)/i.test(prompt);
 }
 
 type FreeResearchEntityRequest = {
@@ -1934,8 +1439,7 @@ async function planFreeResearch(
   _model: string,
   prompt: string,
 ) {
-  // Évite un premier appel Gemini avant la recherche : une seule requête
-  // Gemini est nécessaire pour produire le plan final.
+  // Évite un appel au modèle supplémentaire avant la recherche.
   return heuristicFreeResearchPlan(prompt);
 }
 
@@ -2748,7 +2252,7 @@ function ensureLegendAndViewCommands(
 
 async function reviseSinglePlanStep(
   apiKey: string,
-  model: string,
+  choice: AiModelChoice,
   body: DroMapAiApiRequest,
   workspaceMode: "manual" | "automatic",
 ): Promise<DroMapAiApiResponse> {
@@ -2819,21 +2323,16 @@ ${instruction}
 
 Retourne uniquement le JSON demandé avec une commande complète.`;
 
-  const result = await callGemini(apiKey, {
-    model,
-    system_instruction: STEP_REVISION_SYSTEM_INSTRUCTIONS,
+  const result = await callStructuredOpenAi({
+    apiKey,
+    choice,
+    instructions: STEP_REVISION_SYSTEM_INSTRUCTIONS,
     input: revisionInput,
-    response_format: {
-      type: "text",
-      mime_type: "application/json",
-    },
-    generation_config: {
-      thinking_level: "low",
-    },
-    store: false,
+    schema: AI_STEP_REVISION_SCHEMA,
+    schemaName: "dromap_step_revision",
   });
 
-  const parsed = parseJsonText(result.text);
+  const parsed = result.parsed;
   const rawCommand =
     isRecord(parsed) && isRecord(parsed.command) ? parsed.command : parsed;
   const mergedCommand = isRecord(rawCommand)
@@ -2863,7 +2362,7 @@ Retourne uniquement le JSON demandé avec une commande complète.`;
     throw Object.assign(
       new Error(
         revisionWarnings[0] ??
-          "Gemini n'a pas produit une commande DroMap exploitable pour cette étape.",
+          "L'assistant n'a pas produit une étape cartographique exploitable.",
       ),
       { status: 422 },
     );
@@ -2887,6 +2386,13 @@ Retourne uniquement le JSON demandé avec une commande complète.`;
 
   revisedCommand.id = currentCommand.id;
   normalizedPlan.commands[commandIndex] = revisedCommand;
+  const revisionIssues = validateAiPlan(normalizedPlan, body.context, workspaceMode);
+  if (revisionIssues.length) {
+    throw Object.assign(new Error("Étape invalide après modification."), {
+      status: 422,
+      publicMessage: revisionIssues[0].question,
+    });
+  }
   normalizedPlan.warnings = [
     ...normalizedPlan.warnings,
     ...revisionWarnings,
@@ -2905,13 +2411,59 @@ Retourne uniquement le JSON demandé avec une commande complète.`;
   };
 }
 
+async function validateAndRepairInteraction(
+  raw: unknown,
+  apiKey: string,
+  choice: AiModelChoice,
+  prompt: string,
+  context: DroMapAiApiRequest["context"],
+  workspaceMode: "manual" | "automatic",
+) {
+  let model: string = choice.model;
+  const checked = await repairWithValidation({
+    initial: raw,
+    inspect: (candidate) => {
+      const interaction = normalizeAssistantInteraction(candidate);
+      return {
+        value: interaction,
+        issues: validateAiPlan(interaction.plan, context, workspaceMode),
+      };
+    },
+    repair: async (candidate, issues, attempt) => {
+      console.warn("[dromap-ai] Plan rejeté par le validateur", {
+        attempt, issues: issues.map(({ code, index }) => ({ code, index })),
+      });
+      const repairChoice = chooseAiModel(prompt, context, { repairing: true });
+      const repaired = await callStructuredOpenAi({
+        apiKey,
+        choice: repairChoice,
+        instructions: `${SYSTEM_INSTRUCTIONS}\nCorrige le plan existant sans réinterpréter la demande. Conserve toutes les étapes valides et leur ordre. Répare seulement les problèmes listés. Si une information indispensable manque réellement, réponds par une question naturelle et commands=[].`,
+        input: JSON.stringify({ demande: prompt, plan: candidate, problemes: issues }),
+        schema: AI_INTERACTION_SCHEMA,
+        schemaName: "dromap_plan_repair",
+      });
+      model = repaired.model;
+      return repaired.parsed;
+    },
+  });
+  if (!checked.issues.length) return { interaction: checked.value, model };
+  return {
+    interaction: {
+      plan: { summary: "", warnings: [], facts: [], sources: [], commands: [] },
+      questions: [],
+      assistantMessage: checked.issues[0].question,
+    },
+    model,
+  };
+}
+
 async function handlePOST(request: NextRequest) {
   const accessError = await checkAiAccess();
   if (accessError) return accessError;
   try {
-    const apiKey = process.env.GEMINI_API_KEY?.trim();
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) {
-      console.error("DroMap AI: missing server environment variable GEMINI_API_KEY");
+      console.error("DroMap AI: missing server environment variable OPENAI_API_KEY");
       return NextResponse.json(
         { error: "L’assistant IA n’est pas encore configuré sur ce serveur. Contactez le support DroMap.", code: "AI_NOT_CONFIGURED" },
         { status: 503 },
@@ -2953,31 +2505,30 @@ async function handlePOST(request: NextRequest) {
       );
     }
 
-    const model = process.env.DROMAP_GEMINI_MODEL?.trim() || DEFAULT_MODEL;
+    const choice = chooseAiModel(prompt, body.context, {
+      stepRevision: Boolean(body.stepRevision),
+    });
+    if (process.env.DROMAP_AI_DEBUG === "true") {
+      console.info("[dromap-ai] Routage", {
+        level: choice.level, model: choice.model,
+        reasoning: choice.reasoning, reasons: choice.reasons,
+      });
+    }
 
     if (body.stepRevision) {
       const revisedResponse = await reviseSinglePlanStep(
         apiKey,
-        model,
+        choice,
         body,
         workspaceMode,
       );
       return NextResponse.json(revisedResponse);
     }
 
-    const legacyGrounding = (process.env.DROMAP_GEMINI_GROUNDING ?? "")
-      .trim()
-      .toLowerCase();
     const configuredResearchMode = (process.env.DROMAP_AI_RESEARCH_MODE ?? "")
       .trim()
       .toLowerCase();
-    const researchMode =
-      configuredResearchMode ||
-      (legacyGrounding === "off"
-        ? "off"
-        : legacyGrounding === "always"
-          ? "google"
-          : "free");
+    const researchMode = configuredResearchMode || "web";
 
     const conversation = compactConversationForModel(body.conversation);
     const researchQuery = conversation.length
@@ -2999,7 +2550,8 @@ async function handlePOST(request: NextRequest) {
             body.context,
             workspaceMode,
           ));
-    if (fastPathPlan && fastPathPlan.commands.length) {
+    if (fastPathPlan && fastPathPlan.commands.length &&
+      validateAiPlan(fastPathPlan, body.context, workspaceMode).length === 0) {
       removeForbiddenBasemapCommands(fastPathPlan);
       enforceWorkspaceModeOnPlan(fastPathPlan, workspaceMode);
       ensureLegendAndViewCommands(prompt, fastPathPlan, body.context);
@@ -3026,25 +2578,25 @@ async function handlePOST(request: NextRequest) {
 
     if (researchMode !== "off" && shouldResearch(researchQuery)) {
       try {
-        if (researchMode === "google") {
-          const googleResearch = await researchPrompt(apiKey, model, researchQuery);
+        if (researchMode === "web") {
+          const webResearch = await researchPrompt(apiKey, choice, researchQuery);
           research = {
-            ...googleResearch,
+            ...webResearch,
             corpus: [],
           };
         } else {
-          research = await runFreeResearch(apiKey, model, researchQuery);
+          research = await runFreeResearch(apiKey, choice.model, researchQuery);
         }
         grounded =
           research.facts.length > 0 ||
           research.sources.length > 0 ||
           research.corpus.length > 0;
-      } catch (error) {
+      } catch {
         const provider =
-          researchMode === "google"
-            ? "Google Search"
+          researchMode === "web"
+            ? "web"
             : "Wikidata/Wikipédia/Banque mondiale";
-        research.summary = `La recherche ${provider} n'a pas pu être utilisée : ${error instanceof Error ? error.message : "erreur inconnue"}. Le plan sera produit avec le contexte DroMap et les connaissances du modèle.`;
+        research.summary = `La recherche ${provider} n'a pas pu être utilisée. Le plan sera produit avec le contexte DroMap disponible.`;
       }
     }
 
@@ -3067,25 +2619,17 @@ async function handlePOST(request: NextRequest) {
       ? `\n\nPHASE 2 APRÈS SÉLECTION MANUELLE DES ROUTES :\nL’utilisateur a déjà vérifié les routes dans le sélecteur DroMap et le calque GeoJSON Routes a été réconcilié avec sa sélection réelle. Ne propose AUCUNE commande import_routes et ne redéfinis pas la zone de travail. Utilise le nom du calque renvoyé pour la suite (style, légende, visibilité). Sélections validées :\n${JSON.stringify(routeContinuation)}\n`
       : "";
     const planningInput = `${COMMAND_REFERENCE}\n\nMODE DE ZONE : ${workspaceMode === "automatic" ? "AUTOMATIQUE — l’IA peut définir directement une zone ou laisser DroMap la calculer autour du résultat" : "MANUEL — la zone est fixée par l’utilisateur. AUCUNE commande set_workspace_by_place, set_workspace_bounds ou select_world ne doit apparaître."}${buildingContinuationNote}${routeContinuationNote}\n\nCONTEXTE DROMAP ACTUEL :\n${JSON.stringify(compactProjectContextForModel(body.context, prompt))}\n\nHISTORIQUE DE DISCUSSION DU PROJET :\n${JSON.stringify(conversation)}\n\nRECHERCHE FACTUELLE :\n${JSON.stringify(planningResearch)}\n\nDEMANDE UTILISATEUR ACTUELLE :\n${routeContinuation ? asString(routeContinuation.originalPrompt) || prompt : buildingContinuation ? asString(buildingContinuation.originalPrompt) || prompt : prompt}\n\nUtilise l’historique pour comprendre les références comme « pareil », « ajoute aussi », « comme avant », les choix déjà faits et les corrections précédentes. La demande actuelle reste prioritaire. Produis maintenant le JSON final. Utilise uniquement les faits nécessaires. Place les sources et faits effectivement utilisés dans sources/facts.`;
-    const result = await callGemini(apiKey, {
-      model,
-      system_instruction: SYSTEM_INSTRUCTIONS,
+    const result = await callStructuredOpenAi({
+      apiKey,
+      choice,
+      instructions: SYSTEM_INSTRUCTIONS,
       input: planningInput,
-      response_format: {
-        type: "text",
-        mime_type: "application/json",
-      },
-      generation_config: {
-        thinking_level:
-          (process.env.DROMAP_GEMINI_THINKING_LEVEL ?? "low")
-            .trim()
-            .toLowerCase() === "medium"
-            ? "medium"
-            : "low",
-      },
-      store: false,
+      schema: AI_INTERACTION_SCHEMA,
+      schemaName: "dromap_interaction",
     });
-    const interaction = normalizeAssistantInteraction(parseJsonText(result.text));
+    const { interaction, model: responseModel } = await validateAndRepairInteraction(
+      result.parsed, apiKey, choice, prompt, body.context, workspaceMode,
+    );
     const plan = interaction.plan;
     removeForbiddenBasemapCommands(plan);
     enforceWorkspaceModeOnPlan(plan, workspaceMode);
@@ -3110,7 +2654,7 @@ async function handlePOST(request: NextRequest) {
         plan: null,
         assistantMessage: interaction.assistantMessage,
         questions: interaction.questions,
-        model: result.model,
+        model: responseModel,
         grounded,
       };
       return NextResponse.json(response);
@@ -3121,7 +2665,7 @@ async function handlePOST(request: NextRequest) {
         plan: null,
         assistantMessage: interaction.assistantMessage,
         questions: buildingContinuation || routeContinuation ? [] : interaction.questions,
-        model: result.model,
+        model: responseModel,
         grounded,
       };
       return NextResponse.json(response);
@@ -3164,6 +2708,17 @@ async function handlePOST(request: NextRequest) {
       removeCompositionElementsFromManualLegend(plan);
     }
 
+    const finalIssues = validateAiPlan(plan, body.context, workspaceMode);
+    if (finalIssues.length) {
+      return NextResponse.json({
+        plan: null,
+        assistantMessage: finalIssues[0].question,
+        questions: [],
+        model: responseModel,
+        grounded,
+      } satisfies DroMapAiApiResponse);
+    }
+
     const response: DroMapAiApiResponse = {
       plan,
       assistantMessage: isRouteSelectionPhase
@@ -3176,15 +2731,11 @@ async function handlePOST(request: NextRequest) {
             : "Cette demande nécessite des bâtiments réels. Ta zone manuelle reste inchangée : DroMap va ouvrir le sélecteur classique des bâtiments, avec une présélection IA que tu pourras corriger librement. Après validation, je préparerai automatiquement toute la suite du plan."
           : interaction.assistantMessage,
       questions: [],
-      model: result.model,
+      model: responseModel,
       grounded,
     };
     return NextResponse.json(response);
   } catch (error) {
-    const rawMessage =
-      error instanceof Error
-        ? error.message
-        : "Erreur inconnue de l'assistant IA.";
     const rawStatus =
       isRecord(error) &&
       typeof error.status === "number" &&
@@ -3198,24 +2749,22 @@ async function handlePOST(request: NextRequest) {
       code,
       status: rawStatus,
       name: error instanceof Error ? error.name : "UnknownError",
-      message: rawMessage.slice(0, 500),
     });
 
     const isTimeout = code === "AI_PROVIDER_TIMEOUT";
     const isRateLimited = code === "AI_PROVIDER_RATE_LIMIT" || rawStatus === 429;
     const isProviderUnavailable =
       code === "AI_PROVIDER_UNAVAILABLE" || rawStatus >= 500;
-    const message = isTimeout
+    const publicMessage = isRecord(error) && typeof error.publicMessage === "string"
+      ? error.publicMessage
+      : null;
+    const message = publicMessage ?? (isTimeout
       ? "L’assistant IA a mis trop de temps à répondre. Réessaie dans quelques instants."
       : isRateLimited
         ? "L’assistant IA reçoit trop de demandes pour le moment. Réessaie dans quelques instants."
         : isProviderUnavailable
           ? "Le service IA est momentanément indisponible. Réessaie dans quelques instants."
-          : /gemini|api[_ -]?key|\.env|modèle|model|réponse non json|commande dromap exploitable/i.test(
-                rawMessage,
-              )
-            ? "L’assistant IA n’a pas pu traiter cette demande. Réessaie ou reformule-la."
-            : rawMessage;
+          : "Je n’ai pas pu préparer cette modification. Réessaie dans un instant.");
     const status = isTimeout || isProviderUnavailable ? 503 : rawStatus;
     return NextResponse.json({ error: message }, { status });
   }
