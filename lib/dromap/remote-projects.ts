@@ -263,6 +263,7 @@ function lightweightSetup(metadata: Record<string, unknown> | undefined): Dromap
       record.workspaceView && typeof record.workspaceView === "object"
         ? (record.workspaceView as typeof fallback.workspaceView)
         : null,
+    showCountryNeighborContext: record.showCountryNeighborContext !== false,
     // Le choix complet peut contenir des milliers d'objets. Il reste dans le contenu chargé à l'ouverture.
     layerChoice: null,
   };
@@ -283,6 +284,7 @@ export function createRemoteProjectMetadata(project: DromapProject) {
       basemapId: project.setup.basemapId,
       workspaceBounds: project.setup.workspaceBounds,
       workspaceView: project.setup.workspaceView,
+      showCountryNeighborContext: project.setup.showCountryNeighborContext !== false,
     },
     pendingChanges: project.pendingChanges,
     thumbnailDataUrl: project.thumbnailDataUrl,

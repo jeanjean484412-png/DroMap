@@ -85,6 +85,7 @@ function createFeatureId() {
 
 function createSnapshotFromSetup(project: DromapProject): DromapEditorProjectSnapshot {
   const snapshot = createBlankDromapEditorProjectSnapshot(project.setup.basemapId);
+  snapshot.showCountryNeighborContext = project.setup.showCountryNeighborContext !== false;
   snapshot.workspaceBounds = project.setup.workspaceBounds
     ? cloneValue(project.setup.workspaceBounds)
     : null;

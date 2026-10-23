@@ -32,6 +32,7 @@ export type DromapProjectSetup = {
   basemapId: DromapBasemapId;
   workspaceBounds: WorkspaceBounds | null;
   workspaceView: DromapMapView | null;
+  showCountryNeighborContext?: boolean;
   layerChoice: DromapInitialLayerChoice | null;
 };
 
@@ -204,6 +205,7 @@ export function createDefaultProjectSetup(
     basemapId,
     workspaceBounds: null,
     workspaceView: null,
+    showCountryNeighborContext: true,
     layerChoice: null,
   };
 }

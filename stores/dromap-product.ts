@@ -210,6 +210,7 @@ function normalizeSetup(value: unknown): DromapProjectSetup {
       ? (value.workspaceBounds as unknown as WorkspaceBounds)
       : null,
     workspaceView: normalizeDromapMapView(value.workspaceView),
+    showCountryNeighborContext: value.showCountryNeighborContext !== false,
     layerChoice: isRecord(value.layerChoice)
       ? (value.layerChoice as unknown as DromapInitialLayerChoice)
       : null,

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo } from "react";
+import { Fragment, useCallback, useEffect, useMemo } from "react";
 import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -91,8 +91,12 @@ const FRANCE_CENTER: LatLngExpression = [46.603354, 1.888334];
 
 function MapViewStateBridge() {
   const map = useMap();
+  const currentMode = useEditorModeStore((state) => state.currentMode);
+  const workspaceBasemapBaseZoom = useEditorWorkspaceStore(
+    (state) => state.workspaceBasemapBaseZoom,
+  );
 
-  const updateCurrentView = () => {
+  const updateCurrentView = useCallback(() => {
     const center = map.getCenter();
     const zoom = map.getZoom();
 
@@ -116,7 +120,7 @@ function MapViewStateBridge() {
         },
       },
     });
-  };
+  }, [map]);
 
   useMapEvents({
     moveend: updateCurrentView,
@@ -126,7 +130,15 @@ function MapViewStateBridge() {
   useEffect(() => {
     const frameId = window.requestAnimationFrame(updateCurrentView);
     return () => window.cancelAnimationFrame(frameId);
-  }, [map]);
+  }, [updateCurrentView]);
+
+  useEffect(() => {
+    if (currentMode !== "edit" || workspaceBasemapBaseZoom === null) return;
+    // fitBounds ne déclenche pas moveend si la carte est déjà cadrée sur la zone.
+    // La validation doit quand même disposer d'une vue enregistrée.
+    const frameId = window.requestAnimationFrame(updateCurrentView);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [currentMode, workspaceBasemapBaseZoom, updateCurrentView]);
 
   return null;
 }

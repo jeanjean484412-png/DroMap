@@ -160,7 +160,11 @@ function ProjectCard({
             aria-label={`Actions pour ${project.name}`}
             aria-expanded={menuOpen}
           >
-            …
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
+              <circle cx="5" cy="12" r="1.8" />
+              <circle cx="12" cy="12" r="1.8" />
+              <circle cx="19" cy="12" r="1.8" />
+            </svg>
           </button>
         ) : (
           <span className="text-xs font-black text-emerald-700">

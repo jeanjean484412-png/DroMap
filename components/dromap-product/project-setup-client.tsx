@@ -15,6 +15,7 @@ import { DromapDialog } from "@/components/dromap-ui/dialog";
 import {
   DEFAULT_DROMAP_BASEMAP_ID,
   DROMAP_BASEMAP_MENU_SECTIONS,
+  dromapBasemapHasCountryNeighborContext,
   getDromapBasemapConfig,
   isDromapBasemapId,
   type DromapBasemapId,
@@ -112,12 +113,6 @@ type LeafletBoundsLike = {
   getEast(): number;
 };
 
-const WORLD_SOLID_BASEMAP_IDS = new Set<DromapBasemapId>([
-  "blank-white",
-  "white-borders",
-  "white-borders-basic",
-]);
-
 /** Fonds blancs qui représentent réellement le monde entier. */
 const WHITE_VECTOR_WORLD_BASEMAP_IDS = new Set<DromapBasemapId>([
   "white-borders-basic",
@@ -171,16 +166,15 @@ function clampWorkspaceNumber(value: number, min: number, max: number) {
 
 /**
  * Miroir volontaire de la règle utilisée dans BasemapControls : un fond blanc
- * territorial présélectionne sa zone uniquement s'il ne s'agit pas d'un fond
- * monde générique. La validation reste volontairement à la main dans le
- * parcours de création.
+ * territorial présélectionne sa zone. Les fonds monde blancs utilisent les
+ * bornes du monde entier sans calcul asynchrone.
  */
 function shouldAutoWorkspaceForSetupBasemap(basemapId: DromapBasemapId) {
   const basemap = getDromapBasemapConfig(basemapId);
   return (
+    isSetupWhiteVectorBasemap(basemapId) &&
     basemap.kind === "solid" &&
-    Boolean(basemap.boundaryOverlay) &&
-    !WORLD_SOLID_BASEMAP_IDS.has(basemapId)
+    (Boolean(basemap.boundaryOverlay) || WHITE_VECTOR_WORLD_BASEMAP_IDS.has(basemapId))
   );
 }
 
@@ -614,6 +608,8 @@ function SetupMapStep({
   onContinue,
   onSkip,
   canContinue,
+  autoValidateInitialBounds,
+  onCountryNeighborContextChange,
 }: {
   projectId: string;
   basemapId: DromapBasemapId;
@@ -624,6 +620,8 @@ function SetupMapStep({
   onContinue: () => void;
   onSkip: () => void;
   canContinue: boolean;
+  autoValidateInitialBounds: boolean;
+  onCountryNeighborContextChange: (show: boolean) => void;
 }) {
   const workspaceBounds = useEditorWorkspaceStore(
     (state) => state.workspaceBounds,
@@ -649,6 +647,12 @@ function SetupMapStep({
     (state) => state.requestMapFitToBounds,
   );
   const setBasemapId = useEditorBasemapStore((state) => state.setBasemapId);
+  const showCountryNeighborContext = useEditorBasemapStore(
+    (state) => state.showCountryNeighborContext,
+  );
+  const setShowCountryNeighborContext = useEditorBasemapStore(
+    (state) => state.setShowCountryNeighborContext,
+  );
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PlaceSearchResult[]>([]);
   const [searchStatus, setSearchStatus] = useState<string>(
@@ -673,9 +677,15 @@ function SetupMapStep({
     const startingBounds = initialBoundsRef.current;
     if (startingBounds) {
       setWorkspaceBounds(startingBounds);
-      window.requestAnimationFrame(() => {
-        requestMapFitToBounds(startingBounds, { animate: false, maxZoom: 12 });
-      });
+      const shouldAutoValidate =
+        autoValidateInitialBounds && validateWorkspaceBoundsRatio(startingBounds).isValid;
+      if (shouldAutoValidate) {
+        validateWorkspaceZone();
+      } else {
+        window.requestAnimationFrame(() => {
+          requestMapFitToBounds(startingBounds, { animate: false, maxZoom: 12 });
+        });
+      }
     } else {
       clearWorkspaceBounds();
     }
@@ -687,6 +697,8 @@ function SetupMapStep({
     requestMapFitToBounds,
     setBasemapId,
     setWorkspaceBounds,
+    validateWorkspaceZone,
+    autoValidateInitialBounds,
   ]);
 
   useEffect(() => {
@@ -845,6 +857,21 @@ function SetupMapStep({
             </div>
           ) : null}
 
+          {dromapBasemapHasCountryNeighborContext(getDromapBasemapConfig(basemapId)) ? (
+            <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm font-semibold text-slate-800">
+              <input
+                type="checkbox"
+                checked={showCountryNeighborContext}
+                onChange={(event) => {
+                  setShowCountryNeighborContext(event.target.checked);
+                  onCountryNeighborContextChange(event.target.checked);
+                }}
+                className="h-4 w-4 shrink-0 accent-teal-600"
+              />
+              Afficher les pays voisins
+            </label>
+          ) : null}
+
           {workspaceBounds ? (
             <div className="mt-5 border-t border-slate-200 pt-4">
               {isWorkspaceValidated ? (
@@ -964,6 +991,7 @@ function SetupContent({ projectId }: { projectId: string }) {
     project?.setup.workspaceBounds ?? null,
   );
   const [workspaceValidated, setWorkspaceValidated] = useState(false);
+  const initializedProjectIdRef = useRef<string | null>(null);
   const [isPreparingBasemapWorkspace, setIsPreparingBasemapWorkspace] =
     useState(false);
   const initialSavedGeoJsonLayerId =
@@ -1035,11 +1063,15 @@ function SetupContent({ projectId }: { projectId: string }) {
   ]);
 
   useEffect(() => {
-    if (!project) return;
+    if (!project || initializedProjectIdRef.current === project.id) return;
+    initializedProjectIdRef.current = project.id;
     setNameDraft(project.name);
     setSelectedBasemapId(project.setup.basemapId);
     setWorkspaceDraft(project.setup.workspaceBounds);
     setWorkspaceValidated(false);
+    useEditorBasemapStore.getState().setShowCountryNeighborContext(
+      project.setup.showCountryNeighborContext !== false,
+    );
   }, [project]);
 
   useEffect(() => {
@@ -1089,21 +1121,19 @@ function SetupContent({ projectId }: { projectId: string }) {
     const requestId = basemapWorkspaceRequestRef.current + 1;
     basemapWorkspaceRequestRef.current = requestId;
 
-    const canReplaceWithAutomaticWorkspace =
-      workspaceDraft === null || autoWorkspaceBasemapIdRef.current !== null;
-
-    if (
-      !shouldAutoWorkspaceForSetupBasemap(nextBasemapId) ||
-      !canReplaceWithAutomaticWorkspace
-    ) {
+    if (!shouldAutoWorkspaceForSetupBasemap(nextBasemapId)) {
       setIsPreparingBasemapWorkspace(false);
-      if (
-        autoWorkspaceBasemapIdRef.current !== null &&
-        !shouldAutoWorkspaceForSetupBasemap(nextBasemapId)
-      ) {
+      if (autoWorkspaceBasemapIdRef.current !== null) {
         autoWorkspaceBasemapIdRef.current = null;
         setWorkspaceDraft(null);
       }
+      return;
+    }
+
+    if (WHITE_VECTOR_WORLD_BASEMAP_IDS.has(nextBasemapId)) {
+      autoWorkspaceBasemapIdRef.current = nextBasemapId;
+      setWorkspaceDraft(DROMAP_FULL_WORLD_WORKSPACE_BOUNDS);
+      setIsPreparingBasemapWorkspace(false);
       return;
     }
 
@@ -1471,6 +1501,10 @@ function SetupContent({ projectId }: { projectId: string }) {
             onContinue={continueSetup}
             onSkip={skipSetupAndOpenEditor}
             canContinue={canContinue}
+            autoValidateInitialBounds={shouldAutoWorkspaceForSetupBasemap(selectedBasemapId)}
+            onCountryNeighborContextChange={(show) =>
+              updateProjectSetup(activeProject.id, { showCountryNeighborContext: show })
+            }
           />
         ) : null}
 
