@@ -26,7 +26,12 @@ import {
   DROMAP_FULL_WORLD_WORKSPACE_BOUNDS,
   type WorkspaceBounds,
 } from "@/lib/dromap/workspace-bounds";
-import { validateWorkspaceBoundsRatio } from "@/lib/dromap/workspace-validation";
+import {
+  MAX_WORKSPACE_ASPECT_RATIO,
+  MIN_WORKSPACE_ASPECT_RATIO,
+  getWorkspaceAspectRatio,
+  validateWorkspaceBoundsRatio,
+} from "@/lib/dromap/workspace-validation";
 import { getDromapCapabilities } from "@/lib/dromap/product";
 import {
   remapSavedGeoJsonLayerToMap,
@@ -178,6 +183,61 @@ function shouldAutoWorkspaceForSetupBasemap(basemapId: DromapBasemapId) {
   );
 }
 
+function fitWorkspaceSpanAroundCenter(
+  center: number,
+  span: number,
+  min: number,
+  max: number,
+) {
+  const safeSpan = Math.min(span, max - min);
+  const start = Math.min(Math.max(center - safeSpan / 2, min), max - safeSpan);
+  return [start, start + safeSpan] as const;
+}
+
+/** Élargit une zone présélectionnée sans retirer une partie du territoire. */
+function expandSetupWorkspaceBoundsToValidRatio(bounds: WorkspaceBounds) {
+  const ratio = getWorkspaceAspectRatio(bounds);
+  if (ratio === null || validateWorkspaceBoundsRatio(bounds).isValid) return bounds;
+  if (!bounds.southWest || !bounds.northEast) return bounds;
+
+  const south = bounds.southWest.lat;
+  const north = bounds.northEast.lat;
+  const west = bounds.southWest.lng;
+  const east = bounds.northEast.lng;
+  const centerLat = (south + north) / 2;
+  const centerLng = (west + east) / 2;
+  const longitudeScale = Math.max(0.2, Math.cos(centerLat * (Math.PI / 180)));
+
+  if (ratio < MIN_WORKSPACE_ASPECT_RATIO) {
+    const requiredLongitudeSpan =
+      ((north - south) * MIN_WORKSPACE_ASPECT_RATIO * 1.02) /
+      longitudeScale;
+    const [nextWest, nextEast] = fitWorkspaceSpanAroundCenter(
+      centerLng,
+      requiredLongitudeSpan,
+      WORKSPACE_MIN_LNG,
+      WORKSPACE_MAX_LNG,
+    );
+    return {
+      southWest: { lat: south, lng: nextWest },
+      northEast: { lat: north, lng: nextEast },
+    } satisfies WorkspaceBounds;
+  }
+
+  const requiredLatitudeSpan =
+    ((east - west) * longitudeScale * 1.02) / MAX_WORKSPACE_ASPECT_RATIO;
+  const [nextSouth, nextNorth] = fitWorkspaceSpanAroundCenter(
+    centerLat,
+    requiredLatitudeSpan,
+    WORKSPACE_MIN_LAT,
+    WORKSPACE_MAX_LAT,
+  );
+  return {
+    southWest: { lat: nextSouth, lng: west },
+    northEast: { lat: nextNorth, lng: east },
+  } satisfies WorkspaceBounds;
+}
+
 /** Même marge que l'onglet Fonds de carte de l'éditeur. */
 function createSetupWorkspaceBoundsAroundBasemap(bounds: LeafletBoundsLike) {
   const rawSouth = bounds.getSouth();
@@ -193,7 +253,7 @@ function createSetupWorkspaceBoundsAroundBasemap(bounds: LeafletBoundsLike) {
   const latPadding = Math.min(10, Math.max(0.15, latSpan * 0.05));
   const lngPadding = Math.min(10, Math.max(0.15, lngSpan * 0.05));
 
-  return {
+  const paddedBounds = {
     southWest: {
       lat: clampWorkspaceNumber(
         south - latPadding,
@@ -219,6 +279,8 @@ function createSetupWorkspaceBoundsAroundBasemap(bounds: LeafletBoundsLike) {
       ),
     },
   } satisfies WorkspaceBounds;
+
+  return expandSetupWorkspaceBoundsToValidRatio(paddedBounds);
 }
 
 function normalizeSearchText(value: string) {
@@ -674,7 +736,10 @@ function SetupMapStep({
     onValidationChange(false);
     setBasemapId(basemapId, { fit: true });
 
-    const startingBounds = initialBoundsRef.current;
+    const startingBounds =
+      autoValidateInitialBounds && initialBoundsRef.current
+        ? expandSetupWorkspaceBoundsToValidRatio(initialBoundsRef.current)
+        : initialBoundsRef.current;
     if (startingBounds) {
       setWorkspaceBounds(startingBounds);
       const shouldAutoValidate =
@@ -783,9 +848,11 @@ function SetupMapStep({
 
   return (
     <div className="relative h-full min-h-0 w-full overflow-hidden bg-slate-200">
-      <GraphicZoomViewport>
-        <SetupMap />
-      </GraphicZoomViewport>
+      <div className="absolute inset-0 z-0 isolate">
+        <GraphicZoomViewport>
+          <SetupMap />
+        </GraphicZoomViewport>
+      </div>
 
       <aside className="absolute bottom-4 left-4 top-4 z-[1300] flex w-[350px] max-w-[calc(100%-2rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
@@ -1115,15 +1182,24 @@ function SetupContent({ projectId }: { projectId: string }) {
   }
 
   async function handleSetupBasemapSelect(nextBasemapId: DromapBasemapId) {
+    const previousBasemapId = selectedBasemapId;
     setSelectedBasemapId(nextBasemapId);
     setWorkspaceValidated(false);
+
+    if (dromapBasemapHasCountryNeighborContext(getDromapBasemapConfig(nextBasemapId))) {
+      useEditorBasemapStore.getState().setShowCountryNeighborContext(true);
+      updateProjectSetup(activeProject.id, { showCountryNeighborContext: true });
+    }
 
     const requestId = basemapWorkspaceRequestRef.current + 1;
     basemapWorkspaceRequestRef.current = requestId;
 
     if (!shouldAutoWorkspaceForSetupBasemap(nextBasemapId)) {
       setIsPreparingBasemapWorkspace(false);
-      if (autoWorkspaceBasemapIdRef.current !== null) {
+      if (
+        autoWorkspaceBasemapIdRef.current !== null ||
+        shouldAutoWorkspaceForSetupBasemap(previousBasemapId)
+      ) {
         autoWorkspaceBasemapIdRef.current = null;
         setWorkspaceDraft(null);
       }

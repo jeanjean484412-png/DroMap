@@ -781,7 +781,11 @@ export function BasemapControls() {
           </span>
         </button>
       ) : (
-        <div className="flex max-h-[calc(100vh-2rem)] w-[440px] max-w-[calc(100vw-2rem)] flex-col rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur">
+        <div
+          ref={menuScrollRef}
+          onScroll={rememberMenuScroll}
+          className="max-h-[calc(100vh-2rem)] w-[440px] max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur"
+        >
           <div className="mb-3 flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
               {!selectedBasemapHidesPreview ? (
@@ -845,11 +849,7 @@ export function BasemapControls() {
           />
 
           {normalizedSearchQuery ? (
-            <div
-              ref={menuScrollRef}
-              onScroll={rememberMenuScroll}
-              className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1"
-            >
+            <div className="space-y-2 pr-1">
               {searchResults.length > 0 ? (
                 searchResults.slice(0, 80).map((result) =>
                   renderBasemapButton({
@@ -896,11 +896,7 @@ export function BasemapControls() {
                 {activeSection.description}
               </p>
 
-              <div
-                ref={menuScrollRef}
-                onScroll={rememberMenuScroll}
-                className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1"
-              >
+              <div className="space-y-2 pr-1">
                 {activeSection.items.map((item, index) =>
                   renderMenuItem(item, 0, index),
                 )}
