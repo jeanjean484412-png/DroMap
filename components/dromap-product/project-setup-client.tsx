@@ -553,7 +553,7 @@ function SetupBasemapPicker({
                             Aperçu fixe
                           </div>
                           <div className="mt-0.5 text-sm font-semibold text-slate-900">
-                            Exemple de fond blanc
+                            France et ses régions
                           </div>
                           <div className="mt-0.5 text-xs leading-5 text-slate-500">
                             Le rendu reste blanc et épuré ; les frontières changent selon le territoire choisi.

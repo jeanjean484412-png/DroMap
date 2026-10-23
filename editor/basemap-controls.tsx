@@ -245,6 +245,23 @@ function BasemapVectorPreview(input: { variant: "classic" | "light" }) {
   );
 }
 
+function FranceRegionsVectorPreview() {
+  return (
+    <svg
+      viewBox="0 0 160 104"
+      className="h-full w-full"
+      aria-hidden="true"
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <image
+        href="/basemap-france-regions-preview.svg"
+        width="160"
+        height="104"
+      />
+    </svg>
+  );
+}
+
 function WhiteBasemapFranceExample() {
   return (
     <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-2.5">
@@ -253,33 +270,7 @@ function WhiteBasemapFranceExample() {
           className="relative block h-20 w-28 shrink-0 overflow-hidden rounded-lg border border-slate-300 bg-white shadow-inner"
           aria-hidden="true"
         >
-          <svg
-            viewBox="0 0 140 100"
-            className="h-full w-full"
-            preserveAspectRatio="xMidYMid meet"
-          >
-            <rect width="140" height="100" fill="#f8fafc" />
-            <path
-              d="M48 12 L77 9 L101 25 L108 49 L92 72 L70 89 L45 78 L27 58 L31 31 Z"
-              fill="#ffffff"
-              stroke="#111827"
-              strokeWidth="2.2"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M48 12 L54 35 L31 31 M77 9 L72 34 L101 25 M54 35 L72 34 L83 52 L59 55 Z M31 58 L59 55 L45 78 M83 52 L108 49 M83 52 L92 72 M59 55 L70 89"
-              fill="none"
-              stroke="#64748b"
-              strokeWidth="1.15"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M113 70 C118 73 119 81 115 88 C111 85 109 77 113 70 Z"
-              fill="#ffffff"
-              stroke="#111827"
-              strokeWidth="1.6"
-            />
-          </svg>
+          <FranceRegionsVectorPreview />
           <span className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-white/60" />
         </span>
         <span className="min-w-0">
@@ -287,7 +278,7 @@ function WhiteBasemapFranceExample() {
             Aperçu des fonds blancs
           </span>
           <span className="mt-1 block text-sm font-semibold text-slate-900">
-            Exemple avec la France
+            France et ses régions
           </span>
           <span className="mt-1 block text-xs leading-snug text-slate-500">
             Le rendu reste blanc et épuré ; seules les frontières affichées
@@ -301,6 +292,8 @@ function WhiteBasemapFranceExample() {
 
 function BasemapSolidPreview(input: { basemap: DromapBasemapConfig }) {
   const hasBoundaries = Boolean(input.basemap.boundaryOverlay);
+  if (hasBoundaries) return <FranceRegionsVectorPreview />;
+
   const background =
     input.basemap.kind === "solid"
       ? input.basemap.background
@@ -314,36 +307,13 @@ function BasemapSolidPreview(input: { basemap: DromapBasemapConfig }) {
       preserveAspectRatio="xMidYMid slice"
     >
       <rect width="120" height="76" fill={background} />
-      {hasBoundaries ? (
-        <>
-          <path
-            d="M8 23 C18 9 38 7 49 17 C56 23 51 30 60 35 C68 40 63 52 49 56 C31 62 19 53 12 45 C4 37 3 31 8 23 Z"
-            fill="#ffffff"
-            stroke="#111827"
-            strokeWidth="1.4"
-          />
-          <path
-            d="M68 12 C83 6 104 11 112 23 C119 34 112 43 102 48 C94 52 96 64 83 69 C74 65 69 56 70 47 C71 38 62 30 64 22 C65 18 66 15 68 12 Z"
-            fill="#ffffff"
-            stroke="#111827"
-            strokeWidth="1.4"
-          />
-          <path
-            d="M23 14 L31 29 L22 45 M39 11 L43 28 L54 37 M75 15 L84 29 L74 45 M92 11 L96 29 L108 38"
-            fill="none"
-            stroke="#64748b"
-            strokeWidth="0.8"
-          />
-        </>
-      ) : (
-        <path
-          d="M14 60 L34 39 L48 49 L65 23 L82 41 L101 17"
-          fill="none"
-          stroke="#e2e8f0"
-          strokeWidth="1.3"
-          strokeDasharray="4 4"
-        />
-      )}
+      <path
+        d="M14 60 L34 39 L48 49 L65 23 L82 41 L101 17"
+        fill="none"
+        stroke="#e2e8f0"
+        strokeWidth="1.3"
+        strokeDasharray="4 4"
+      />
     </svg>
   );
 }

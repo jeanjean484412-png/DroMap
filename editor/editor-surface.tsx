@@ -249,7 +249,7 @@ export function EditorSurface({
 
           <div
             data-dromap-product-top-dock="true"
-            className="pointer-events-none absolute left-4 top-4 flex flex-wrap items-start gap-2 pr-4"
+            className="pointer-events-none absolute left-4 top-4 z-[1000] flex flex-wrap items-start gap-2 pr-4"
             style={{ right: inspectorWidth }}
           >
             <ProductTopDock />

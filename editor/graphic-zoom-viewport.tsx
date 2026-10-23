@@ -29,7 +29,7 @@ export default function GraphicZoomViewport({ children }: GraphicZoomViewportPro
   const applyTransform = currentMode === "edit" && graphicZoomEnabled;
 
   return (
-    <div className="absolute inset-0 overflow-hidden">
+    <div className="absolute inset-0 isolate z-0 overflow-hidden">
       <div
         className="h-full w-full"
         style={
