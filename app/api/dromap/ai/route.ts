@@ -7,6 +7,8 @@ import { AI_INTERACTION_SCHEMA, AI_RESEARCH_SCHEMA, AI_STEP_REVISION_SCHEMA } fr
 import { chooseAiModel, type AiModelChoice } from "@/editor/dromap-ai-router";
 import { validateAiPlan } from "@/editor/dromap-ai-validator";
 import { repairWithValidation } from "@/editor/dromap-ai-repair";
+import { enforceMapLabelDefaults } from "@/editor/dromap-ai-label-policy";
+import { parseBulkPlaceRequest, resolveBulkPlaces } from "@/lib/dromap/server/ai-bulk-geodata";
 
 import type {
   DroMapAiApiRequest,
@@ -125,6 +127,9 @@ Ne pose JAMAIS de question préalable sur l’échelle, la flèche nord, la lisi
 Règles absolues :
 - N'invente jamais l'identifiant d'un objet, calque ou jeu de données existant : utilise uniquement le contexte ou l'id d'une commande précédente comme référence.
 - Pour des données démographiques, historiques ou géographiques factuelles, utilise les résultats de recherche fournis dans RECHERCHE FACTUELLE. Reprends les dates, unités et sources dans facts/sources.
+- « la zone » et « la zone sélectionnée » désignent TOUJOURS les limites workspaceBounds du projet, jamais la partie actuellement visible à l'écran. Ne prétends pas connaître tous les objets de cette zone à partir des seules limites : interroge une source géographique vérifiable. Si la source n'est pas exhaustive, dis-le clairement.
+- Pour « tous les ... » d'un territoire, ne fabrique jamais une énumération de marqueurs à partir de ta mémoire. Utilise create_marker_series uniquement quand chaque seriesItem contient des coordonnées et une source vérifiées. Si la source ou l'emprise ne permet pas une liste fiable, explique la limite au lieu d'inventer des lieux.
+- Ne montre aucune étiquette de marqueur à moins que l'utilisateur demande explicitement les étiquettes ou les noms sur la carte. Si elles sont demandées, garde leur taille normale : mapLabelVisibility="show", sans style.fontSize ni mapLabelScale personnalisés sauf demande explicite.
 - Pour des villes dont la taille dépend de la population, utilise UNE commande create_proportional_markers avec seriesItems et proportionalMethod="area". Chaque item contient label, place ou coordinate, value, unit, date, sourceTitle et sourceUrl, puis configure_legend à droite si demandé.
 - Pour des flux quantitatifs, utilise create_proportional_flows.
 - Pour une carte par plages de valeurs, utilise create_choropleth avec une source GeoJSON fiable du catalogue, choroplethValues, classes et geoJsonJoinProperties.
@@ -365,7 +370,7 @@ function normalizeGeoJsonStyle(value: unknown) {
 
 function normalizeSeriesItems(value: unknown): DroMapAiSeriesItem[] {
   if (!Array.isArray(value)) return [];
-  return value.slice(0, 500).flatMap((item, index) => {
+  return value.slice(0, 2_500).flatMap((item, index) => {
     if (!isRecord(item)) return [];
     const number = asNumber(item.value);
     const label = asNullableString(item.label);
@@ -1039,6 +1044,115 @@ function buildSimpleMarkerFastPath(
       return normalized ? [normalized] : [];
     }),
   };
+}
+
+function requestedBulkMarkerAppearance(prompt: string) {
+  const text = normalizeKey(prompt);
+  const symbols: Array<[RegExp, string]> = [
+    [/\betoile\b/, "star"], [/\b(epingle|punaise|pin)\b/, "pin"],
+    [/\b(cercle|rond)\b/, "circle"], [/\bcroix\b/, "cross"],
+  ];
+  const colors: Array<[RegExp, string]> = [
+    [/\brouge\b/, "#dc2626"], [/\bbleu\b/, "#2563eb"],
+    [/\bvert\b/, "#16a34a"], [/\borange\b/, "#ea580c"],
+    [/\bviolet\b/, "#7c3aed"], [/\bnoir\b/, "#111827"],
+  ];
+  return {
+    symbolId: symbols.find(([pattern]) => pattern.test(text))?.[1] ?? null,
+    color: colors.find(([pattern]) => pattern.test(text))?.[1] ?? null,
+  };
+}
+
+async function buildGroundedBulkPlacePlan(
+  prompt: string,
+  context: DroMapAiApiRequest["context"],
+  workspaceMode: "manual" | "automatic",
+): Promise<DroMapAiPlan | null> {
+  const request = parseBulkPlaceRequest(prompt);
+  if (!request) return null;
+  const bounds = context.workspaceBounds;
+  const result = await resolveBulkPlaces(request, bounds);
+  if (!result.items.length) throw new Error(`Aucun lieu correspondant n'a été trouvé dans ${result.scopeLabel} et la zone de travail actuelle.`);
+  const categoryLabels = {
+    capitals: "Capitales", cities: `Agglomérations de plus de ${request.minimumPopulation?.toLocaleString("fr-FR")} habitants`,
+    factories: "Usines", hospitals: "Hôpitaux", schools: "Écoles",
+    universities: "Universités", museums: "Musées", airports: "Aéroports", stations: "Gares",
+  };
+  const categorySymbols = {
+    capitals: "capital-state", cities: "circle", factories: "factory",
+    hospitals: "hospital", schools: "school", universities: "university",
+    museums: "museum", airports: "airport", stations: "train",
+  };
+  const label = categoryLabels[result.kind];
+  const appearance = requestedBulkMarkerAppearance(prompt);
+  const symbolId = appearance.symbolId ?? categorySymbols[result.kind];
+  const customMarker = context.customMarkers.find((marker) =>
+    normalizeKey(prompt).includes(normalizeKey(marker.name)));
+  const sourceNote = result.kind === "cities"
+    ? `Estimation métropolitaine POP_MAX strictement supérieure à ${request.minimumPopulation?.toLocaleString("fr-FR")} habitants. La sélection Natural Earth peut omettre des villes et n'est pas un recensement municipal.`
+    : result.kind !== "capitals"
+      ? "Objets OpenStreetMap correspondant aux étiquettes recherchées, selon la couverture des contributeurs."
+      : "Capitales nationales répertoriées par Natural Earth.";
+  const warnings = [...result.warnings];
+  const rawCommands: unknown[] = [];
+  if (!bounds && result.scopeLabel === "monde" && workspaceMode === "automatic") {
+    rawCommands.push({ id: "zone-monde-lieux-verifies", type: "select_world", explanation: "Couvrir le monde entier avant de placer les lieux." });
+  }
+  rawCommands.push(
+    {
+      id: "calque-lieux-verifies",
+      type: "create_layer",
+      explanation: `Créer un calque pour ${label.toLowerCase()}.`,
+      layerName: `${label} — ${result.scopeLabel}`,
+    },
+    {
+      id: "serie-lieux-verifies",
+      type: "create_marker_series",
+      explanation: `Placer les ${result.items.length} lieux vérifiés dans la zone demandée.`,
+      layerRef: "calque-lieux-verifies",
+      label,
+      symbolId: customMarker ? null : symbolId,
+      customMarkerRef: customMarker?.id ?? null,
+      ...(appearance.color ? { style: { color: appearance.color } } : {}),
+      mapLabelVisibility: "hide",
+      section: label,
+      seriesItems: result.items.map((item) => ({
+        id: item.id,
+        label: item.label,
+        coordinate: item.coordinate,
+        value: item.population ?? 1,
+        unit: item.population === null ? null : "habitants",
+        category: label,
+        sourceTitle: result.sourceTitle,
+        sourceUrl: item.sourceUrl,
+      })),
+    },
+  );
+  const commands = rawCommands.flatMap((raw, index) => {
+    const command = normalizeCommand(raw, index, warnings);
+    return command ? [command] : [];
+  });
+  const plan: DroMapAiPlan = {
+    summary: `${result.items.length} ${label.toLowerCase()} localisées dans ${result.scopeLabel}.`,
+    warnings,
+    facts: [],
+    sources: [{
+      title: result.sourceTitle,
+      url: result.sourceUrl,
+      publisher: result.kind === "capitals" || result.kind === "cities" ? "Natural Earth" : "OpenStreetMap",
+      accessedAt: new Date().toISOString().slice(0, 10),
+      note: sourceNote,
+    }, ...(result.scopeLabel !== "zone de travail" && result.scopeLabel !== "monde" ? [{
+      title: "Natural Earth — contours des pays 1:50m",
+      url: "https://www.naturalearthdata.com/downloads/50m-cultural-vectors/50m-admin-0-countries-2/",
+      publisher: "Natural Earth",
+      accessedAt: new Date().toISOString().slice(0, 10),
+      note: "Filtrage spatial du territoire nommé ; contours généralisés.",
+    }] : [])],
+    commands,
+  };
+  enforceMapLabelDefaults(prompt, plan);
+  return plan;
 }
 
 function coordinateIsInsideBounds(
@@ -2035,6 +2149,7 @@ function ensureLegendAndViewCommands(
   const createsSpatialObjects = plan.commands.some((command) =>
     [
       "create_marker",
+      "create_marker_series",
       "create_text",
       "create_line",
       "create_zone",
@@ -2203,6 +2318,7 @@ function ensureLegendAndViewCommands(
   const hasMarkerLikeObjects = plan.commands.some((command) =>
     [
       "create_marker",
+      "create_marker_series",
       "create_text",
       "create_proportional_markers",
       "update_features",
@@ -2385,6 +2501,14 @@ Retourne uniquement le JSON demandé avec une commande complète.`;
   }
 
   revisedCommand.id = currentCommand.id;
+  if (["create_marker", "create_marker_series", "create_proportional_markers"].includes(revisedCommand.type)) {
+    if (/\b(etiquettes?|labels?|noms? des (?:villes|capitales|usines))\b/.test(normalizeKey(instruction))) {
+      enforceMapLabelDefaults(instruction, { ...normalizedPlan, commands: [revisedCommand] });
+    } else {
+      revisedCommand.mapLabelVisibility = currentCommand.mapLabelVisibility ?? "hide";
+      revisedCommand.style.fontSize = currentCommand.style.fontSize;
+    }
+  }
   normalizedPlan.commands[commandIndex] = revisedCommand;
   const revisionIssues = validateAiPlan(normalizedPlan, body.context, workspaceMode);
   if (revisionIssues.length) {
@@ -2461,14 +2585,6 @@ async function handlePOST(request: NextRequest) {
   const accessError = await checkAiAccess();
   if (accessError) return accessError;
   try {
-    const apiKey = process.env.OPENAI_API_KEY?.trim();
-    if (!apiKey) {
-      console.error("DroMap AI: missing server environment variable OPENAI_API_KEY");
-      return NextResponse.json(
-        { error: "L’assistant IA n’est pas encore configuré sur ce serveur. Contactez le support DroMap.", code: "AI_NOT_CONFIGURED" },
-        { status: 503 },
-      );
-    }
     const body = (await request.json()) as DroMapAiApiRequest;
     const prompt = asString(body.prompt).slice(0, MAX_PROMPT_LENGTH);
     if (!prompt)
@@ -2502,6 +2618,41 @@ async function handlePOST(request: NextRequest) {
             "Sélectionne puis valide une zone de travail avant d'utiliser le mode manuel de l'assistant IA.",
         },
         { status: 409 },
+      );
+    }
+
+    if (!body.stepRevision && !buildingContinuation && !routeContinuation && parseBulkPlaceRequest(prompt)) {
+      try {
+        const bulkPlan = await buildGroundedBulkPlacePlan(prompt, body.context, workspaceMode);
+        if (!bulkPlan) throw new Error("Je n'ai pas pu interpréter la liste de lieux demandée.");
+        ensureLegendAndViewCommands(prompt, bulkPlan, body.context);
+        removeCompositionElementsFromManualLegend(bulkPlan);
+        const issues = validateAiPlan(bulkPlan, body.context, workspaceMode);
+        if (issues.length) throw new Error(issues[0].question);
+        return NextResponse.json({
+          plan: bulkPlan,
+          assistantMessage: bulkPlan.summary,
+          questions: [],
+          model: "DroMap — données géographiques vérifiées",
+          grounded: true,
+        } satisfies DroMapAiApiResponse);
+      } catch (error) {
+        return NextResponse.json({
+          plan: null,
+          assistantMessage: error instanceof Error ? error.message : "La source géographique est indisponible pour cette zone.",
+          questions: [],
+          model: "DroMap — données géographiques vérifiées",
+          grounded: false,
+        } satisfies DroMapAiApiResponse);
+      }
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) {
+      console.error("DroMap AI: missing server environment variable OPENAI_API_KEY");
+      return NextResponse.json(
+        { error: "L’assistant IA n’est pas encore configuré sur ce serveur. Contactez le support DroMap.", code: "AI_NOT_CONFIGURED" },
+        { status: 503 },
       );
     }
 
@@ -2552,6 +2703,7 @@ async function handlePOST(request: NextRequest) {
           ));
     if (fastPathPlan && fastPathPlan.commands.length &&
       validateAiPlan(fastPathPlan, body.context, workspaceMode).length === 0) {
+      enforceMapLabelDefaults(prompt, fastPathPlan);
       removeForbiddenBasemapCommands(fastPathPlan);
       enforceWorkspaceModeOnPlan(fastPathPlan, workspaceMode);
       ensureLegendAndViewCommands(prompt, fastPathPlan, body.context);
@@ -2633,6 +2785,7 @@ async function handlePOST(request: NextRequest) {
     const plan = interaction.plan;
     removeForbiddenBasemapCommands(plan);
     enforceWorkspaceModeOnPlan(plan, workspaceMode);
+    enforceMapLabelDefaults(prompt, plan);
 
     if (buildingContinuation) {
       enforceBuildingContinuationOnPlan(plan);

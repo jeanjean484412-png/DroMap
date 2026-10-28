@@ -60,6 +60,7 @@ export const AI_CAPABILITIES = {
   create_custom_marker_svg: capability("Créer et enregistrer un marqueur SVG personnalisé", "label customMarkerSvg", "label customMarkerSvg", { objects: ["custom-marker"] }),
   delete_custom_marker: capability("Supprimer un marqueur personnalisé", "customMarkerRef label", "", { objects: ["custom-marker"], dependsOnPriorObject: true }),
   create_marker: capability("Placer un marqueur sur la carte", "place coordinate label legendLabel layerRef symbolId customMarkerRef style mapLabelVisibility", "label", { objects: ["feature", "marker"] }),
+  create_marker_series: capability("Placer une série vérifiée de marqueurs de taille normale", "seriesItems layerRef symbolId customMarkerRef style mapLabelVisibility section", "seriesItems", { objects: ["feature", "marker"], groupable: true, constraints: "Chaque point doit provenir d'une source de données vérifiée et contenir ses coordonnées ; ne jamais inventer une liste exhaustive." }),
   create_text: capability("Placer un texte cartographique", "place coordinate label layerRef style", "label", { objects: ["feature", "text"] }),
   create_line: capability("Tracer une ligne, une flèche ou un trait courbe", "coordinates places label legendLabel layerRef lineVariant style", "", { objects: ["feature", "line"] }),
   create_zone: capability("Dessiner une zone ou un polygone", "rings coordinates places label legendLabel layerRef zoneVariant style", "", { objects: ["feature", "zone"] }),

@@ -486,8 +486,8 @@ function isCoordinateInsideWorkspace(
   return (
     coordinate.lat >= south &&
     coordinate.lat <= north &&
-    coordinate.lng >= west &&
-    coordinate.lng <= east
+    [coordinate.lng, coordinate.lng - 360, coordinate.lng + 360]
+      .some((longitude) => longitude >= west && longitude <= east)
   );
 }
 
@@ -511,7 +511,7 @@ async function assertAiMarkersInsideManualWorkspace(
       continue;
     }
 
-    if (command.type === "create_proportional_markers") {
+    if (command.type === "create_proportional_markers" || command.type === "create_marker_series") {
       for (const item of command.seriesItems) {
         const coordinate = await resolveSeriesPoint(item, cache);
         if (!isCoordinateInsideWorkspace(coordinate, workspaceBounds)) {
@@ -1732,7 +1732,7 @@ async function createProportionalMarkers(
         markerSize: size,
         color: item.color ?? command.style.color,
       },
-      mapLabelVisibility: command.mapLabelVisibility ?? "show",
+      mapLabelVisibility: command.mapLabelVisibility ?? "hide",
     };
     const feature = createPointFeature(derived, point, layerId, aliases);
     useEditorFeaturesStore.getState().addFeature(feature);
@@ -1746,6 +1746,52 @@ async function createProportionalMarkers(
     features,
     cleanString(command.section) ?? cleanString(command.legendTitle),
   );
+  return features;
+}
+
+function createMarkerSeries(
+  command: DroMapAiCommand,
+  aliases: Map<string, string>,
+  ensureHistory: () => void,
+) {
+  if (!command.seriesItems.length || command.seriesItems.some((item) => !item.coordinate)) {
+    throw new Error("La série de marqueurs exige des coordonnées vérifiées pour chaque lieu.");
+  }
+  const layerId = resolveLayerId(command.layerRef, aliases);
+  const features: DroMapFeature[] = [];
+  ensureHistory();
+  for (const item of command.seriesItems) {
+    const derived: DroMapAiCommand = {
+      ...command,
+      type: "create_marker",
+      label: item.label,
+      legendLabel: command.legendLabel ?? command.label ?? item.category ?? item.label,
+      symbolId: item.symbolId ?? command.symbolId,
+      style: {
+        ...command.style,
+        color: item.color ?? command.style.color,
+      },
+      mapLabelVisibility: command.mapLabelVisibility ?? "hide",
+    };
+    const feature = createPointFeature(derived, item.coordinate!, layerId, aliases);
+    if (item.sourceTitle && item.sourceUrl) {
+      feature.properties.source = {
+        type: "geojson",
+        importId: command.id,
+        sourceName: item.sourceTitle,
+        sourceLabel: item.sourceTitle,
+        sourceUrl: item.sourceUrl,
+        sourceLicense: item.sourceTitle.includes("OpenStreetMap") ? "ODbL" : "Domaine public",
+        sourceAttribution: item.sourceTitle.includes("OpenStreetMap") ? "© OpenStreetMap contributors" : "Natural Earth",
+        originalFeatureId: item.id,
+        originalProperties: item.value > 1 ? { population: item.value } : {},
+      };
+    }
+    aliases.set(item.id, feature.id);
+    features.push(feature);
+  }
+  useEditorFeaturesStore.getState().addFeatures(features);
+  arrangeAutomaticLegendForFeatures(features, cleanString(command.section));
   return features;
 }
 
@@ -3779,6 +3825,13 @@ export async function executeDroMapAiPlan(
           createdFeatures.push(feature);
           lastLegendCandidateFeatures = [feature];
           aliases.set(command.id, feature.id);
+          break;
+        }
+        case "create_marker_series": {
+          lastLegendCandidateFeatures = [];
+          const features = createMarkerSeries(command, aliases, ensureFeatureHistory);
+          createdFeatures.push(...features);
+          lastLegendCandidateFeatures = [...features];
           break;
         }
         case "create_line": {

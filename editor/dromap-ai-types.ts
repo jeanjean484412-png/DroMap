@@ -48,6 +48,7 @@ export type DroMapAiCommandType =
   | "create_custom_marker_svg"
   | "delete_custom_marker"
   | "create_marker"
+  | "create_marker_series"
   | "create_text"
   | "create_line"
   | "create_zone"

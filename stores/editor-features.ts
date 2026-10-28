@@ -38,6 +38,7 @@ type EditorHistorySnapshot = {
 type EditorFeaturesState = {
   features: DroMapFeature[];
   addFeature: (feature: DroMapFeature) => void;
+  addFeatures: (features: DroMapFeature[]) => void;
   updateFeature: (id: string, feature: DroMapFeature) => void;
   updateFeatures: (
     featureIds: string[],
@@ -316,6 +317,11 @@ export const useEditorFeaturesStore = create<EditorFeaturesState>(
     addFeature: (feature) =>
       set((state) => ({
         features: [...state.features, normalizeNewFeatureForStore(feature)],
+      })),
+
+    addFeatures: (features) =>
+      set((state) => ({
+        features: [...state.features, ...features.map(normalizeNewFeatureForStore)],
       })),
 
     addFeatureWithHistory: (feature) =>

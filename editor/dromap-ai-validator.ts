@@ -15,7 +15,7 @@ const validCoordinate = (value: { lng: number; lat: number }) =>
   value.lng >= -180 && value.lng <= 180 && value.lat >= -90 && value.lat <= 90;
 const WORKSPACE_TYPES = new Set(["set_workspace_by_place", "set_workspace_bounds", "select_world"]);
 const FEATURE_CREATION_TYPES = new Set([
-  "create_marker", "create_text", "create_line", "create_zone", "create_shape",
+  "create_marker", "create_marker_series", "create_text", "create_line", "create_zone", "create_shape",
   "fill_boundary", "create_proportional_markers", "create_proportional_flows",
 ]);
 
@@ -114,6 +114,9 @@ export function validateAiPlan(
     }
     if (command.type === "create_proportional_markers" && command.seriesItems.some((item) => !item.place && !item.coordinate)) {
       add(command, index, "SERIES_LOCATION", "Figuré proportionnel sans lieu.", "Pour quelles localités dois-je placer ces valeurs ?");
+    }
+    if (command.type === "create_marker_series" && (command.seriesItems.length === 0 || command.seriesItems.some((item) => !item.coordinate))) {
+      add(command, index, "SERIES_LOCATION", "Série de marqueurs sans coordonnées vérifiées.", "Je n'ai pas de coordonnées vérifiées pour tous ces lieux.");
     }
     if (command.type === "create_proportional_flows" && command.seriesItems.some((item) =>
       (!item.fromPlace && !item.fromCoordinate) || (!item.toPlace && !item.toCoordinate)

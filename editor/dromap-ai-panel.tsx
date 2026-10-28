@@ -148,6 +148,8 @@ function commandTitle(command: DroMapAiCommand) {
       return "Retirer un marqueur de la bibliothèque";
     case "create_marker":
       return `Créer le marqueur ${command.label ?? command.place ?? "sans nom"}`;
+    case "create_marker_series":
+      return `Placer ${command.seriesItems.length} marqueurs vérifiés${command.label ? ` : ${command.label}` : ""}`;
     case "create_text":
       return `Ajouter le texte ${command.label ?? "sans nom"}`;
     case "create_line":
@@ -301,7 +303,7 @@ function getStepAdjustmentQuestions(
   const questions: StepAdjustmentQuestion[] = [];
 
   if (
-    ["create_marker", "create_custom_marker_svg", "create_proportional_markers"].includes(
+    ["create_marker", "create_marker_series", "create_custom_marker_svg", "create_proportional_markers"].includes(
       command.type,
     )
   ) {
@@ -2267,7 +2269,7 @@ Routes validées. Voici la suite du plan.`,
                 Aperçu IA temporaire — non validé
               </p>
               <p className="mt-0.5 text-xs text-slate-600">
-                La carte montre le plan proposé. Aucun export n'est ouvert et rien n'est enregistré tant que tu ne valides pas.
+                La carte montre le plan proposé. Aucun export n’est ouvert et rien n’est enregistré tant que tu ne valides pas.
               </p>
             </div>
             <button
@@ -2538,7 +2540,7 @@ Routes validées. Voici la suite du plan.`,
                   {isRevisingStep ? (
                     <div className="flex justify-start">
                       <div className="rounded-2xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-800">
-                        Modification de l'étape ciblée uniquement…
+                        Modification de l’étape ciblée uniquement…
                       </div>
                     </div>
                   ) : null}
@@ -3007,7 +3009,7 @@ Routes validées. Voici la suite du plan.`,
                       onClick={undoLastPlan}
                       className="mr-auto rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-100"
                     >
-                      Annuler l'action IA
+                      Annuler l’action IA
                     </button>
                   ) : null}
                   {plan && !executionResult ? (
