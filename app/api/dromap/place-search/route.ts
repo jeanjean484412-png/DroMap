@@ -1,5 +1,6 @@
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextRequest, NextResponse } from "next/server";
+import { checkAiAccess } from "@/lib/dromap/server/ai-access";
 
 const NOMINATIM_SEARCH_URL =
   process.env.NOMINATIM_SEARCH_URL?.trim() ||
@@ -27,6 +28,7 @@ type NominatimSearchResult = {
   addresstype?: string;
   importance?: number;
   licence?: string;
+  geojson?: { type: string; coordinates?: unknown };
   address?: {
     country_code?: string;
   };
@@ -47,6 +49,7 @@ type PlaceSearchResult = {
   type: string;
   importance: number | null;
   countryCode: string;
+  geometry?: { type: string; coordinates?: unknown };
 };
 
 type PlaceSearchResponse = {
@@ -113,6 +116,8 @@ function normalizeResult(
     countryCode: String(value.address?.country_code ?? "")
       .trim()
       .toLowerCase(),
+    ...(value.geojson && ["Polygon", "MultiPolygon", "LineString", "MultiLineString"].includes(value.geojson.type)
+      ? { geometry: value.geojson } : {}),
   };
 }
 
@@ -176,6 +181,7 @@ async function runSerialized<T>(task: () => Promise<T>) {
 async function fetchNominatimResults(
   query: string,
   acceptLanguage: string,
+  withGeometry = false,
 ): Promise<PlaceSearchResponse> {
   const url = new URL(NOMINATIM_SEARCH_URL);
   url.searchParams.set("q", query);
@@ -183,6 +189,11 @@ async function fetchNominatimResults(
   url.searchParams.set("limit", "8");
   url.searchParams.set("addressdetails", "1");
   url.searchParams.set("accept-language", acceptLanguage);
+  if (withGeometry) {
+    url.searchParams.set("polygon_geojson", "1");
+    url.searchParams.set("polygon_threshold", "0.001");
+    url.searchParams.set("limit", "3");
+  }
 
   const contactEmail = process.env.NOMINATIM_CONTACT_EMAIL?.trim();
   if (contactEmail) {
@@ -190,7 +201,7 @@ async function fetchNominatimResults(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), withGeometry ? 25_000 : REQUEST_TIMEOUT_MS);
 
   try {
     const response = await fetch(url, {
@@ -224,6 +235,11 @@ async function fetchNominatimResults(
 }
 
 async function handleGET(request: NextRequest) {
+  const withGeometry = request.nextUrl.searchParams.get("geometry") === "1";
+  if (withGeometry) {
+    const accessError = await checkAiAccess();
+    if (accessError) return accessError;
+  }
   const query = normalizeQuery(request.nextUrl.searchParams.get("q") ?? "");
 
   if (query.length < 2) {
@@ -242,26 +258,26 @@ async function handleGET(request: NextRequest) {
 
   const requestedLanguage = request.headers.get("accept-language") ?? "fr";
   const acceptLanguage = requestedLanguage.slice(0, 80) || "fr";
-  const cacheKey = `${acceptLanguage.toLowerCase()}::${query.toLowerCase()}`;
+  const cacheKey = `${withGeometry ? "geometry::" : ""}${acceptLanguage.toLowerCase()}::${query.toLowerCase()}`;
   const cached = readCachedResponse(cacheKey);
 
   if (cached) {
     return NextResponse.json(cached, {
       headers: {
-        "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+        "Cache-Control": withGeometry ? "private, max-age=3600" : "public, max-age=3600, stale-while-revalidate=86400",
       },
     });
   }
 
   try {
     const payload = await runSerialized(() =>
-      fetchNominatimResults(query, acceptLanguage),
+      fetchNominatimResults(query, acceptLanguage, withGeometry),
     );
     writeCachedResponse(cacheKey, payload);
 
     return NextResponse.json(payload, {
       headers: {
-        "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+        "Cache-Control": withGeometry ? "private, max-age=3600" : "public, max-age=3600, stale-while-revalidate=86400",
       },
     });
   } catch (error) {

@@ -13,7 +13,7 @@ type StructuredRequest = {
 };
 
 export async function callStructuredOpenAi(request: StructuredRequest) {
-  const client = new OpenAI({ apiKey: request.apiKey, timeout: 48_000, maxRetries: 0 });
+  const client = new OpenAI({ apiKey: request.apiKey, timeout: request.webSearch ? 90_000 : 48_000, maxRetries: 0 });
   const response = await client.responses.create({
     model: request.choice.model,
     reasoning: { effort: request.choice.reasoning },
@@ -29,13 +29,21 @@ export async function callStructuredOpenAi(request: StructuredRequest) {
         schema: request.schema,
       },
     },
-    ...(request.webSearch ? { tools: [{ type: "web_search" as const }] } : {}),
+    ...(request.webSearch ? {
+      tools: [{ type: "web_search" as const }],
+      tool_choice: "required" as const,
+      include: ["web_search_call.action.sources" as const],
+    } : {}),
   });
   if (response.status !== "completed" || !response.output_text) {
     throw Object.assign(new Error("Réponse structurée incomplète."), {
       code: "AI_INCOMPLETE_RESPONSE",
       status: 502,
     });
+  }
+  const webSearched = response.output.some((item) => item.type === "web_search_call");
+  if (request.webSearch && !webSearched) {
+    throw Object.assign(new Error("Aucune recherche web n'a été exécutée."), { code: "AI_WEB_SEARCH_NOT_EXECUTED", status: 502 });
   }
   let parsed: unknown;
   try {
@@ -49,6 +57,6 @@ export async function callStructuredOpenAi(request: StructuredRequest) {
   return {
     parsed,
     model: response.model,
-    webSearched: response.output.some((item) => item.type === "web_search_call"),
+    webSearched,
   };
 }

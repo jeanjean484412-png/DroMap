@@ -58,7 +58,9 @@ import {
   createZoneFillFeatureAtLngLat,
   createZoneFillFeatureFromGeoJsonLayersAtLngLat,
   createWorkspaceWaterFillFeatureAtLngLat,
+  createZoneFeatureFromBoundaryPolygon,
 } from "./zone-fill";
+import { getAiVectorLines, getAiVectorPolygons, loadAiPlaceVectorGeometry } from "./dromap-ai-vector-source";
 import {
   fitDroMapAiMapBounds,
   flyDroMapAiMapTo,
@@ -758,11 +760,34 @@ async function createBoundaryFillFeature(
   aliases: Map<string, string>,
   cache: Map<string, PlaceSearchResult>,
 ) {
-  const point = await resolvePoint(command, cache);
   const style = {
     ...defaultStyleForType("zone"),
     ...stylePatchToFeatureStyle(command.style),
   };
+  const layerId = resolveLayerId(command.layerRef, aliases);
+  if (command.place) {
+    try {
+      const geometry = await loadAiPlaceVectorGeometry(command.place, "area");
+      if (geometry) {
+        const label = cleanString(command.label) ?? command.place;
+        return getAiVectorPolygons(geometry).map((polygon) => {
+          const feature = createZoneFeatureFromBoundaryPolygon({ polygon, label, style, legendLabel: cleanString(command.legendLabel) ?? label });
+          feature.properties.layerId = layerId;
+          feature.properties.locked = command.locked ?? false;
+          feature.properties.geometryLocked = command.geometryLocked ?? false;
+          feature.properties.source = {
+            type: "geojson", importId: command.id, sourceName: command.place,
+            sourceLabel: "OpenStreetMap / Nominatim", sourceUrl: "https://www.openstreetmap.org/copyright",
+            sourceLicense: "ODbL", sourceAttribution: "© OpenStreetMap contributors",
+          };
+          return feature;
+        });
+      }
+    } catch {
+      // Les frontières déjà disponibles restent utilisables si la source distante échoue.
+    }
+  }
+  const point = await resolvePoint(command, cache);
   const workspace = useEditorWorkspaceStore.getState().workspaceBounds;
   const geoJsonResult = createZoneFillFeatureFromGeoJsonLayersAtLngLat({
     layers: useEditorGeoJsonLayersStore.getState().geoJsonLayers,
@@ -786,13 +811,15 @@ async function createBoundaryFillFeature(
         style,
         workspaceBounds: workspace,
       });
-  const match = waterResult.match;
+  const fallbackResult = waterResult.match ? waterResult : await createZoneFillFeatureAtLngLat({
+    basemapId: "white-borders", lngLat: [point.lng, point.lat], style,
+  });
+  const match = fallbackResult.match;
   if (!match) {
     throw new Error(
       `Aucun contour vectoriel remplissable n'a été trouvé à ${command.place ?? `${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}`}.`,
     );
   }
-  const layerId = resolveLayerId(command.layerRef, aliases);
   const feature: DroMapFeature = {
     ...match.feature,
     id: createId("zone-fill"),
@@ -807,7 +834,28 @@ async function createBoundaryFillFeature(
       meta: { version: 1 },
     },
   };
-  return feature;
+  return [feature];
+}
+
+async function createBoundaryTraceFeatures(command: DroMapAiCommand, aliases: Map<string, string>, cache: Map<string, PlaceSearchResult>) {
+  const layerId = resolveLayerId(command.layerRef, aliases);
+  const geometry = command.place ? await loadAiPlaceVectorGeometry(command.place, "line").catch(() => null) : null;
+  if (command.place && !geometry) {
+    throw new Error(`Aucun tracé vectoriel vérifié n'a pu être récupéré pour ${command.place}. Réessaie ou précise le nom du lieu.`);
+  }
+  const lines = geometry ? getAiVectorLines(geometry) :
+    (await createBoundaryFillFeature(command, aliases, cache)).flatMap((feature) =>
+      feature.geometry.type === "Polygon" ? feature.geometry.coordinates : []);
+  if (!lines.length) throw new Error("Aucun tracé vectoriel vérifié n'a été trouvé pour ce lieu.");
+  return lines.map((line) => {
+    const feature = createLineFeature({ ...command, lineVariant: "traced" }, line.map(([lng, lat]) => ({ lng, lat })), layerId);
+    if (geometry) feature.properties.source = {
+      type: "geojson", importId: command.id, sourceName: command.place,
+      sourceLabel: "OpenStreetMap / Nominatim", sourceUrl: "https://www.openstreetmap.org/copyright",
+      sourceLicense: "ODbL", sourceAttribution: "© OpenStreetMap contributors",
+    };
+    return feature;
+  });
 }
 
 function getFeatureBounds(features: DroMapFeature[]): DroMapAiBounds | null {
@@ -3884,16 +3932,25 @@ export async function executeDroMapAiPlan(
         }
         case "fill_boundary": {
           lastLegendCandidateFeatures = [];
-          const feature = await createBoundaryFillFeature(
+          const features = await createBoundaryFillFeature(
             command,
             aliases,
             placeCache,
           );
           ensureFeatureHistory();
-          useEditorFeaturesStore.getState().addFeature(feature);
-          createdFeatures.push(feature);
-          lastLegendCandidateFeatures = [feature];
-          aliases.set(command.id, feature.id);
+          useEditorFeaturesStore.getState().addFeatures(features);
+          createdFeatures.push(...features);
+          lastLegendCandidateFeatures = features;
+          if (features[0]) aliases.set(command.id, features[0].id);
+          break;
+        }
+        case "trace_boundary": {
+          const features = await createBoundaryTraceFeatures(command, aliases, placeCache);
+          ensureFeatureHistory();
+          useEditorFeaturesStore.getState().addFeatures(features);
+          createdFeatures.push(...features);
+          lastLegendCandidateFeatures = features;
+          if (features[0]) aliases.set(command.id, features[0].id);
           break;
         }
         case "create_proportional_markers": {

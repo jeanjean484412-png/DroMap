@@ -18,6 +18,7 @@ import { useEditorToolStore } from "@/stores/editor-tool";
 import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
 import { useDromapProductStore } from "@/stores/dromap-product";
 import { bringFloatingPanelToFront, getInitialFloatingPanelZIndex } from "./floating-panel-z-index";
+import { FloatingPanelPortal } from "./floating-panel-portal";
 
 import { buildDroMapAiProjectContext } from "./dromap-ai-context";
 import { getAiPlanDependents, validateAiPlan } from "./dromap-ai-validator";
@@ -54,6 +55,8 @@ import type {
   DroMapAiPrePlanQuestion,
   DroMapAiWorkspaceMode,
 } from "./dromap-ai-types";
+
+const ManualCommandEditor = dynamic(() => import("./dromap-ai-command-editor").then((module) => module.DroMapAiCommandEditor), { ssr: false });
 
 const BuildingSelectionModal = dynamic(
   () =>
@@ -160,6 +163,8 @@ function commandTitle(command: DroMapAiCommand) {
       return `Créer une forme ${command.shapeKind ?? "géométrique"}`;
     case "fill_boundary":
       return `Remplir le contour ${command.label ?? command.place ?? "sélectionné"}`;
+    case "trace_boundary":
+      return `Tracer le contour réel de ${command.label ?? command.place ?? "la zone sélectionnée"}`;
     case "create_proportional_markers":
       return `Créer ${command.seriesItems.length} figuré${command.seriesItems.length > 1 ? "s" : ""} proportionnel${command.seriesItems.length > 1 ? "s" : ""}`;
     case "create_proportional_flows":
@@ -285,317 +290,6 @@ function writeConversation(
   );
 }
 
-type StepAdjustmentOption = {
-  id: string;
-  label: string;
-  instruction: string;
-};
-
-type StepAdjustmentQuestion = {
-  id: string;
-  label: string;
-  options: StepAdjustmentOption[];
-};
-
-function getStepAdjustmentQuestions(
-  command: DroMapAiCommand,
-): StepAdjustmentQuestion[] {
-  const questions: StepAdjustmentQuestion[] = [];
-
-  if (
-    ["create_marker", "create_marker_series", "create_custom_marker_svg", "create_proportional_markers"].includes(
-      command.type,
-    )
-  ) {
-    questions.push(
-      {
-        id: "marker-symbol",
-        label: "Quel type de symbole privilégier ?",
-        options: [
-          {
-            id: "builtin",
-            label: "Pictogramme DroMap",
-            instruction:
-              "Privilégie un pictogramme intégré DroMap s’il représente correctement le sujet.",
-          },
-          {
-            id: "custom",
-            label: "Personnalisé si plus pertinent",
-            instruction:
-              "Crée un marqueur personnalisé SVG si cela représente mieux le sujet qu’un pictogramme intégré, et enregistre-le dans Mes marqueurs.",
-          },
-        ],
-      },
-      {
-        id: "marker-label",
-        label: "Étiquette sur la carte",
-        options: [
-          {
-            id: "show",
-            label: "Afficher",
-            instruction: "Affiche clairement l’étiquette du marqueur sur la carte.",
-          },
-          {
-            id: "inherit",
-            label: "Automatique",
-            instruction: "Laisse la visibilité de l’étiquette suivre le réglage général.",
-          },
-          {
-            id: "hide",
-            label: "Masquer",
-            instruction: "Masque l’étiquette de ce marqueur sur la carte.",
-          },
-        ],
-      },
-      {
-        id: "marker-emphasis",
-        label: "Importance visuelle",
-        options: [
-          {
-            id: "discreet",
-            label: "Discrète",
-            instruction: "Rends le figuré plutôt discret sans perdre sa lisibilité.",
-          },
-          {
-            id: "balanced",
-            label: "Équilibrée",
-            instruction: "Utilise une importance visuelle équilibrée et cohérente avec le reste de la carte.",
-          },
-          {
-            id: "strong",
-            label: "Forte",
-            instruction: "Donne au figuré une importance visuelle forte et clairement perceptible.",
-          },
-        ],
-      },
-    );
-  }
-
-  if (["create_line", "create_proportional_flows"].includes(command.type)) {
-    questions.push(
-      {
-        id: "line-style",
-        label: "Style du trait",
-        options: [
-          { id: "discreet", label: "Discret", instruction: "Utilise un trait discret et lisible." },
-          { id: "strong", label: "Contrasté", instruction: "Utilise un trait plus contrasté et visuellement prioritaire." },
-        ],
-      },
-      {
-        id: "line-arrow",
-        label: "Sens du mouvement",
-        options: [
-          { id: "arrow", label: "Avec flèche", instruction: "Montre clairement le sens avec une pointe de flèche." },
-          { id: "plain", label: "Sans flèche", instruction: "Utilise un trait sans pointe de flèche." },
-        ],
-      },
-    );
-  }
-
-  if (["create_zone", "create_shape", "fill_boundary", "create_choropleth"].includes(command.type)) {
-    questions.push(
-      {
-        id: "zone-style",
-        label: "Traitement visuel de la zone",
-        options: [
-          { id: "light", label: "Léger", instruction: "Utilise un remplissage léger et un contour discret." },
-          { id: "balanced", label: "Équilibré", instruction: "Utilise un contraste équilibré entre remplissage et contour." },
-          { id: "strong", label: "Marqué", instruction: "Renforce visuellement la zone sans nuire aux autres informations." },
-        ],
-      },
-    );
-  }
-
-  if (["import_buildings", "import_routes", "import_geojson_catalog", "import_geojson_url", "create_geojson_layer"].includes(command.type)) {
-    questions.push({
-      id: "data-weight",
-      label: "Priorité pour les données",
-      options: [
-        { id: "detail", label: "Précision", instruction: "Privilégie la précision et la fidélité des données." },
-        { id: "speed", label: "Fluidité", instruction: "Privilégie un rendu plus léger et fluide lorsque le volume est important." },
-      ],
-    });
-  }
-
-  if (command.type === "import_routes") {
-    questions.push(
-      {
-        id: "road-detail",
-        label: "Niveau de routes",
-        options: [
-          { id: "motorways", label: "Autoroutes", instruction: "Limite l'import aux autoroutes principales." },
-          { id: "main", label: "Grands axes", instruction: "Inclue les autoroutes et routes nationales/principales pertinentes." },
-          { id: "secondary", label: "Avec secondaires", instruction: "Inclue aussi les départementales/secondaires ; adapte la zone pour rester compatible avec ce niveau de détail." },
-          { id: "local", label: "Avec petites routes", instruction: "Inclue les petites routes uniquement sur une zone suffisamment petite pour rester exploitable." },
-        ],
-      },
-      {
-        id: "road-scope",
-        label: "Sélection dans le réseau",
-        options: [
-          { id: "all", label: "Toutes les routes du niveau", instruction: "Présélectionne toutes les routes correspondant aux catégories retenues." },
-          { id: "named", label: "Axes ciblés", instruction: "Présélectionne uniquement les axes nommés ou référencés dans la demande, tout en conservant les routes déjà importées comme sélection de départ." },
-        ],
-      },
-    );
-  }
-
-  if (command.type === "import_buildings") {
-    questions.push(
-      {
-        id: "building-scope",
-        label: "Quel périmètre présélectionner ?",
-        options: [
-          {
-            id: "strict",
-            label: "Emprise stricte",
-            instruction:
-              "Resserre la zone de recherche et la présélection sur les bâtiments directement rattachés aux établissements demandés.",
-          },
-          {
-            id: "campus",
-            label: "Ensemble du campus / site",
-            instruction:
-              "Inclue dans la présélection les différents bâtiments du campus ou du site lorsqu'ils forment un ensemble cohérent.",
-          },
-          {
-            id: "annexes",
-            label: "Avec annexes proches",
-            instruction:
-              "Inclue aussi les annexes proches plausiblement rattachées au site ; l'utilisateur les vérifiera ensuite dans le sélecteur.",
-          },
-        ],
-      },
-      {
-        id: "building-search-area",
-        label: "Étendue de la zone de recherche",
-        options: [
-          {
-            id: "tight",
-            label: "Très ciblée",
-            instruction:
-              "Utilise une zone de recherche serrée autour des établissements demandés.",
-          },
-          {
-            id: "context",
-            label: "Avec un peu de contexte",
-            instruction:
-              "Garde une petite marge autour des établissements pour permettre à l'utilisateur de corriger facilement la sélection.",
-          },
-        ],
-      },
-    );
-  }
-
-  if (
-    [
-      "configure_legend",
-      "configure_feature_legend",
-      "configure_legend_group",
-      "align_legend_sizes_with_map",
-    ].includes(command.type)
-  ) {
-    questions.push(
-      {
-        id: "legend-position",
-        label: "Où placer la légende ?",
-        options: [
-          { id: "right", label: "À droite", instruction: "Place la légende à droite de la carte." },
-          { id: "map", label: "Sur la carte", instruction: "Place la légende directement sur la carte dans une zone peu occupée." },
-          { id: "bottom", label: "En bas", instruction: "Place la légende sous la carte." },
-          { id: "left", label: "À gauche", instruction: "Place la légende à gauche de la carte." },
-        ],
-      },
-      {
-        id: "legend-structure",
-        label: "Organisation",
-        options: [
-          { id: "compact", label: "Compacte", instruction: "Rends la légende compacte, avec seulement les groupes utiles et des libellés courts mais complets." },
-          { id: "detailed", label: "Détaillée", instruction: "Organise la légende avec des sous-titres explicites et une hiérarchie détaillée." },
-        ],
-      },
-      {
-        id: "legend-size",
-        label: "Taille des figurés",
-        options: [
-          { id: "match", label: "Comme sur la carte", instruction: "Aligne les tailles des figurés de légende sur leurs objets correspondants sur la carte." },
-          { id: "uniform", label: "Uniformes", instruction: "Conserve des tailles de figurés de légende uniformes et lisibles." },
-        ],
-      },
-    );
-  }
-
-  if (command.type === "configure_map_title") {
-    questions.push(
-      {
-        id: "title-position",
-        label: "Position du titre",
-        options: [
-          { id: "top", label: "Haut-centre", instruction: "Place le titre en haut et centré." },
-          { id: "free", label: "Position libre", instruction: "Choisis une position libre qui évite la légende, l’échelle et la flèche nord." },
-        ],
-      },
-      {
-        id: "title-emphasis",
-        label: "Importance du titre",
-        options: [
-          { id: "discreet", label: "Discret", instruction: "Utilise un titre discret." },
-          { id: "strong", label: "Principal", instruction: "Fais du titre un élément principal clairement lisible." },
-        ],
-      },
-    );
-  }
-
-  if (command.type === "configure_scale") {
-    questions.push({
-      id: "scale-position",
-      label: "Position de l’échelle",
-      options: [
-        { id: "bottom-left", label: "Bas gauche", instruction: "Place l’échelle en bas à gauche." },
-        { id: "bottom-right", label: "Bas droite", instruction: "Place l’échelle en bas à droite." },
-        { id: "top-left", label: "Haut gauche", instruction: "Place l’échelle en haut à gauche." },
-      ],
-    });
-  }
-
-  if (command.type === "configure_north_arrow") {
-    questions.push({
-      id: "north-position",
-      label: "Position de la flèche nord",
-      options: [
-        { id: "top-right", label: "Haut droite", instruction: "Place la flèche nord en haut à droite." },
-        { id: "top-left", label: "Haut gauche", instruction: "Place la flèche nord en haut à gauche." },
-        { id: "bottom-right", label: "Bas droite", instruction: "Place la flèche nord en bas à droite." },
-      ],
-    });
-  }
-
-  if (["set_workspace_by_place", "set_workspace_bounds", "select_world"].includes(command.type)) {
-    questions.push({
-      id: "workspace-padding",
-      label: "Cadrage de la zone",
-      options: [
-        { id: "tight", label: "Serré", instruction: "Définis une zone assez serrée autour du territoire utile." },
-        { id: "context", label: "Avec contexte", instruction: "Ajoute une marge raisonnable autour du territoire principal pour donner du contexte." },
-      ],
-    });
-  }
-
-  if (!questions.length) {
-    questions.push({
-      id: "generic-priority",
-      label: "Priorité de cette étape",
-      options: [
-        { id: "simple", label: "Simple", instruction: "Simplifie cette étape et garde uniquement ce qui est utile." },
-        { id: "balanced", label: "Équilibrée", instruction: "Garde une solution équilibrée, lisible et cohérente avec le reste de la carte." },
-        { id: "detailed", label: "Plus précise", instruction: "Rends cette étape plus précise et détaillée sans ajouter d’éléments inutiles." },
-      ],
-    });
-  }
-
-  return questions;
-}
-
 type DroMapAiPanelProps = {
   docked?: boolean;
 };
@@ -689,12 +383,7 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
-  const [isRevisingStep, setIsRevisingStep] = useState(false);
   const [editingCommandId, setEditingCommandId] = useState<string | null>(null);
-  const [stepInstruction, setStepInstruction] = useState("");
-  const [stepQuestionAnswers, setStepQuestionAnswers] = useState<
-    Record<string, Record<string, string>>
-  >({});
   const [executionResult, setExecutionResult] =
     useState<DroMapAiExecutionResult | null>(null);
   const [previewResult, setPreviewResult] =
@@ -728,10 +417,9 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     modeReady &&
     prompt.trim().length >= 2 &&
     !isGenerating &&
-    !isApplying &&
-    !isRevisingStep;
+    !isApplying ;
   const isAiWorking =
-    isGenerating || isApplying || isRevisingStep || isPreparingBuildings || isPreparingRoutes;
+    isGenerating || isApplying  || isPreparingBuildings || isPreparingRoutes;
   const showPlanPane = Boolean(plan || prePlanQuestions.length);
   const aiWorkingLabel = isApplying
     ? "Application sur la carte…"
@@ -739,9 +427,7 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
       ? "Analyse des bâtiments…"
       : isPreparingRoutes
         ? "Analyse des routes…"
-    : isRevisingStep
-      ? "Vérification de l’étape…"
-      : "Analyse de la demande…";
+        : "Analyse de la demande…";
   const assistantStatus = isAiWorking
     ? aiWorkingLabel
     : executionResult
@@ -798,8 +484,7 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
       !isBuildingSelectionPlan &&
       !isRouteSelectionPlan &&
       !isApplying &&
-      !isGenerating &&
-      !isRevisingStep &&
+      !isGenerating  &&
       !isPreparingBuildings &&
       !isPreparingRoutes,
   );
@@ -859,8 +544,6 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     setPrePlanAnswers({});
     setExecutionResult(null);
     setEditingCommandId(null);
-    setStepInstruction("");
-    setStepQuestionAnswers({});
     setBuildingFlow(null);
     setBuildingPreparation(null);
     setIsPreparingBuildings(false);
@@ -998,14 +681,13 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     setIsPreparingRoutes(false);
     setIsGenerating(false);
     setIsApplying(false);
-    setIsRevisingStep(false);
   }, [workspaceMode, workspaceValidated]);
 
   useEffect(() => {
     const element = chatScrollRef.current;
     if (!element) return;
     element.scrollTop = element.scrollHeight;
-  }, [messages, isGenerating, isRevisingStep]);
+  }, [messages, isGenerating]);
 
   useEffect(() => {
     const element = promptTextareaRef.current;
@@ -1092,8 +774,6 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     setError(null);
     setExecutionResult(null);
     setEditingCommandId(null);
-    setStepInstruction("");
-    setStepQuestionAnswers({});
     setBuildingFlow(null);
     setBuildingPreparation(null);
     setIsPreparingBuildings(false);
@@ -1114,7 +794,6 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     currentTaskPromptRef.current = "";
     setIsGenerating(false);
     setIsApplying(false);
-    setIsRevisingStep(false);
   }
 
   function chooseManualMode() {
@@ -1205,7 +884,7 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     }
 
     const requestPrompt = (overridePrompt ?? prompt).trim();
-    if (requestPrompt.length < 2 || isGenerating || isApplying || isRevisingStep) {
+    if (requestPrompt.length < 2 || isGenerating || isApplying ) {
       return;
     }
 
@@ -1238,7 +917,6 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     setError(null);
     setExecutionResult(null);
     setEditingCommandId(null);
-    setStepQuestionAnswers({});
     setIsGenerating(true);
 
     try {
@@ -1993,38 +1671,8 @@ Routes validées. Voici la suite du plan.`,
     );
   }
 
-  function setStepQuestionAnswer(
-    commandId: string,
-    questionId: string,
-    optionId: string,
-  ) {
-    setStepQuestionAnswers((current) => ({
-      ...current,
-      [commandId]: {
-        ...(current[commandId] ?? {}),
-        [questionId]:
-          current[commandId]?.[questionId] === optionId ? "" : optionId,
-      },
-    }));
-  }
-
-  function buildStepAdjustmentInstruction(command: DroMapAiCommand) {
-    const answers = stepQuestionAnswers[command.id] ?? {};
-    const selectedInstructions = getStepAdjustmentQuestions(command).flatMap(
-      (question) => {
-        const selectedId = answers[question.id];
-        const option = question.options.find(
-          (candidate) => candidate.id === selectedId,
-        );
-        return option ? [option.instruction] : [];
-      },
-    );
-    const freeText = stepInstruction.trim();
-    return [...selectedInstructions, ...(freeText ? [freeText] : [])].join(" ");
-  }
-
   function removePlanStep(command: DroMapAiCommand, index: number) {
-    if (executionResult || isApplying || isRevisingStep) return;
+    if (executionResult || isApplying ) return;
     const dependents = plan ? getAiPlanDependents(plan, command.id) : [];
     if (dependents.length) {
       setError(`Cette étape est utilisée par ${dependents.length} étape${dependents.length > 1 ? "s" : ""} suivante${dependents.length > 1 ? "s" : ""}. Ajuste-les avant de la supprimer.`);
@@ -2049,13 +1697,7 @@ Routes validées. Voici la suite du plan.`,
     });
     if (editingCommandId === command.id) {
       setEditingCommandId(null);
-      setStepInstruction("");
     }
-    setStepQuestionAnswers((current) => {
-      const next = { ...current };
-      delete next[command.id];
-      return next;
-    });
     if (command.type === "import_buildings") {
       setBuildingPreparation(null);
       setBuildingFlow((current) => {
@@ -2092,125 +1734,23 @@ Routes validées. Voici la suite du plan.`,
     );
   }
 
-  async function revisePlanStep(
-    command: DroMapAiCommand,
-    index: number,
-    instructionOverride?: string,
-  ) {
-    if (previewResult) {
-      cancelPreview({ reopenAssistant: true });
-    }
-    if (!workspaceMode || !plan || isRevisingStep) return;
-    const instruction = (instructionOverride ?? stepInstruction).trim();
-    if (!instruction) {
-      setError("Indique la modification à apporter à cette étape.");
-      return;
-    }
-    if (executionResult) {
-      setError(
-        "Le plan est déjà appliqué. Annule d'abord l'action IA avant de modifier une étape, afin d'éviter les doublons.",
-      );
-      return;
-    }
-
+  function savePlanStep(command: DroMapAiCommand, index: number): string | null {
+    if (!plan || !workspaceMode || executionResult || isApplying) return "Ce plan ne peut pas être modifié pendant son application.";
+    if (previewResult) cancelPreview({ reopenAssistant: true });
+    const nextPlan = { ...plan, commands: plan.commands.map((current, currentIndex) => currentIndex === index ? command : current) };
+    const issues = validateAiPlan(nextPlan, buildDroMapAiProjectContext(), workspaceMode);
+    if (issues.length) return issues[0].detail;
+    setPlan(nextPlan);
     setError(null);
-    setIsRevisingStep(true);
-    const conversation = getConversationForApi();
-    appendMessage(
-      "user",
-      `Modification de l'étape ${index + 1} — ${commandTitle(command)} : ${instruction}`,
-    );
-
-    try {
-      const response = await fetch("/api/dromap/ai", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          prompt: instruction,
-          context: buildDroMapAiProjectContext(),
-          workspaceMode,
-          conversation,
-          stepRevision: {
-            plan,
-            commandId: command.id,
-            commandIndex: index,
-            instruction,
-          },
-        }),
-      });
-
-      const payload = (await response.json()) as
-        | DroMapAiApiResponse
-        | ApiErrorPayload;
-      if (!response.ok || !("plan" in payload) || !payload.plan) {
-        throw new Error(
-          "error" in payload && payload.error
-            ? payload.error
-            : "Impossible de modifier cette étape.",
-        );
-      }
-
-      setPlan(payload.plan);
-      if (command.type === "import_buildings") {
-        const revisedBuildingCommands = payload.plan.commands.filter(
-          (candidate) => candidate.type === "import_buildings",
-        );
-        setBuildingFlow((current) =>
-          current
-            ? {
-                ...current,
-                commands: revisedBuildingCommands,
-                currentIndex: Math.min(
-                  current.currentIndex,
-                  Math.max(0, revisedBuildingCommands.length - 1),
-                ),
-              }
-            : current,
-        );
-        setBuildingPreparation(null);
-      }
-      if (command.type === "import_routes") {
-        const revisedRouteCommands = payload.plan.commands.filter(
-          (candidate) => candidate.type === "import_routes",
-        );
-        setRouteFlow((current) =>
-          current
-            ? {
-                ...current,
-                commands: revisedRouteCommands,
-                currentIndex: Math.min(
-                  current.currentIndex,
-                  Math.max(0, revisedRouteCommands.length - 1),
-                ),
-              }
-            : current,
-        );
-        setRoutePreparation(null);
-      }
-      setGrounded(payload.grounded);
-      setEditingCommandId(null);
-      setStepInstruction("");
-      setStepQuestionAnswers((current) => ({
-        ...current,
-        [command.id]: {},
-      }));
-      appendMessage(
-        "assistant",
-        `Étape ${index + 1} modifiée sans toucher aux autres étapes : ${commandTitle(payload.plan.commands[index] ?? command)}.`,
-      );
-    } catch (caughtError) {
-      const message =
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Impossible de modifier cette étape.";
-      setError(message);
-      appendMessage("error", message);
-    } finally {
-      setIsRevisingStep(false);
-    }
+    setEditingCommandId(null);
+    const buildings = nextPlan.commands.filter((item) => item.type === "import_buildings");
+    const routes = nextPlan.commands.filter((item) => item.type === "import_routes");
+    setBuildingFlow((current) => buildings.length ? { originalPrompt: current?.originalPrompt ?? currentTaskPromptRef.current, commands: buildings, currentIndex: 0, selections: [] } : null);
+    setRouteFlow((current) => routes.length ? { originalPrompt: current?.originalPrompt ?? currentTaskPromptRef.current, commands: routes, currentIndex: 0, selections: [] } : null);
+    setBuildingPreparation(null);
+    setRoutePreparation(null);
+    appendMessage("system", `Étape ${index + 1} modifiée manuellement : ${commandTitle(command)}.`);
+    return null;
   }
 
   function undoLastPlan() {
@@ -2233,8 +1773,6 @@ Routes validées. Voici la suite du plan.`,
     setError(null);
     setGrounded(false);
     setEditingCommandId(null);
-    setStepInstruction("");
-    setStepQuestionAnswers({});
     setBuildingFlow(null);
     setBuildingPreparation(null);
     setIsPreparingBuildings(false);
@@ -2352,6 +1890,7 @@ Routes validées. Voici la suite du plan.`,
         </div>
       ) : null}
 
+      <FloatingPanelPortal active={isOpen}>
       <div
         className={`pointer-events-none text-sm ${isOpen ? openedPositionClass : closedPositionClass}`}
         style={isOpen ? { zIndex: panelZIndex } : undefined}
@@ -2534,13 +2073,6 @@ Routes validées. Voici la suite du plan.`,
                     <div className="flex justify-start">
                       <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-800" role="status">
                         {aiWorkingLabel}
-                      </div>
-                    </div>
-                  ) : null}
-                  {isRevisingStep ? (
-                    <div className="flex justify-start">
-                      <div className="rounded-2xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-800">
-                        Modification de l’étape ciblée uniquement…
                       </div>
                     </div>
                   ) : null}
@@ -2810,10 +2342,6 @@ Routes validées. Voici la suite du plan.`,
                       <ol className="space-y-2">
                         {visiblePlanCommandEntries.map(({ command, index }, visibleIndex) => {
                           const isEditing = editingCommandId === command.id;
-                          const questions = getStepAdjustmentQuestions(command);
-                          const answers = stepQuestionAnswers[command.id] ?? {};
-                          const preparedInstruction =
-                            buildStepAdjustmentInstruction(command);
                           return (
                             <li
                               key={`${command.id}-${index}`}
@@ -2835,10 +2363,9 @@ Routes validées. Voici la suite du plan.`,
                                         setEditingCommandId(
                                           isEditing ? null : command.id,
                                         );
-                                        setStepInstruction("");
                                         setError(null);
                                       }}
-                                      disabled={Boolean(executionResult) || isRevisingStep}
+                                      disabled={Boolean(executionResult) }
                                       className="min-w-0 flex-1 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-teal-300 disabled:cursor-not-allowed"
                                       title="Cliquer pour ajuster cette étape"
                                     >
@@ -2856,21 +2383,19 @@ Routes validées. Voici la suite du plan.`,
                                           setEditingCommandId(
                                             isEditing ? null : command.id,
                                           );
-                                          setStepInstruction("");
                                           setError(null);
                                         }}
-                                        disabled={Boolean(executionResult) || isRevisingStep}
+                                        disabled={Boolean(executionResult) || isApplying}
                                         className="rounded-lg border border-teal-200 bg-teal-50 px-2 py-1 text-[10px] font-bold text-teal-700 hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-40"
                                       >
-                                        {isEditing ? "Fermer" : "Ajuster"}
+                                        {isEditing ? "Fermer" : "Modifier l’étape"}
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => removePlanStep(command, index)}
                                         disabled={
                                           Boolean(executionResult) ||
-                                          isApplying ||
-                                          isRevisingStep
+                                          isApplying
                                         }
                                         className="rounded-lg border border-red-200 bg-white px-2 py-1 text-[10px] font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
                                         title="Supprimer cette étape du plan"
@@ -2880,93 +2405,15 @@ Routes validées. Voici la suite du plan.`,
                                     </div>
                                   </div>
 
-                                  {isEditing ? (
-                                    <div className="mt-3 space-y-3 rounded-xl border border-teal-200 bg-teal-50/60 p-3">
-                                      <div>
-                                        <p className="text-[11px] font-black text-teal-950">
-                                          Ajuster cette étape
-                                        </p>
-                                        <p className="mt-0.5 text-[10px] leading-relaxed text-teal-700">
-                                          Réponds seulement aux questions utiles. Les choix sont appliqués uniquement à cette étape.
-                                        </p>
-                                      </div>
-
-                                      {questions.map((question) => (
-                                        <fieldset key={question.id} className="space-y-1.5">
-                                          <legend className="text-[10px] font-bold text-slate-700">
-                                            {question.label}
-                                          </legend>
-                                          <div className="flex flex-wrap gap-1.5">
-                                            {question.options.map((option) => {
-                                              const selected =
-                                                answers[question.id] === option.id;
-                                              return (
-                                                <button
-                                                  key={option.id}
-                                                  type="button"
-                                                  aria-pressed={selected}
-                                                  onClick={() =>
-                                                    setStepQuestionAnswer(
-                                                      command.id,
-                                                      question.id,
-                                                      option.id,
-                                                    )
-                                                  }
-                                                  className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition ${
-                                                    selected
-                                                      ? "border-teal-600 bg-teal-600 text-white"
-                                                      : "border-slate-200 bg-white text-slate-700 hover:border-teal-300 hover:bg-teal-50"
-                                                  }`}
-                                                >
-                                                  {selected ? "✓ " : ""}
-                                                  {option.label}
-                                                </button>
-                                              );
-                                            })}
-                                          </div>
-                                        </fieldset>
-                                      ))}
-
-                                      <label className="block">
-                                        <span className="mb-1 block text-[10px] font-bold text-slate-700">
-                                          Précision libre — facultatif
-                                        </span>
-                                        <textarea
-                                          value={stepInstruction}
-                                          onChange={(event) =>
-                                            setStepInstruction(event.target.value)
-                                          }
-                                          rows={2}
-                                          placeholder="Ex. Utilise un rouge plus sombre et garde les noms visibles."
-                                          className="w-full resize-y rounded-lg border border-teal-200 bg-white px-2.5 py-2 text-xs text-slate-900 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
-                                        />
-                                      </label>
-
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="text-[10px] text-slate-500">
-                                          Tu peux laisser les questions sans réponse.
-                                        </span>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            void revisePlanStep(
-                                              command,
-                                              index,
-                                              preparedInstruction,
-                                            )
-                                          }
-                                          disabled={
-                                            preparedInstruction.trim().length < 2 ||
-                                            isRevisingStep
-                                          }
-                                          className="rounded-lg bg-teal-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
-                                        >
-                                          {isRevisingStep
-                                            ? "Modification…"
-                                            : "Appliquer mes choix"}
-                                        </button>
-                                      </div>
-                                    </div>
+                                  {isEditing && plan && workspaceMode ? (
+                                    <ManualCommandEditor
+                                      command={command}
+                                      plan={plan}
+                                      context={buildDroMapAiProjectContext()}
+                                      workspaceMode={workspaceMode}
+                                      onSave={(updated) => savePlanStep(updated, index)}
+                                      onCancel={() => setEditingCommandId(null)}
+                                    />
                                   ) : null}
                                 </div>
                               </div>
@@ -3016,7 +2463,7 @@ Routes validées. Voici la suite du plan.`,
                     <button
                       type="button"
                       onClick={resetPlan}
-                      disabled={isApplying || isGenerating || isRevisingStep}
+                      disabled={isApplying || isGenerating }
                       className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
                     >
                       Refaire le plan
@@ -3059,8 +2506,7 @@ Routes validées. Voici la suite du plan.`,
                       disabled={
                         !routeFlow ||
                         isPreparingRoutes ||
-                        isGenerating ||
-                        isRevisingStep
+                        isGenerating
                       }
                       className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-black text-slate-950 shadow-md transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -3078,8 +2524,7 @@ Routes validées. Voici la suite du plan.`,
                       disabled={
                         !buildingFlow ||
                         isPreparingBuildings ||
-                        isGenerating ||
-                        isRevisingStep
+                        isGenerating
                       }
                       className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-black text-slate-950 shadow-md transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -3097,6 +2542,7 @@ Routes validées. Voici la suite du plan.`,
         </section>
       )}
       </div>
+      </FloatingPanelPortal>
       {buildingPreparation && buildingFlow ? (
         <BuildingSelectionModal
           features={buildingPreparation.features as BuildingSelectionFeature[]}

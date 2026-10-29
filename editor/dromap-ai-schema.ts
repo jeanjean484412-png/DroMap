@@ -90,7 +90,7 @@ const choroplethValue = object({
   unit: nullableString, sourceTitle: nullableString, sourceUrl: nullableString,
 });
 
-const FIELDS: Record<string, JsonSchema> = {
+export const AI_COMMAND_FIELD_SCHEMAS: Record<string, JsonSchema> = {
   place: nullableString, places: array(string), coordinate,
   coordinates: array(coordinateItem), rings: array(array(coordinateItem)),
   bounds, paddingRatio: nullableNumber, zoom: nullableNumber,
@@ -156,7 +156,7 @@ function commandSchema(type: (typeof AI_COMMAND_TYPES)[number], overrides: Recor
     explanation: string,
   };
   for (const field of capability.fields) {
-    const schema = FIELDS[field];
+    const schema = AI_COMMAND_FIELD_SCHEMAS[field];
     if (!schema) throw new Error(`Schéma IA manquant : ${type}.${field}`);
     properties[field] = overrides[field] ?? schema;
   }
@@ -164,7 +164,7 @@ function commandSchema(type: (typeof AI_COMMAND_TYPES)[number], overrides: Recor
 }
 
 function commandSchemas(type: (typeof AI_COMMAND_TYPES)[number]): JsonSchema[] {
-  if (["create_marker", "create_text", "fill_boundary", "create_shape"].includes(type)) {
+  if (["create_marker", "create_text", "fill_boundary", "trace_boundary", "create_shape"].includes(type)) {
     return [
       commandSchema(type, { place: nonBlankString }),
       commandSchema(type, { coordinate: coordinateItem }),

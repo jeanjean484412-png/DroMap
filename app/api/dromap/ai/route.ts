@@ -23,6 +23,7 @@ import type {
   DroMapAiFeatureSelector,
   DroMapAiPlan,
   DroMapAiPrePlanQuestion,
+  DroMapAiProjectContext,
   DroMapAiSeriesItem,
   DroMapAiSource,
   DroMapAiStylePatch,
@@ -145,6 +146,8 @@ Règles absolues :
 - Un dessin libre est create_line avec lineVariant="freehand" et beaucoup de coordinates. Un suivi est lineVariant="traced" si la géométrie exacte est fournie.
 - Une zone libre est create_zone avec zoneVariant="freehand". Une forme est create_shape avec shapeKind et bounds/coordinate.
 - Pour utiliser le véritable outil Remplissage sur un fond blanc vectoriel ou un polygone GeoJSON visible, utilise fill_boundary avec place ou coordinate et un style de zone.
+- fill_boundary fonctionne aussi sur un fond classique : DroMap récupère automatiquement la frontière réelle du lieu nommé, produit un remplissage indépendant et ne conserve aucun calque source temporaire. Ne refuse jamais un remplissage seulement parce qu'aucun calque vectoriel n'est visible. Pour colorier un pays entier, indique son nom dans place ; ne choisis pas une région intérieure à sa place.
+- Pour tracer une frontière, le contour d'un territoire ou un cours d'eau réel sans géométrie fournie, utilise trace_boundary avec le nom précis dans place. DroMap récupère la géométrie et crée des traits éditables sans calque technique supplémentaire. N'invente pas de segments entre quelques coordonnées pour imiter une frontière réelle.
 - Un marqueur intégré utilise symbolId. Tu peux créer spontanément un marqueur personnalisé avec create_custom_marker_svg dès qu'un pictogramme sur mesure est plus pertinent ou plus lisible qu'un symbole intégré, même si l'utilisateur n'a pas explicitement demandé « marqueur personnalisé ». Fais ensuite create_marker avec customMarkerRef égal à l'id de cette commande. Le marqueur personnalisé est automatiquement enregistré dans « Mes marqueurs » par DroMap : ne demande aucune étape supplémentaire.
 - Pour un marqueur catégoriel ordinaire, n'indique jamais style.markerSize : DroMap appliquera sa taille normale. N'utilise markerSize que si l'utilisateur demande explicitement une taille, un diamètre ou des marqueurs plus grands/petits. Les figurés réellement quantitatifs utilisent create_proportional_markers.
 - Dès que l'utilisateur demande des bâtiments, des édifices ou leurs emprises réelles, utilise import_buildings pour employer le véritable outil Bâtiments IGN/Overture, jamais des polygones inventés ni des marqueurs de substitution. buildingMode="geojson" convient à beaucoup de bâtiments ; buildingMode="dromap" convient à quelques bâtiments éditables individuellement.
@@ -805,12 +808,12 @@ function normalizeAssistantInteraction(value: unknown) {
   return { plan, questions, assistantMessage };
 }
 
-async function researchPrompt(apiKey: string, choice: AiModelChoice, prompt: string) {
+async function researchPrompt(apiKey: string, choice: AiModelChoice, prompt: string, context: DroMapAiProjectContext) {
   const result = await callStructuredOpenAi({
     apiKey,
     choice,
-    instructions: "Recherche les faits nécessaires à la carte. Privilégie les sources institutionnelles et distingue les faits établis des représentations schématiques. Cite des URLs vérifiables.",
-    input: prompt,
+    instructions: "Recherche les faits nécessaires à la carte. Privilégie les sources institutionnelles et distingue les faits établis des représentations schématiques. Cite des URLs vérifiables. La « zone » désigne strictement la zone de travail validée fournie dans le contexte. Ne confonds pas cette zone avec la vue courante. Ne présente jamais une sélection de lieux comme une liste exhaustive sans preuve.",
+    input: JSON.stringify({ demande: prompt, zoneDeTravail: context.workspaceValidated ? context.workspaceBounds : null, fondDeCarte: context.basemapId }),
     schema: AI_RESEARCH_SCHEMA,
     schemaName: "dromap_research",
     webSearch: true,
@@ -824,7 +827,7 @@ async function researchPrompt(apiKey: string, choice: AiModelChoice, prompt: str
 }
 
 function shouldResearch(prompt: string) {
-  return /(population|habitant|démograph|densité|density|pib|gdp|migration|commerce|production|chômage|histoire|historique|guerre|empire|frontière|géograph|fleuve|rivière|montagne|sommet|altitude|superficie|capitale|métropole|océan|climat|élection|résultat|statistique|ministère|gouvernement|institution|localisation|adresse|aujourd'hui|actuel|récent|date)/i.test(prompt);
+  return /(population|habitant|démograph|densité|density|pib|gdp|migration|commerce|production|chômage|histoire|historique|guerre|empire|frontière|géograph|fleuve|rivière|montagne|sommet|altitude|superficie|capitale|métropole|océan|climat|élection|résultat|statistique|ministère|gouvernement|institution|localisation|adresse|aujourd'hui|actuel|récent|date|recherch|cherch|vérifi|verifi|internet|\bweb\b)/i.test(prompt);
 }
 
 type FreeResearchEntityRequest = {
@@ -2155,6 +2158,7 @@ function ensureLegendAndViewCommands(
       "create_zone",
       "create_shape",
       "fill_boundary",
+      "trace_boundary",
       "create_proportional_markers",
       "create_proportional_flows",
       "create_choropleth",
@@ -2731,7 +2735,7 @@ async function handlePOST(request: NextRequest) {
     if (researchMode !== "off" && shouldResearch(researchQuery)) {
       try {
         if (researchMode === "web") {
-          const webResearch = await researchPrompt(apiKey, choice, researchQuery);
+          const webResearch = await researchPrompt(apiKey, choice, researchQuery, body.context);
           research = {
             ...webResearch,
             corpus: [],
@@ -2743,12 +2747,21 @@ async function handlePOST(request: NextRequest) {
           research.facts.length > 0 ||
           research.sources.length > 0 ||
           research.corpus.length > 0;
-      } catch {
+      } catch (researchError) {
         const provider =
           researchMode === "web"
             ? "web"
             : "Wikidata/Wikipédia/Banque mondiale";
-        research.summary = `La recherche ${provider} n'a pas pu être utilisée. Le plan sera produit avec le contexte DroMap disponible.`;
+        const status = isRecord(researchError) ? asNumber(researchError.status) : null;
+        const code = isRecord(researchError) ? asString(researchError.code) : "";
+        console.warn("[dromap-ai] Recherche indisponible", { provider, model: choice.model, status, code, name: researchError instanceof Error ? researchError.name : "UnknownError" });
+        const reason = status === 401 || status === 403
+          ? "L'accès à la recherche web est refusé par le fournisseur IA."
+          : status === 429 ? "Le quota ou la limite de requêtes du fournisseur IA est atteint."
+          : researchError instanceof Error && /timeout|timed out/i.test(researchError.name + researchError.message)
+            ? "La recherche web a dépassé son délai de réponse."
+            : "La recherche web est momentanément indisponible.";
+        return NextResponse.json({ plan: null, assistantMessage: `${reason} Je n'ai pas pu vérifier les données nécessaires à cette demande. Réessaie dans quelques instants.`, questions: [], model: choice.model, grounded: false } satisfies DroMapAiApiResponse);
       }
     }
 

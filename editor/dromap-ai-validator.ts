@@ -16,7 +16,7 @@ const validCoordinate = (value: { lng: number; lat: number }) =>
 const WORKSPACE_TYPES = new Set(["set_workspace_by_place", "set_workspace_bounds", "select_world"]);
 const FEATURE_CREATION_TYPES = new Set([
   "create_marker", "create_marker_series", "create_text", "create_line", "create_zone", "create_shape",
-  "fill_boundary", "create_proportional_markers", "create_proportional_flows",
+  "fill_boundary", "trace_boundary", "create_proportional_markers", "create_proportional_flows",
 ]);
 
 export function getAiPlanDependents(plan: DroMapAiPlan, commandId: string) {
@@ -80,7 +80,7 @@ export function validateAiPlan(
     }
 
     const hasLocation = Boolean(command.place || command.coordinate);
-    if (["create_marker", "create_text", "fill_boundary"].includes(command.type) && !hasLocation) {
+    if (["create_marker", "create_text", "fill_boundary", "trace_boundary"].includes(command.type) && !hasLocation) {
       add(command, index, "LOCATION_REQUIRED", "Lieu ou coordonnées manquants.", command.type === "create_text" ? "Où souhaites-tu placer ce texte ?" : "À quel endroit souhaites-tu placer cet élément ?");
     }
     if (command.type === "create_shape" && !hasLocation) {

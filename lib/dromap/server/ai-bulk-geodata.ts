@@ -56,12 +56,14 @@ function normalized(text: string) {
 
 export function parseBulkPlaceRequest(prompt: string): BulkPlaceRequest | null {
   const text = normalized(prompt);
-  const hasMapAction = /\b(affiche|ajoute|place|met|mets|montre|marque|represente|localise|positionne|visualise)\b/.test(text);
-  const isBulk = hasMapAction || /^(?:tous|toutes)\s+les\b/.test(text);
+  // Les demandes de modification d’objets existants passent par le planificateur.
+  if (/\b(supprim\w*|effac\w*|retir\w*|masqu\w*|cach\w*|deplac\w*|modifi\w*|recolor\w*)\b/.test(text)) return null;
+  const hasMapAction = /\b(affiche[rz]?|ajoute[rz]?|place[rz]?|mettre|met|mets|montre[rz]?|marque[rz]?|represente[rz]?|localise[rz]?|positionne[rz]?|visualise[rz]?|veux|voudrais|souhaite)\b/.test(text);
+  const isBulk = hasMapAction || /\b(tous|toutes|chaque|ensemble des)\b/.test(text);
   if (!isBulk) return null;
   const categories = [
     /\bcapitales?\b/.test(text) ? "capitals" : null,
-    /\b(villes?|agglomerations?)\b/.test(text) ? "cities" : null,
+    /\b(villes?|agglomerations?)\b/.test(text) && !/\bcapitales?\b/.test(text) ? "cities" : null,
     /\b(usines?|fabriques?)\b/.test(text) ? "factories" : null,
     /\b(hopitaux|hopital)\b/.test(text) ? "hospitals" : null,
     /\b(ecoles?)\b/.test(text) ? "schools" : null,

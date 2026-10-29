@@ -54,6 +54,7 @@ export type DroMapAiCommandType =
   | "create_zone"
   | "create_shape"
   | "fill_boundary"
+  | "trace_boundary"
   | "create_proportional_markers"
   | "create_proportional_flows"
   | "create_choropleth"

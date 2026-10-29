@@ -84,6 +84,13 @@ test("les capitales européennes suivent le code du pays et les limites de la zo
   assert.deepEqual(partial.items.map((item) => item.label), ["Paris"]);
 });
 
+test("une demande polie de toutes les villes capitales exclut les grandes villes ordinaires", async () => {
+  const request = parseBulkPlaceRequest("Peux-tu mettre un marqueur sur toutes les villes capitales de l'Europe ?");
+  assert.equal(request?.kind, "capitals");
+  const result = await resolveBulkPlaces(request, null);
+  assert.deepEqual(result.items.map((item) => item.label), ["Paris", "Berlin"]);
+});
+
 test("un million et demi d'habitants est correctement interprété", () => {
   assert.equal(parseBulkPlaceRequest("Toutes les villes de plus de 1,5 million d'habitants de la zone")?.minimumPopulation, 1_500_000);
 });
@@ -98,6 +105,7 @@ test("les autres catégories cartographiées sont reconnues sans inventer de lis
   assert.equal(parseBulkPlaceRequest("Montre tous les hôpitaux de France")?.kind, "hospitals");
   assert.equal(parseBulkPlaceRequest("Mets mon marqueur sur toutes les écoles de la zone")?.kind, "schools");
   assert.equal(parseBulkPlaceRequest("Combien de musées existe-t-il ?"), null);
+  assert.equal(parseBulkPlaceRequest("Je veux supprimer toutes les usines de la zone"), null);
 });
 
 test("sans zone ni territoire nommé, aucune liste n'est inventée", async () => {
