@@ -3,8 +3,8 @@ import { DromapHelpClient } from "@/components/dromap-product/help-client";
 import { createDromapPublicMetadata } from "@/lib/dromap/seo";
 
 export const metadata: Metadata = createDromapPublicMetadata({
-  title: "Centre d’aide",
-  description: "Retrouvez les guides DroMap pour créer, modifier, importer, publier et exporter une carte et utiliser les principales fonctions.",
+  title: "Aide pour créer une carte en ligne",
+  description: "Guides DroMap : créer une carte avec légende et marqueurs, dessiner des zones, importer un fichier GeoJSON et exporter une carte pour un cours ou une présentation.",
   path: "/help",
 });
 

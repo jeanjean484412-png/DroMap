@@ -25,9 +25,9 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "first-map",
     category: "Démarrage rapide",
-    title: "Créer une première carte",
+    title: "Créer une carte en ligne avec DroMap",
     summary:
-      "Passer du tableau de bord à l’éditeur avec le parcours guidé ou le démarrage rapide défini dans Paramètres.",
+      "Démarrer une carte personnalisée dans l’éditeur en ligne, avec le parcours guidé ou les réglages de démarrage rapide.",
     keywords: [
       "nouveau projet",
       "commencer",
@@ -44,6 +44,28 @@ const HELP_ARTICLES: HelpArticle[] = [
       "Lorsque le parcours guidé est désactivé dans Paramètres, le projet s’ouvre directement avec les choix de démarrage rapide enregistrés.",
       "Le démarrage rapide ne crée pas silencieusement une zone de travail : la définir avant d’utiliser les fonctions qui en ont besoin.",
       "Avec un compte déjà connecté, la création est effectuée dans le contexte de ce compte et le projet peut être synchronisé normalement.",
+    ],
+  },
+  {
+    id: "map-for-presentation",
+    category: "Démarrage rapide",
+    title: "Créer une carte pour une présentation ou un cours",
+    summary:
+      "Étudiants et professeurs peuvent préparer une carte géographique personnalisée pour un exposé, un cours ou une étude.",
+    keywords: [
+      "etudiant",
+      "professeur",
+      "enseignant",
+      "cours",
+      "expose",
+      "presentation",
+      "carte geographique personnalisee",
+    ],
+    steps: [
+      "Choisir le fond de carte et cadrer le territoire à expliquer.",
+      "Ajouter des marqueurs, des zones, des textes ou des données GeoJSON pour montrer les informations utiles.",
+      "Dans Légende & Rendu final, ajouter un titre et organiser la légende pour rendre la carte lisible pendant la présentation.",
+      "Ouvrir Télécharger et choisir un format et une qualité accessibles avec l’offre utilisée.",
     ],
   },
   {
@@ -71,9 +93,9 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "basemaps",
     category: "Comprendre DroMap",
-    title: "Choisir et changer le fond de carte",
+    title: "Choisir le fond d’une carte personnalisée",
     summary:
-      "Utiliser un fond classique, clair, satellite, IGN ou blanc sans déplacer le travail déjà créé.",
+      "Utiliser un fond classique, clair, satellite, IGN ou blanc pour personnaliser la carte sans déplacer le travail déjà créé.",
     keywords: [
       "fond",
       "fond de carte",
@@ -214,9 +236,9 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "markers",
     category: "Outils de carte",
-    title: "Poser et modifier des marqueurs",
+    title: "Créer une carte avec des marqueurs",
     summary:
-      "Choisir un symbole, préparer son apparence puis le poser avec une proportion cohérente.",
+      "Ajouter des marqueurs sur une carte, choisir leurs symboles et régler leur apparence.",
     keywords: [
       "marqueur",
       "marqueurs",
@@ -269,7 +291,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "lines",
     category: "Outils de carte",
-    title: "Traits : classique, dessin libre et suivi",
+    title: "Dessiner sur une carte en ligne : traits et parcours",
     summary:
       "Choisir entre des segments précis, un tracé à main levée ou le suivi d’une ligne déjà visible.",
     keywords: [
@@ -294,9 +316,9 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "zones",
     category: "Outils de carte",
-    title: "Zones : classique, libre, remplissage et formes rapides",
+    title: "Dessiner des zones sur une carte",
     summary:
-      "Créer une surface personnalisée, dessiner à main levée, reprendre une géométrie existante ou utiliser une forme simple.",
+      "Créer une surface personnalisée, dessiner à main levée et régler les couleurs, le contour et le remplissage.",
     keywords: [
       "zone",
       "surface",
@@ -444,9 +466,9 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "geojson",
     category: "Données",
-    title: "Importer un GeoJSON",
+    title: "Importer un fichier GeoJSON sur une carte",
     summary:
-      "Choisir entre un calque léger et des objets DroMap modifiables individuellement.",
+      "Importer un GeoJSON en ligne et choisir entre un calque léger et des objets modifiables individuellement.",
     keywords: [
       "geojson",
       "json geo",
@@ -516,7 +538,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "routes-import",
     category: "Données",
-    title: "Importer les routes de la zone de travail",
+    title: "Importer des routes sur une carte",
     summary:
       "Choisir les niveaux de réseau, analyser la zone puis importer tous les axes ou seulement une sélection.",
     keywords: [
@@ -548,7 +570,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "buildings",
     category: "Données",
-    title: "Importer et réanalyser des bâtiments",
+    title: "Ajouter des bâtiments sur une carte",
     summary:
       "Analyser jusqu’à 15 000 bâtiments, importer un calque complet ou sélectionner des bâtiments DroMap individuels.",
     keywords: [
@@ -577,9 +599,9 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "ai",
     category: "Assistant IA",
-    title: "Utiliser l’Assistant IA conversationnel",
+    title: "Créer une carte avec une IA : l’Assistant DroMap",
     summary:
-      "Poser une question ou construire un plan modifiable, avec une conversation propre à chaque projet.",
+      "Demander une carte à l’Assistant IA, puis vérifier et ajuster son plan avant de l’appliquer au projet.",
     keywords: [
       "ia",
       "ai",
@@ -633,7 +655,7 @@ const HELP_ARTICLES: HelpArticle[] = [
     category: "Rendu et export",
     title: "Légende & Rendu final",
     summary:
-      "Voir le rendu final, modifier la légende et calibrer les derniers détails avant l’export.",
+      "Préparer le rendu et exporter une carte en haute définition lorsque l’offre donne accès aux qualités supérieures.",
     keywords: [
       "legende",
       "rendu final",
@@ -658,7 +680,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "legend",
     category: "Rendu et export",
-    title: "Organiser et modifier la légende",
+    title: "Créer une carte avec légende",
     summary:
       "Gérer titre, sous-titres, figurés, éléments masqués, retours à la ligne et position de la légende.",
     keywords: [
@@ -737,7 +759,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "satellite-export",
     category: "Rendu et export",
-    title: "Fond satellite, crédits et export Très haute qualité",
+    title: "Personnaliser une carte sur fond satellite et l’exporter",
     summary:
       "Conserver des crédits lisibles sur le satellite et comprendre le traitement spécifique des tuiles en Très haute qualité.",
     keywords: [
@@ -813,9 +835,9 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "guest",
     category: "Compte et accès",
-    title: "Mode sans compte et fonctions réservées",
+    title: "Créer une carte sans inscription",
     summary:
-      "Comprendre ce qui reste local et quelles fonctions dépendent d’un compte ou d’une offre premium.",
+      "Essayer le logiciel de cartographie simple sans compte et repérer les fonctions qui nécessitent une offre ou une inscription.",
     keywords: [
       "invite",
       "sans compte",
@@ -1482,7 +1504,7 @@ function HelpContent() {
   return (
     <DromapProductShell
       title="Centre d’aide"
-      description="Comprendre DroMap, retrouver rapidement une fonction et apprendre à créer, modifier ou exporter une carte."
+      description="Apprenez à créer une carte en ligne avec légende, marqueurs ou données GeoJSON, puis à préparer son export pour un cours ou une présentation."
       actions={
         <Link
           href="/dashboard"
@@ -1614,7 +1636,7 @@ function HelpContent() {
 
 export function DromapHelpClient() {
   return (
-    <DromapProductBootstrap>
+    <DromapProductBootstrap renderWhileHydrating>
       <HelpContent />
     </DromapProductBootstrap>
   );

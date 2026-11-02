@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 
 export const DROMAP_CANONICAL_ORIGIN = "https://dromap.fr";
 export const DROMAP_HOME_TITLE =
-  "DroMap — Créer et personnaliser des cartes en ligne";
+  "Créer une carte personnalisée en ligne — DroMap";
 export const DROMAP_HOME_DESCRIPTION =
-  "Créez, personnalisez et exportez vos cartes avec DroMap : marqueurs, zones, traits, légendes, données cartographiques et exports haute définition.";
+  "Créez une carte géographique personnalisée avec DroMap : marqueurs, zones, légende et import GeoJSON. Essayez l’éditeur cartographique en ligne sans inscription.";
 export const DROMAP_SOCIAL_IMAGE = "/dromap-share.png?v=20260915-3";
 export const DROMAP_SOCIAL_IMAGE_ALT =
   "DroMap — Créer et personnaliser des cartes en ligne";

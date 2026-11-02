@@ -13,7 +13,13 @@ let productRemoteRefreshBackoffUntil = 0;
 const PRODUCT_REMOTE_REFRESH_MIN_INTERVAL_MS = 60_000;
 const PRODUCT_REMOTE_REFRESH_FAILURE_BACKOFF_MS = 45_000;
 
-export function DromapProductBootstrap({ children }: { children: ReactNode }) {
+export function DromapProductBootstrap({
+  children,
+  renderWhileHydrating = false,
+}: {
+  children: ReactNode;
+  renderWhileHydrating?: boolean;
+}) {
   const hydrated = useDromapProductStore((state) => state.hydrated);
   const bootstrap = useDromapProductStore((state) => state.bootstrap);
   const userMode = useDromapProductStore((state) => state.userMode);
@@ -111,7 +117,7 @@ export function DromapProductBootstrap({ children }: { children: ReactNode }) {
     };
   }, [flushPersistence, hydrated, purgeExpiredTrash, refreshRemoteProjects, syncAllProjects, userMode]);
 
-  if (!hydrated) {
+  if (!hydrated && !renderWhileHydrating) {
     return <DromapPageSkeleton />;
   }
 
