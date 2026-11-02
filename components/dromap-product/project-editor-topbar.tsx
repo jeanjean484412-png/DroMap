@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DROMAP_BETA } from "@/lib/dromap/release-mode";
+import { DromapLegalContactLink } from "./legal-contact-link";
 import { useRouter } from "next/navigation";
 
 import { UndoRedoControls } from "@/editor/undo-redo-controls";
@@ -71,6 +73,7 @@ export function DromapProjectEditorTopbar({
       </button>
 
       <div className="h-7 w-px shrink-0 bg-slate-200" />
+      {DROMAP_BETA && <DromapLegalContactLink className="max-w-48 rounded-xl border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-950">Version de test · Signaler un bug ou proposer une amélioration</DromapLegalContactLink>}
 
       <div className="min-w-0 flex-1 basis-40">
         <input

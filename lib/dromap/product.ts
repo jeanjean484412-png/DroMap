@@ -1,4 +1,5 @@
 import type { DromapBasemapId } from "@/lib/dromap/basemap";
+import { DROMAP_BETA } from "@/lib/dromap/release-mode";
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
 import type { DroMapSavedLayer } from "@/stores/editor-layers";
 import type { DromapGeoJsonLayer } from "@/stores/editor-geojson-layers";
@@ -63,6 +64,7 @@ export type DromapProject = {
   updatedAt: string;
   lastSavedAt: string | null;
   deletedAt: string | null;
+  trashExpiresAt?: string | null;
   status: DromapProjectStatus;
   setupComplete: boolean;
   setup: DromapProjectSetup;
@@ -104,24 +106,25 @@ export const DROMAP_TRASH_RETENTION_DAYS = 10;
 
 const DROMAP_DAY_MS = 24 * 60 * 60 * 1000;
 
-export function getDromapTrashDeletionAt(project: Pick<DromapProject, "deletedAt">) {
+export function getDromapTrashDeletionAt(project: Pick<DromapProject, "deletedAt" | "trashExpiresAt">) {
   if (!project.deletedAt) return null;
+  if (project.trashExpiresAt && Number.isFinite(Date.parse(project.trashExpiresAt))) return project.trashExpiresAt;
   const deletedAt = new Date(project.deletedAt).getTime();
   if (!Number.isFinite(deletedAt)) return null;
   return new Date(deletedAt + DROMAP_TRASH_RETENTION_DAYS * DROMAP_DAY_MS).toISOString();
 }
 
 export function isDromapTrashExpired(
-  project: Pick<DromapProject, "status" | "deletedAt">,
+  project: Pick<DromapProject, "status" | "deletedAt" | "trashExpiresAt">,
   now = Date.now(),
 ) {
   if (project.status !== "trashed" || !project.deletedAt) return false;
-  const deletedAt = new Date(project.deletedAt).getTime();
-  return Number.isFinite(deletedAt) && now - deletedAt >= DROMAP_TRASH_RETENTION_DAYS * DROMAP_DAY_MS;
+  const deadline = getDromapTrashDeletionAt(project);
+  return deadline !== null && now >= Date.parse(deadline);
 }
 
 export function getDromapTrashRemainingDays(
-  project: Pick<DromapProject, "deletedAt">,
+  project: Pick<DromapProject, "deletedAt" | "trashExpiresAt">,
   now = Date.now(),
 ) {
   const deletionAt = getDromapTrashDeletionAt(project);
@@ -164,7 +167,7 @@ export function getDromapCapabilities(
   const canCustomizeBasemapRender = visualExportPremium;
 
   return {
-    canUseAi: premium,
+    canUseAi: premium && !DROMAP_BETA,
     canImportBuildings: premium,
     // La bibliothèque de données DroMap nécessite au minimum un compte.
     // L'import d'un fichier GeoJSON local reste indépendant de cette règle.

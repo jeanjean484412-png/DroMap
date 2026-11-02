@@ -96,7 +96,7 @@ export function DromapProductBootstrap({ children }: { children: ReactNode }) {
 
     // Une application laissée ouverte plusieurs jours doit aussi faire disparaître
     // un projet dès la fin de sa période de restauration, sans attendre un rechargement.
-    const retentionTimer = window.setInterval(purgeExpiredTrash, 60 * 60 * 1000);
+    const retentionTimer = window.setInterval(purgeExpiredTrash, 60 * 1000);
 
     window.addEventListener("online", handleOnline);
     window.addEventListener("focus", handleFocus);

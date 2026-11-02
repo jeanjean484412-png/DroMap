@@ -315,6 +315,7 @@ export function manifestToProjectSummary(manifest: RemoteProjectManifest): Droma
         : manifest.updatedAt || createdAt,
     lastSavedAt: typeof metadata?.lastSavedAt === "string" ? metadata.lastSavedAt : null,
     deletedAt: manifest.deletedAt,
+    trashExpiresAt: typeof metadata?.trashExpiresAt === "string" ? metadata.trashExpiresAt : null,
     status: manifest.deletedAt
       ? "trashed"
       : normalizeStatus(metadata?.status, setupComplete),
@@ -567,6 +568,7 @@ export async function fetchRemoteProject(
         ? metadataLastSavedAt
         : decoded.lastSavedAt,
     deletedAt: sourceProject ? sourceProject.deletedAt : manifest.deletedAt ?? decoded.deletedAt,
+    trashExpiresAt: typeof metadata.trashExpiresAt === "string" ? metadata.trashExpiresAt : null,
     status: normalizedRemoteStatus,
     setupComplete,
     thumbnailDataUrl: sourceProject

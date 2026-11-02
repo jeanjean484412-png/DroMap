@@ -1,4 +1,5 @@
 import "server-only";
+import { DROMAP_BETA } from "@/lib/dromap/release-mode";
 
 import { NextResponse } from "next/server";
 import { getAuthenticatedRequestUser } from "./supabase-rest";
@@ -6,6 +7,9 @@ import { getDromapBillingAccessForSession } from "./billing";
 import { securityRpc } from "./security-rpc";
 
 export async function checkAiAccess(scope: "ai" | "geojson" = "ai") {
+  if (DROMAP_BETA && scope === "ai") {
+    return NextResponse.json({ error: "L’assistant IA sera disponible prochainement." }, { status: 403 });
+  }
   try {
     const auth = await getAuthenticatedRequestUser();
     if (!auth) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });

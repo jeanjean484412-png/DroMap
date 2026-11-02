@@ -1,3 +1,5 @@
+import { DROMAP_BETA } from "@/lib/dromap/release-mode";
+import { saveBetaProject } from "@/lib/dromap/server/beta-projects";
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { measureStoredPayload } from "@/lib/dromap/server/stored-payload";
 import { NextResponse } from "next/server";
@@ -177,7 +179,9 @@ async function handlePUT(
     );
 
     let manifestResponse: Response;
-    if (expectedRevision === null) {
+    if (DROMAP_BETA) {
+      manifestResponse = await saveBetaProject(auth.user.id, projectId, expectedRevision, expectedUpdatedAt, { current_revision: revision, chunk_count: chunkCount, encoding, payload_size_bytes: Math.floor(payloadSizeBytes), deleted_at: deletedAt, metadata });
+    } else if (expectedRevision === null) {
       manifestResponse = await supabaseRestFetch(
         "/dromap_projects",
         auth.accessToken,
@@ -217,6 +221,10 @@ async function handlePUT(
       );
     }
 
+    if (manifestResponse.status === 403 || manifestResponse.status === 410) {
+      await removeRevisionChunks(auth.user.id, projectId, revision, auth.accessToken);
+      return manifestResponse;
+    }
     const updatedRows = await parseJsonResponse<ProjectManifestRow[]>(manifestResponse);
     const manifest = manifestResponse.ok ? rowToManifest(updatedRows?.[0]) : null;
     if (!manifest) {
@@ -286,7 +294,7 @@ async function handlePATCH(
   }
 
   try {
-    const response = await supabaseRestFetch(
+    const response = DROMAP_BETA ? await saveBetaProject(auth.user.id, projectId, expectedRevision, expectedUpdatedAt, { deleted_at: deletedAt, metadata }) : await supabaseRestFetch(
       `/dromap_projects?owner_id=eq.${encodeURIComponent(auth.user.id)}&project_id=eq.${encodeURIComponent(projectId)}&current_revision=eq.${encodeURIComponent(expectedRevision)}${typeof expectedUpdatedAt === "string" ? `&updated_at=eq.${encodeURIComponent(expectedUpdatedAt)}` : ""}&select=project_id,current_revision,chunk_count,encoding,updated_at,deleted_at,payload_size_bytes,metadata`,
       auth.accessToken,
       {
@@ -299,6 +307,7 @@ async function handlePATCH(
         }),
       },
     );
+    if (response.status === 403 || response.status === 410) return response;
     const rows = await parseJsonResponse<ProjectManifestRow[]>(response);
     const manifest = response.ok ? rowToManifest(rows?.[0]) : null;
     if (!manifest) {

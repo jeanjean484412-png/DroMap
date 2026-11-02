@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { DROMAP_BETA } from "@/lib/dromap/release-mode";
 import { useState } from "react";
 import type { CSSProperties } from "react";
 
@@ -61,7 +62,7 @@ function EditorMapCore({
       {!product ? (
         <>
           <PlaceSearchControl />
-          {runtime.enabled && !runtime.capabilities.canUseAi ? (
+          {DROMAP_BETA || (runtime.enabled && !runtime.capabilities.canUseAi) ? (
             <RestrictedAiTrigger />
           ) : (
             <DroMapAiPanel />
@@ -88,7 +89,7 @@ function ProductTopDock() {
         docked
       />
       <PlaceSearchControl docked />
-      {runtime.enabled && !runtime.capabilities.canUseAi ? (
+      {DROMAP_BETA || (runtime.enabled && !runtime.capabilities.canUseAi) ? (
         <RestrictedAiTrigger docked />
       ) : (
         <DroMapAiPanel docked />

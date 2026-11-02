@@ -1,4 +1,5 @@
 "use client";
+import { DROMAP_BETA, DROMAP_BETA_PROJECT_LIMIT } from "@/lib/dromap/release-mode";
 
 import { create } from "zustand";
 import { createScopedProjectCache } from "@/lib/dromap/scoped-project-cache";
@@ -272,6 +273,7 @@ function normalizeProject(value: unknown, index: number): DromapProject | null {
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : createdAt,
     lastSavedAt: typeof value.lastSavedAt === "string" ? value.lastSavedAt : null,
     deletedAt: typeof value.deletedAt === "string" ? value.deletedAt : null,
+    trashExpiresAt: typeof value.trashExpiresAt === "string" ? value.trashExpiresAt : null,
     status:
       normalizedStatus === "trashed"
         ? "trashed"
@@ -730,6 +732,7 @@ function mergeProjectLists(remoteProjects: DromapProject[], localProjects: Droma
 
 function manifestFields(manifest: RemoteProjectManifest) {
   return {
+    trashExpiresAt: typeof manifest.metadata?.trashExpiresAt === "string" ? manifest.metadata.trashExpiresAt : null,
     remoteRevision: manifest.revision,
     remoteChunkCount: manifest.chunkCount,
     remoteEncoding: manifest.encoding,
@@ -1481,6 +1484,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
             remoteEncoding: remote.remoteEncoding,
             remotePayloadSizeBytes: remote.remotePayloadSizeBytes,
             remoteUpdatedAt: remote.remoteUpdatedAt,
+            trashExpiresAt: remote.trashExpiresAt ?? null,
           });
           queueRemoteProjectSync(local.id, get, set, 120, true);
           continue;
@@ -1495,6 +1499,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
           remoteEncoding: remote.remoteEncoding,
           remotePayloadSizeBytes: remote.remotePayloadSizeBytes,
           remoteUpdatedAt: remote.remoteUpdatedAt,
+            trashExpiresAt: remote.trashExpiresAt ?? null,
         });
       }
 
@@ -1733,6 +1738,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   },
 
   createProject: (options = {}) => {
+    if (DROMAP_BETA && get().projects.filter(p => p.status !== "trashed").length >= DROMAP_BETA_PROJECT_LIMIT) { set({ lastSyncError: "La version de test permet de conserver trois cartes. Place une carte dans la corbeille pour libérer une place." }); return null; }
     const state = get();
     if (options.id && state.projects.some(project => project.id === options.id)) return null;
     const activeProjects = state.projects.filter((project) => project.status !== "trashed");
@@ -1773,6 +1779,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   },
 
   duplicateProject: async (projectId) => {
+    if (DROMAP_BETA && get().projects.filter(p => p.status !== "trashed").length >= DROMAP_BETA_PROJECT_LIMIT) { set({ lastSyncError: "La version de test permet de conserver trois cartes. Place une carte dans la corbeille pour libérer une place." }); return null; }
     const state = get();
     if (state.userMode === "guest") return null;
     const initialSource = state.projects.find((project) => project.id === projectId);
@@ -2045,6 +2052,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
         ...project,
         status: "trashed",
         deletedAt: timestamp,
+        trashExpiresAt: DROMAP_BETA ? new Date(Date.parse(timestamp) + 60 * 60 * 1000).toISOString() : null,
         updatedAt: timestamp,
       })),
     }));
@@ -2053,11 +2061,15 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   },
 
   restoreProject: (projectId) => {
+    if (DROMAP_BETA && get().projects.filter(p => p.status !== "trashed").length >= DROMAP_BETA_PROJECT_LIMIT) { set({ lastSyncError: "La version de test permet de conserver trois cartes. Place une carte dans la corbeille pour libérer une place." }); return; }
+    const target = get().projects.find(p => p.id === projectId);
+    if (target && isDromapTrashExpired(target)) { set({lastSyncError: "Le délai de restauration de cette carte est expiré."}); return; }
     set((state) => ({
       projects: updateProject(state.projects, projectId, (project) => ({
         ...project,
         status: project.setupComplete ? "saved" : "setup-incomplete",
         deletedAt: null,
+        trashExpiresAt: null,
         updatedAt: nowIso(),
       })),
     }));

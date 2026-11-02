@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { DROMAP_BETA } from "@/lib/dromap/release-mode";
 
 import { DromapProductBootstrap } from "./product-bootstrap";
 import { DromapProductShell } from "./product-shell";
@@ -73,7 +74,7 @@ function TrashContent() {
   return (
     <DromapProductShell
       title="Corbeille"
-      description={`Les projets restent restaurables pendant ${DROMAP_TRASH_RETENTION_DAYS} jours.`}
+      description={DROMAP_BETA ? "Les cartes supprimées dans la version de test restent restaurables une heure. Les anciennes suppressions conservent leur échéance." : `Les projets restent restaurables pendant ${DROMAP_TRASH_RETENTION_DAYS} jours.`}
       actions={
         sortedProjects.length > 0 ? (
           <DromapButton variant="danger" onClick={() => setEmptyDialogOpen(true)}>
@@ -85,7 +86,7 @@ function TrashContent() {
       {sortedProjects.length === 0 ? (
         <DromapEmptyState
           title="La corbeille est vide"
-          description="Les projets supprimés apparaîtront ici pendant dix jours avant leur suppression définitive."
+          description={DROMAP_BETA ? "Les cartes supprimées depuis la version de test sont conservées une heure." : "Les projets supprimés apparaîtront ici pendant dix jours avant leur suppression définitive."}
         />
       ) : (
         <div className="space-y-3">

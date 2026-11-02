@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DromapBetaNotice } from "./beta-notice";
 import { IBM_Plex_Sans } from "next/font/google";
 import { DromapHomeAccountActions } from "@/components/dromap-product/home-account-actions";
 import { DromapBrandBlock } from "@/components/dromap-product/dromap-brand";
@@ -19,6 +20,7 @@ export function DromapHomePage() {
           <nav className={styles.nav} aria-label="Navigation publique"><Link href="/library">Les cartes</Link><Link href="/pricing">Les formules</Link><Link href="/help">Aide</Link><DromapHomeShareButton url={`${getDromapSiteUrl()}/accueil`} /><DromapHomeAccountActions /></nav>
         </header>
         <section className={styles.hero}>
+          <DromapBetaNotice />
           <p className={styles.eyebrow}>Votre atelier de cartographie</p>
           <h1>Mettez votre territoire<br /><span>au clair.</span></h1>
           <div className={styles.intro}>

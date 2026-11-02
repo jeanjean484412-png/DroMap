@@ -1,5 +1,6 @@
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
+import { DROMAP_BETA } from "@/lib/dromap/release-mode";
 
 import { DROMAP_TERMS_VERSION } from "@/lib/dromap/legal-public";
 
@@ -77,6 +78,7 @@ async function getOrCreateCustomer(
 }
 
 async function handlePOST(request: Request) {
+  if (DROMAP_BETA) return NextResponse.json({ error: "Les abonnements et achats seront disponibles prochainement." }, { status: 403 });
   if (!isDromapStripeConfigured()) {
     return NextResponse.json(
       { error: "Stripe n’est pas encore configuré sur ce serveur." },

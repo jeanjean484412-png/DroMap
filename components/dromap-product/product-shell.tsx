@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { DromapBetaNotice } from "./beta-notice";
 import { DromapProductNavigation } from "./product-navigation";
 import { DromapCloudStatusIndicator } from "./cloud-status-indicator";
 
@@ -27,7 +28,7 @@ export function DromapProductShell({
             {actions}
           </div>
         </header>
-        <div className="p-4 sm:p-6 lg:p-7">{children}</div>
+        <div className="p-4 sm:p-6 lg:p-7"><DromapBetaNotice />{children}</div>
       </main>
     </div>
   );
