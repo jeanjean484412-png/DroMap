@@ -51,3 +51,22 @@ test('default mode stays complete; beta AI is denied before billing or provider 
     assert.equal((await checkAiAccess()).status,403);
   } finally {if(previous===undefined)delete process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE;else process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE=previous;}
 });
+
+test('beta grants every non-AI capability to signed-in free accounts; complete mode and guests retain their rights',()=>{
+  const previous=process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE;
+  try {
+    for(const beta of [false,true]) {
+      process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE=beta?'beta':'full';
+      const {getDromapCapabilities}=loadSource('lib/dromap/product.ts');
+      const capabilities=getDromapCapabilities('authenticated','free');
+      assert.equal(capabilities.canUseAi,false);
+      for(const key of ['canImportBuildings','canUseAdvancedLegend','canExportHighQuality','canExportOtherVisualFormats','canCustomizeBasemapRender','canExportProjectData','canSaveLayersToLibrary','canCreateCustomMarkers','canSaveCustomMarkersToLibrary','canPublishPublicMaps','canDownloadPublicMaps']) assert.equal(capabilities[key],beta,key);
+      assert.equal(getDromapCapabilities('guest','free').canExportHighQuality,false);
+      const {isDromapSubscriberPlan}=loadSource('lib/dromap/publications.ts');
+      assert.equal(isDromapSubscriberPlan('free'),beta);
+      assert.equal(isDromapSubscriberPlan('pro'),true);
+      assert.equal(isDromapSubscriberPlan(undefined),false);
+      assert.equal(getDromapCapabilities('authenticated','pro').canUseAi,!beta);
+    }
+  } finally {if(previous===undefined)delete process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE;else process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE=previous;}
+});

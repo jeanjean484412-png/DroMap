@@ -28,6 +28,7 @@ Ne pas enregistrer ce réglage dans `.env.local` si le mode complet doit rester 
 
 - Messages bêta sur l’accueil et les pages de gestion, retour Contact dans l’éditeur.
 - IA désactivée dans l’interface et sur son API ; achats refusés par le serveur.
+- Tous les outils non IA et toutes les qualités et formats d’export sont accessibles gratuitement aux comptes connectés, quelle que soit leur formule enregistrée. Leurs abonnements en base ne sont pas modifiés.
 - Trois projets actifs : création, duplication, import et restauration comptent dans cette limite.
 - Les projets existants au-delà de la limite restent accessibles et modifiables.
 - Le mode complet conserve ses règles de compte existantes.

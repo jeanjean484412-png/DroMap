@@ -1,4 +1,5 @@
 "use client";
+import { DROMAP_BETA } from "@/lib/dromap/release-mode";
 
 import {
   createContext,
@@ -88,7 +89,7 @@ export function DromapProductRuntimeProvider({
   const singleMapMaxExportPurchased = singleMapMaxExportProjectIds.includes(projectId);
   const publicMapExportPurchased = publicMapExportProjectIds.includes(projectId);
   const premiumPlan =
-    accountPlan === "plus" || accountPlan === "pro" || accountPlan === "tester";
+    DROMAP_BETA || accountPlan === "plus" || accountPlan === "pro" || accountPlan === "tester";
   const singleMapPurchaseRequiresZoneLock =
     userMode === "authenticated" && singleMapMaxExportPurchased && !premiumPlan;
 

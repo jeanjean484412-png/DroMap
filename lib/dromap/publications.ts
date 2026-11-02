@@ -1,3 +1,5 @@
+import { DROMAP_BETA } from "@/lib/dromap/release-mode";
+
 export type DromapPublicationAccessMode = "read-only" | "export" | "edit-export";
 
 export type DromapCreatorCreditPosition =
@@ -40,7 +42,7 @@ export type DromapPublicationViewerAccess = {
 };
 
 export function isDromapSubscriberPlan(value: unknown) {
-  return value === "plus" || value === "pro" || value === "tester";
+  return (DROMAP_BETA && value === "free") || value === "plus" || value === "pro" || value === "tester";
 }
 
 export function normalizeDromapPublicationAccessMode(

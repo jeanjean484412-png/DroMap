@@ -158,7 +158,7 @@ export function getDromapCapabilities(
     };
   }
 
-  const premium = plan === "plus" || plan === "pro" || plan === "tester";
+  const premium = DROMAP_BETA || plan === "plus" || plan === "pro" || plan === "tester";
   const singleMapMaxExport = options.singleMapMaxExport === true;
   const publicMapExport = options.publicMapExport === true;
   const visualExportPremium = premium || singleMapMaxExport || publicMapExport;

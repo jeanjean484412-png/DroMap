@@ -20,7 +20,7 @@ export function DromapHomePage() {
           <nav className={styles.nav} aria-label="Navigation publique"><Link href="/library">Les cartes</Link><Link href="/pricing">Les formules</Link><Link href="/help">Aide</Link><DromapHomeShareButton url={`${getDromapSiteUrl()}/accueil`} /><DromapHomeAccountActions /></nav>
         </header>
         <section className={styles.hero}>
-          <DromapBetaNotice />
+          <DromapBetaNotice prominent />
           <p className={styles.eyebrow}>Votre atelier de cartographie</p>
           <h1>Mettez votre territoire<br /><span>au clair.</span></h1>
           <div className={styles.intro}>
