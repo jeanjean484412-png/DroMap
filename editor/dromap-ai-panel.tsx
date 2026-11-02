@@ -322,6 +322,7 @@ type DroMapAiRouteFlowSelection = {
   commandId: string;
   selectedCount: number;
   layerName: string | null;
+  categoryLayers?: DroMapAiRouteSelectionImportResult["categoryLayers"];
   categories: DroMapAiRouteSelectionImportResult["categories"];
 };
 
@@ -1512,6 +1513,7 @@ Routes validées. Voici la suite du plan.`,
         commandId: command.id,
         selectedCount: result.selectedCount,
         layerName: result.layerName,
+        categoryLayers: result.categoryLayers,
         categories: result.categories,
       };
       const selections = [...routeFlow.selections, selection];

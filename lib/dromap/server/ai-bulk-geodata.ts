@@ -3,6 +3,8 @@ import "server-only";
 import { DROMAP_GEOJSON_CATALOG } from "@/editor/geojson-data-catalog";
 import type { DroMapAiBounds, DroMapAiCoordinate } from "@/editor/dromap-ai-types";
 import { readPublicUrl } from "./public-url";
+import { resolveLandBoundary } from "./land-boundaries";
+import { queryOverpass } from "./overpass";
 
 type Point = [number, number];
 type Geometry = { type: "Polygon" | "MultiPolygon"; coordinates: number[][][] | number[][][][] };
@@ -30,11 +32,12 @@ export type BulkPlaceResult = {
   sourceTitle: string;
   sourceUrl: string;
   warnings: string[];
+  populationBasis?: "municipal" | "agglomeration";
+  boundarySource?: { title: string; url: string };
 };
 
 const MAX_RESULTS = 2_500;
 const CACHE_MS = 60 * 60 * 1_000;
-const OSM_URL = "https://overpass-api.de/api/interpreter";
 const OSM_TAGS: Record<Exclude<BulkPlaceRequest["kind"], "capitals" | "cities">, { selectors: string[]; label: string; plural: string }> = {
   factories: { selectors: ['nwr["man_made"="works"]', 'nwr["industrial"="factory"]'], label: "Usine", plural: "usines" },
   hospitals: { selectors: ['nwr["amenity"="hospital"]'], label: "Hôpital", plural: "hôpitaux" },
@@ -55,15 +58,15 @@ function normalized(text: string) {
 }
 
 export function parseBulkPlaceRequest(prompt: string): BulkPlaceRequest | null {
-  const text = normalized(prompt);
+  const text = normalized(prompt.replace(/((?:section|titre|légende|legende)\s*(?:intitulée?|nommée?)?\s*)[«“"].*?[»”"]/giu, "$1"));
   // Les demandes de modification d’objets existants passent par le planificateur.
   if (/\b(supprim\w*|effac\w*|retir\w*|masqu\w*|cach\w*|deplac\w*|modifi\w*|recolor\w*)\b/.test(text)) return null;
-  const hasMapAction = /\b(affiche[rz]?|ajoute[rz]?|place[rz]?|mettre|met|mets|montre[rz]?|marque[rz]?|represente[rz]?|localise[rz]?|positionne[rz]?|visualise[rz]?|veux|voudrais|souhaite)\b/.test(text);
-  const isBulk = hasMapAction || /\b(tous|toutes|chaque|ensemble des)\b/.test(text);
-  if (!isBulk) return null;
+  const hasMapAction = /\b(cree[rz]?|prepare[rz]?|fais|realise[rz]?|affiche[rz]?|ajoute[rz]?|place[rz]?|mettre|met|mets|montre[rz]?|marque[rz]?|represente[rz]?|localise[rz]?|positionne[rz]?|visualise[rz]?|veux|voudrais|souhaite)\b/.test(text);
+  const isBulk = (hasMapAction && /\b(tous|toutes|chaque|ensemble des|plus de)\b/.test(text)) || /^(tous|toutes|chaque|ensemble des)\b/.test(text);
+  if (!isBulk || (/\bautour de chaque\b/.test(text) && !/\b(tous|toutes|ensemble des)\b/.test(text))) return null;
   const categories = [
     /\bcapitales?\b/.test(text) ? "capitals" : null,
-    /\b(villes?|agglomerations?)\b/.test(text) && !/\bcapitales?\b/.test(text) ? "cities" : null,
+    /\b(villes?|communes?|agglomerations?)\b/.test(text) && !/\bcapitales?\b/.test(text) ? "cities" : null,
     /\b(usines?|fabriques?)\b/.test(text) ? "factories" : null,
     /\b(hopitaux|hopital)\b/.test(text) ? "hospitals" : null,
     /\b(ecoles?)\b/.test(text) ? "schools" : null,
@@ -87,7 +90,7 @@ export function parseBulkPlaceRequest(prompt: string): BulkPlaceRequest | null {
     kind,
     minimumPopulation: minimumPopulation !== null && Number.isFinite(minimumPopulation) ? minimumPopulation : null,
     scopeText: text,
-    usesWorkspace: /\b(zone|emprise|selectionnee?)\b/.test(text),
+    usesWorkspace: /\b(?:zone de travail|de la zone|dans la zone|cette zone|zone selectionnee|emprise|selectionnee?)\b/.test(text),
   };
 }
 
@@ -101,7 +104,10 @@ async function getGeoCollection(url: string) {
   const hit = cache.get(url);
   if (hit && hit.until > Date.now()) return hit.value;
   const value = readPublicUrl(new URL(url), 25 * 1024 * 1024, 60_000)
-    .then((text) => JSON.parse(text) as GeoCollection);
+    .then((text) => {
+      const data = JSON.parse(text);
+      return (Array.isArray(data) ? { features: data.map(row => ({ geometry: row.centre, properties: row })) } : data) as GeoCollection;
+    });
   cache.set(url, { until: Date.now() + CACHE_MS, value });
   try { return await value; }
   catch (error) { cache.delete(url); throw error; }
@@ -188,12 +194,7 @@ function geometryBounds(countries: Country[]): DroMapAiBounds | null {
       : geometry.coordinates as number[][][][];
     return polygons.flatMap((polygon) => polygon.flat());
   });
-  return {
-    south: Math.min(...points.map((point) => point[1])),
-    west: Math.min(...points.map((point) => point[0])),
-    north: Math.max(...points.map((point) => point[1])),
-    east: Math.max(...points.map((point) => point[0])),
-  };
+  return points.reduce((bounds, point) => ({ south: Math.min(bounds.south, point[1]), west: Math.min(bounds.west, point[0]), north: Math.max(bounds.north, point[1]), east: Math.max(bounds.east, point[0]) }), { south: Infinity, west: Infinity, north: -Infinity, east: -Infinity });
 }
 
 function polygonBounds(country: Country): DroMapAiBounds[] {
@@ -242,16 +243,8 @@ async function queryOsmPlaces(bounds: DroMapAiBounds, kind: keyof typeof OSM_TAG
     throw new Error("La recherche de tous ces lieux est trop vaste pour une requête fiable. Sélectionne une zone de travail plus petite, puis relance la demande.");
   }
   const bbox = [bounds.south, bounds.west, bounds.north, bounds.east].join(",");
-  const query = `[out:json][timeout:60];(${OSM_TAGS[kind].selectors.map((selector) => `${selector}(${bbox});`).join("")});out body center;`;
-  const url = new URL(OSM_URL);
-  url.searchParams.set("data", query);
-  let rawResponse: string;
-  try {
-    rawResponse = await readPublicUrl(url, 25 * 1024 * 1024, 75_000);
-  } catch {
-    throw new Error("La source OpenStreetMap est indisponible ou la réponse est trop volumineuse. Réessaie avec une zone plus petite.");
-  }
-  const response = JSON.parse(rawResponse) as {
+  const query = `[out:json][timeout:20];(${OSM_TAGS[kind].selectors.map((selector) => `${selector}(${bbox});`).join("")});out body center;`;
+  const response = await queryOverpass(query) as {
     elements?: Array<{ type?: string; id?: number; lat?: number; lon?: number; center?: { lat?: number; lon?: number }; tags?: Record<string, string> }>;
     remark?: string;
   };
@@ -285,7 +278,19 @@ async function fetchOsmPlaces(bounds: DroMapAiBounds, kind: keyof typeof OSM_TAG
 export async function resolveBulkPlaces(request: BulkPlaceRequest, workspace: DroMapAiBounds | null): Promise<BulkPlaceResult> {
   if (request.usesWorkspace && !workspace) throw new Error("La « zone » désigne la zone de travail validée : sélectionne et valide-la avant cette demande.");
   const countryData = await getGeoCollection(catalogUrl(BOUNDARY_ID));
-  const scope = scopeCountries(request.scopeText, validCountries(countryData));
+  let scope = scopeCountries(request.scopeText, validCountries(countryData));
+  let subdivision = false;
+  let boundarySource: BulkPlaceResult["boundarySource"];
+  const namesTerritory = /\b(?:region|departement)\b|\b(?:capitales?|usines?|hopitaux|ecoles?|universites?|musees?|aeroports?|gares?|habitants) (?:de|d|du|en|au|aux|dans)\b/.test(request.scopeText);
+  if (!request.usesWorkspace && ((scope.label === "zone de travail" && namesTerritory) || /\b(region|departement|metropolitaine)\b/.test(request.scopeText))) {
+    const land = await resolveLandBoundary(request.scopeText, true);
+    if (!land) throw new Error("Le territoire demandé n'a pas été identifié. Précise son nom et son pays ; aucune recherche sur une autre zone n'a été lancée.");
+    if (land) {
+      scope = { label: land.label, countries: [{ geometry: land.geometry, properties: land.properties }], european: false };
+      subdivision = land.datasetId !== "natural-earth-countries-10m";
+      boundarySource = { title: land.source.sourceLabel, url: land.source.sourceUrl };
+    }
+  }
   const hasNamedScope = scope.label !== "zone de travail";
   if (!workspace && !hasNamedScope) throw new Error("Valide d'abord une zone de travail, ou nomme un pays, l'Europe ou le monde dans ta demande.");
   const namedBounds = geometryBounds(scope.countries);
@@ -294,7 +299,7 @@ export async function resolveBulkPlaces(request: BulkPlaceRequest, workspace: Dr
     throw new Error("Le territoire demandé ne recoupe pas la zone de travail actuelle.");
   }
   const countryScopes = scope.countries.map((country) => ({ country, bounds: geometryBounds([country]) }));
-  const countryCodes = new Set(scope.countries.map((country) => property(country.properties, "ADM0_A3")).filter((code) => code && code !== "-99"));
+  const countryCodes = new Set((subdivision ? [] : scope.countries).map((country) => property(country.properties, "ADM0_A3")).filter((code) => code && code !== "-99"));
   const inside = (coordinate: DroMapAiCoordinate) => {
     const point: Point = [coordinate.lng, coordinate.lat];
     return inBounds(point, activeBounds) &&
@@ -306,11 +311,12 @@ export async function resolveBulkPlaces(request: BulkPlaceRequest, workspace: Dr
   if (workspace && hasNamedScope) {
     warnings.push("Seule la partie du territoire demandé comprise dans la zone de travail est incluse.");
   }
-  if (scope.countries.length) warnings.push("Le filtrage par pays utilise les contours généralisés Natural Earth à l'échelle 1:50m ; vérifie les points très proches d'une frontière.");
+  if (scope.countries.length) warnings.push(subdivision ? "Le filtrage suit le contour terrestre du territoire français demandé." : "Le filtrage par pays utilise les contours généralisés Natural Earth à l'échelle 1:50m ; vérifie les points très proches d'une frontière.");
   if (scope.european) warnings.push("L'Europe suit le classement des pays Natural Earth ; les territoires transcontinentaux peuvent être discutables.");
   let items: GroundedPlace[];
   let sourceTitle: string;
   let sourceUrl: string;
+  let populationBasis: BulkPlaceResult["populationBasis"];
   if (request.kind in OSM_TAGS) {
     const osmKind = request.kind as keyof typeof OSM_TAGS;
     if (!activeBounds) throw new Error("Une zone géographique est nécessaire pour rechercher ces lieux.");
@@ -319,8 +325,10 @@ export async function resolveBulkPlaces(request: BulkPlaceRequest, workspace: Dr
         .map((bounds) => intersectBounds(bounds, workspace))
         .filter((bounds) => bounds.south < bounds.north && bounds.west < bounds.east)
       : [activeBounds];
-    const queryBounds = polygonQueryBounds.flatMap(splitLargeBounds);
-    if (queryBounds.length > 4) {
+    // Query nearby islands together, retaining exact polygon filtering below.
+    const mergedBounds = polygonQueryBounds.reduce((a, b) => ({ south: Math.min(a.south, b.south), west: Math.min(a.west, b.west), north: Math.max(a.north, b.north), east: Math.max(a.east, b.east) }), polygonQueryBounds[0]);
+    const queryBounds = (mergedBounds && areaKm2(mergedBounds) <= 750_000 ? [mergedBounds] : polygonQueryBounds).flatMap(splitLargeBounds);
+    if (queryBounds.length > 32) {
       throw new Error("Le territoire contient trop de secteurs distincts pour rechercher tous ces lieux de façon fiable. Réduis la zone de travail.");
     }
     const factoryGroups: GroundedPlace[][] = [];
@@ -340,10 +348,12 @@ export async function resolveBulkPlaces(request: BulkPlaceRequest, workspace: Dr
     if (request.kind === "cities" && request.minimumPopulation === null) {
       throw new Error("Indique un seuil, par exemple « toutes les villes de plus de 100 000 habitants de la zone ».");
     }
-    if (request.kind === "cities" && /\b(municipal|municipale|communal|communale|intra muros)\b/.test(request.scopeText)) {
+    const frenchMunicipal = request.kind === "cities" && (subdivision || countryCodes.has("FRA")) && !/\bagglomerations?\b/.test(request.scopeText);
+    if (request.kind === "cities" && !frenchMunicipal && /\b(municipal|municipale|communal|communale|intra muros)\b/.test(request.scopeText)) {
       throw new Error("Je ne dispose pas d'un recensement municipal mondial suffisamment homogène pour cette sélection. Précise une source statistique officielle ou demande les agglomérations estimées de Natural Earth.");
     }
-    const collection = await getGeoCollection(catalogUrl(PLACES_ID));
+    const municipalUrl = "https://geo.api.gouv.fr/communes?fields=nom,code,population,centre";
+    const collection = await getGeoCollection(frenchMunicipal ? municipalUrl : catalogUrl(PLACES_ID));
     items = (collection.features ?? []).flatMap((feature, index) => {
       if (feature.geometry?.type !== "Point" || !Array.isArray(feature.geometry.coordinates)) return [];
       const coordinates = feature.geometry.coordinates as number[];
@@ -351,9 +361,9 @@ export async function resolveBulkPlaces(request: BulkPlaceRequest, workspace: Dr
       const properties = feature.properties ?? {};
       const classification = normalized(property(properties, "FEATURECLA"));
       if (request.kind === "capitals" && !classification.includes("admin 0 capital")) return [];
-      const population = Number(properties.POP_MAX ?? properties.pop_max);
+      const population = Number(frenchMunicipal ? properties.population : properties.POP_MAX ?? properties.pop_max);
       if (request.kind === "cities" && (!Number.isFinite(population) || population <= (request.minimumPopulation ?? 0))) return [];
-      const label = property(properties, "NAME", "NAMEASCII", "NAME_EN");
+      const label = property(properties, "NAME", "NAMEASCII", "NAME_EN", "nom");
       const coordinate = { lng: coordinates[0], lat: coordinates[1] };
       const capitalMatchesCountry = request.kind === "capitals" && countryCodes.size > 0 &&
         countryCodes.has(property(properties, "ADM0_A3"));
@@ -362,17 +372,20 @@ export async function resolveBulkPlaces(request: BulkPlaceRequest, workspace: Dr
           (!scope.european || (coordinate.lng <= 60 && coordinate.lat >= 34))
         : request.kind === "capitals" && countryCodes.size > 0 ? false : inside(coordinate);
       return label && accepted ? [{
-        id: `natural-earth-place-${index}`,
+        id: frenchMunicipal ? `commune-${properties.code}` : `natural-earth-place-${index}`,
         label,
         coordinate,
         population: Number.isFinite(population) && population > 0 ? population : null,
-        sourceUrl: SOURCE_URL,
+        sourceUrl: frenchMunicipal ? "https://geo.api.gouv.fr/decoupage-administratif/communes" : SOURCE_URL,
       }] : [];
     });
-    sourceTitle = "Natural Earth — villes et capitales";
-    sourceUrl = SOURCE_URL;
-    if (request.kind === "cities") warnings.push("Natural Earth est une sélection de localités, pas un recensement exhaustif. Le seuil utilise POP_MAX (estimation de l'agglomération), pas la population municipale ; les villes absentes ou sans estimation ne sont pas inventées.");
+    sourceTitle = frenchMunicipal ? "API Découpage administratif — population des communes françaises" : "Natural Earth — villes et capitales";
+    sourceUrl = frenchMunicipal ? "https://geo.api.gouv.fr/decoupage-administratif/communes" : SOURCE_URL;
+    if (request.kind === "cities") {
+      populationBasis = frenchMunicipal ? "municipal" : "agglomeration";
+      warnings.push(frenchMunicipal ? "Le seuil porte sur la population communale publiée par l’API Découpage administratif, pas sur l’agglomération." : "Natural Earth est une sélection de localités, pas un recensement exhaustif. Le seuil utilise POP_MAX (estimation de l'agglomération), pas la population municipale ; les villes absentes ou sans estimation ne sont pas inventées.");
+    }
   }
   if (items.length > MAX_RESULTS) throw new Error(`La source contient plus de ${MAX_RESULTS} lieux dans ce secteur. Réduis la zone pour obtenir un résultat complet et éditable.`);
-  return { kind: request.kind, items, scopeLabel: scope.label, sourceTitle, sourceUrl, warnings };
+  return { kind: request.kind, items, scopeLabel: scope.label, sourceTitle, sourceUrl, warnings, populationBasis, boundarySource };
 }

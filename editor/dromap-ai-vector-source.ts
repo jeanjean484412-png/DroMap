@@ -25,21 +25,30 @@ export async function loadAiPlaceVectorGeometry(place: string, kind: "area" | "l
   const cached = pending.get(key);
   if (cached) return cached;
   const request = (async () => {
-    const response = await fetch(`/api/dromap/place-search?geometry=1&q=${encodeURIComponent(place)}`, {
-      headers: { Accept: "application/json" }, signal: AbortSignal.timeout(30_000),
+    const response = await fetch(`/api/dromap/place-search?geometry=1&kind=${kind}&q=${encodeURIComponent(place)}`, {
+      headers: { Accept: "application/json" }, signal: AbortSignal.timeout(150_000),
     });
     if (!response.ok) throw new Error("La frontière géographique n'a pas pu être récupérée.");
-    const payload = await response.json() as { results?: Array<{ geometry?: unknown }> };
+    const payload = await response.json() as { results?: Array<{ geometry?: unknown; source?: VectorSource; boundaryKind?: string }> };
     for (const result of payload.results ?? []) {
       const geometry = readAiVectorGeometry(result.geometry);
-      if (geometry && (kind === "line" || geometry.type === "Polygon" || geometry.type === "MultiPolygon")) return geometry;
+      if (geometry && (kind === "line" || geometry.type === "Polygon" || geometry.type === "MultiPolygon")) {
+        const polygon = geometry.type === "Polygon" || geometry.type === "MultiPolygon";
+        if (polygon && result.boundaryKind !== "land") continue;
+        geometrySources.set(geometry, result.source ?? { sourceLabel: "OpenStreetMap / Nominatim", sourceUrl: "https://www.openstreetmap.org/copyright", sourceLicense: "ODbL", sourceAttribution: "© OpenStreetMap contributors" });
+        return geometry;
+      }
     }
     return null;
   })();
   pending.set(key, request);
-  try { return await request; }
+  try { const value = await request; if (!value) pending.delete(key); return value; }
   catch (error) { pending.delete(key); throw error; }
 }
+
+type VectorSource = { sourceLabel: string; sourceUrl: string; sourceLicense: string; sourceAttribution: string };
+const geometrySources = new WeakMap<object, VectorSource>();
+export function getAiVectorSource(geometry: VectorGeometry) { return geometrySources.get(geometry); }
 
 export function getAiVectorPolygons(geometry: VectorGeometry): Position[][][] {
   return geometry.type === "Polygon" ? [geometry.coordinates] :

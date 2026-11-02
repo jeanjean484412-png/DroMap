@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { loadSource } from "../security/load-source.mjs";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -59,11 +60,61 @@ function installDom(t, dom) {
   }
 }
 
+test("R06 N17 : une mairie ne présélectionne pas le voisinage et un groupe absent bloque l’import", async t => {
+  const workspace = store({workspaceBounds:{southWest:{lat:48.85,lng:2.33},northEast:{lat:48.87,lng:2.36}}});
+  const modules = {
+    "@/stores/editor-workspace":{useEditorWorkspaceStore:workspace},
+    "./ai-building-source":{fetchAiBuildings:async()=>[
+      {type:"Feature",id:"mairie",properties:{},geometry:{type:"Polygon",coordinates:[[[2.34,48.86],[2.3401,48.86],[2.3401,48.8601],[2.34,48.86]]]}},
+      {type:"Feature",id:"voisin",properties:{},geometry:{type:"Polygon",coordinates:[[[2.3405,48.86],[2.3406,48.86],[2.3406,48.8601],[2.3405,48.86]]]}},
+    ]},
+  };
+  for (const [,dependency] of readFileSync(new URL("../../editor/dromap-ai-executor.ts",import.meta.url),"utf8").matchAll(/from "([^"]+)"/g)) modules[dependency] ??= {};
+  t.mock.method(globalThis,"fetch",async()=>Response.json({results:[{id:"townhall",lat:48.86005,lng:2.34005,displayName:"Mairie"}]}));
+  const {prepareDroMapAiBuildingSelection,importDroMapAiSelectedBuildings}=loadTs("editor/dromap-ai-executor.ts",modules);
+  const command={id:"buildings",type:"import_buildings",buildingSelectionMode:"named",buildingQueries:["Mairie de test"],places:[],place:null,bounds:null};
+  const prepared=await prepareDroMapAiBuildingSelection(command);
+  assert.deepEqual(prepared.suggestedFeatureIds,["mairie"]);
+  assert.throws(()=>importDroMapAiSelectedBuildings({...command,buildingQueries:["Mairie de test","Palais de test"]},prepared,[prepared.features[0]]),/Sélection incomplète/);
+});
+
+test("N15 : les catégories routières GeoJSON ont leurs propres groupes de légende", async () => {
+  const grouped = [];
+  const stores = {
+    basemap: store({}), customMarkers: store({}), export: store({ hiddenLegendGroupKeys: [],
+      setLegendGroupLabel: (key,label) => grouped.push([key,label]),
+      setLegendGroupSection() {} }),
+    features: store({features: []}), geoJsonLayers: store({geoJsonLayers: [
+      {id:"roads-primary",name:"Routes principales"},
+      {id:"roads-secondary",name:"Routes secondaires"},
+    ]}), layers: store({layers: []}), mapLabels: store({}),
+    mode: store({currentMode:"edit"}), selection: store({clearSelectedFeatureId() {}}),
+    tool: store({resetActiveTool() {}}),
+    workspace: store({workspaceBounds:{southWest:{lat:48,lng:2},northEast:{lat:49,lng:3}}}),
+  };
+  const modules = Object.fromEntries(Object.entries(stores).map(([name,value]) => [
+    `@/stores/editor-${name === "geoJsonLayers" ? "geojson-layers" : name.replace(/[A-Z]/g,letter=>`-${letter.toLowerCase()}`)}`,
+    {[`useEditor${name[0].toUpperCase()}${name.slice(1)}Store`]:value},
+  ]));
+  modules["./geojson-layer-legend"] = {
+    getGeoJsonLayerLegendKinds: () => [{kind:"lines",count:1}],
+    getGeoJsonLayerLegendDedupeKey: (id,kind) => `geojson-layer:${id}:${kind}`,
+  };
+  for (const [,dependency] of readFileSync(new URL("../../editor/dromap-ai-executor.ts",import.meta.url),"utf8").matchAll(/from "([^"]+)"/g)) modules[dependency] ??= {};
+  const {executeDroMapAiPlan} = loadTs("editor/dromap-ai-executor.ts",modules);
+  const commands = ["Routes principales","Routes secondaires"].map((name,index) => ({
+    id:"legend-"+index,type:"configure_feature_legend",label:name,section:"Réseau routier",hidden:null,orderRefs:[],
+    selector:{all:false,featureIds:[],layerName:name,sourceType:"geojson",featureType:null,labelContains:null,legendLabelContains:null},
+  }));
+  await executeDroMapAiPlan({commands,warnings:[]});
+  assert.deepEqual(grouped,[["geojson-layer:roads-primary:lines","Routes principales"],["geojson-layer:roads-secondary:lines","Routes secondaires"]]);
+});
+
 test("remplir puis tracer un pays sur fond classique conserve les objets sans ajouter de calque technique", async (t) => {
   const requests = [];
   t.mock.method(globalThis, "fetch", async (url) => {
     requests.push(String(url));
-    return { ok: true, json: async () => ({ results: String(url).includes("Inconnu") ? [] : [{ geometry }] }) };
+    return { ok: true, json: async () => ({ results: String(url).includes("Inconnu") ? [] : [{ geometry, boundaryKind: "land", source: { sourceLabel: "Natural Earth", sourceUrl: "https://www.naturalearthdata.com", sourceLicense: "Public domain", sourceAttribution: "Natural Earth" } }] }) };
   });
   const stores = {
     basemap: store({ basemapId: "classic" }), customMarkers: store({ customMarkers: [] }),
@@ -103,6 +154,55 @@ test("remplir puis tracer un pays sur fond classique conserve les objets sans aj
   assert.equal(undoLastDroMapAiPlan(), true);
   assert.deepEqual(stores.features.getState().features, []);
   await assert.rejects(executeDroMapAiPlan({ ...plan, commands: [{ ...command, type: "trace_boundary", place: "Inconnu" }] }), /Aucun tracé vectoriel vérifié/);
+  assert.deepEqual(stores.features.getState().features, []);
+});
+
+test("19 : l’exécuteur crée trois vraies courbes proportionnelles sans étiquettes, exportables et annulables", async () => {
+  const stores = {
+    basemap: store({ basemapId: "classic" }), customMarkers: store({ customMarkers: [] }),
+    export: store({ customLegendEntries: [], legendGroupOrder: [], setLegendGroupOrder() {} }),
+    features: store({ features: [] }), geoJsonLayers: store({ geoJsonLayers: [] }),
+    layers: store({ activeLayerId: "layer-1", layers: [{ id: "layer-1", name: "Calque 1" }] }),
+    mapLabels: store({}), mode: store({ currentMode: "edit" }),
+    selection: store({ clearSelectedFeatureId() {} }), tool: store({ resetActiveTool() {} }),
+    workspace: store({ workspaceBounds: { southWest: { lat: 40, lng: -5 }, northEast: { lat: 52, lng: 10 } } }),
+  };
+  stores.features.setState({ commitFeaturesHistory() {}, addFeature(feature) { stores.features.setState({ features: [...stores.features.getState().features, feature] }); } });
+  const modules = Object.fromEntries(Object.entries(stores).map(([name, value]) => [
+    `@/stores/editor-${name === "geoJsonLayers" ? "geojson-layers" : name.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}`,
+    { [`useEditor${name[0].toUpperCase()}${name.slice(1)}Store`]: value },
+  ]));
+  modules["@/lib/dromap/curved-line"] = loadSource("lib/dromap/curved-line.ts");
+  let fitted = null;
+  modules["./dromap-ai-map-bridge"] = { fitDroMapAiMapBounds: bounds => { fitted = bounds; } };
+  modules["./ai-flow-geometry"] = loadSource("editor/ai-flow-geometry.ts");
+  modules["./legend-entry"] = { getLegendDedupeKey: feature => feature.id };
+  for (const [, dependency] of readFileSync(new URL("../../editor/dromap-ai-executor.ts", import.meta.url), "utf8").matchAll(/from "([^"]+)"/g)) modules[dependency] ??= {};
+  const { executeDroMapAiPlan, undoLastDroMapAiPlan } = loadTs("editor/dromap-ai-executor.ts", modules);
+  const pairs = [[[2.35,48.86],[4.84,45.76]], [[4.84,45.76],[5.37,43.3]], [[2.35,48.86],[5.37,43.3]]];
+  const seriesItems = [100,50,30].map((value, index) => ({ id: `flux-${index}`, label: `Flux ${index}`, value, fromCoordinate: { lng: pairs[index][0][0], lat: pairs[index][0][1] }, toCoordinate: { lng: pairs[index][1][0], lat: pairs[index][1][1] } }));
+  const command = { id: "flows", type: "create_proportional_flows", lineVariant: "curved", seriesItems, style: {}, mapLabelVisibility: "hide" };
+  const fit = { type: "fit_view", selector: {featureIds:["flows"],all:false,labelContains:null,legendLabelContains:null,layerName:null,featureType:null,sourceType:null} };
+  const result = await executeDroMapAiPlan({ commands: [command, fit], warnings: [] });
+  assert.ok(fitted, "N04 : le recadrage résout les références des étapes créées");
+  assert.ok(!result.warnings.includes("Aucun objet disponible pour recadrer la vue."));
+  const features = stores.features.getState().features;
+  assert.equal(result.createdFeatureIds.length, 3);
+  features.forEach((feature, index) => {
+    const points = feature.geometry.coordinates;
+    assert.ok(points.length > 3);
+    assert.deepEqual(points[0], pairs[index][0]); assert.deepEqual(points.at(-1), pairs[index][1]);
+    assert.equal(feature.properties.style.arrowEnd, true);
+    assert.equal(feature.properties.mapLabelVisibility, "hide");
+    assert.equal(feature.properties.lineVariant, "curved");
+    const a = points[0], b = points.at(-1);
+    assert.ok(points.some(p => Math.abs((p[0]-a[0])*(b[1]-a[1])-(p[1]-a[1])*(b[0]-a[0])) > .01));
+  });
+  assert.ok(features[0].properties.style.weight > features[1].properties.style.weight);
+  assert.ok(features[1].properties.style.weight > features[2].properties.style.weight);
+  const { validateExportGeometry } = loadSource("editor/export-validation.ts");
+  assert.doesNotThrow(() => validateExportGeometry({ features }));
+  assert.equal(undoLastDroMapAiPlan(), true);
   assert.deepEqual(stores.features.getState().features, []);
 });
 

@@ -7,6 +7,7 @@ import {
 } from "@/stores/editor-geojson-layers";
 import { useEditorFeaturesStore } from "@/stores/editor-features";
 import type { DromapRoadImportCategory } from "@/lib/dromap/road-import";
+import { getDromapRoadCategoryForHighway, getDromapRoadImportCategoryLabel } from "@/lib/dromap/road-import";
 
 export const DROMAP_ROAD_IMPORT_DATASET_ID = "dromap-road-import";
 export const DROMAP_ROAD_IMPORT_SOURCE_NAME = "openstreetmap-roads.geojson";
@@ -241,12 +242,34 @@ export function reconcileDromapRoadImport(input: {
   categories: DromapRoadImportCategory[];
   mode: "all" | "selection";
   layerName?: string | null;
+  splitByCategory?: boolean;
 }) {
   const store = useEditorGeoJsonLayersStore.getState();
   const currentLayers = store.geoJsonLayers;
   const managedLayers = getDromapManagedRoadLayers(currentLayers);
   const managedIds = new Set(managedLayers.map((layer) => layer.id));
   const primary = managedLayers[0] ?? null;
+
+  if ((input.splitByCategory || managedLayers.length > 1) && input.features.length) {
+    const groups = new Map<DromapRoadImportCategory, DromapRoadSelectionFeature[]>();
+    for (const feature of input.features) {
+      const category = feature.properties?.__dromapRoadCategory as DromapRoadImportCategory | undefined
+        ?? getDromapRoadCategoryForHighway(feature.properties?.highway);
+      if (!category || !input.categories.includes(category)) throw new Error("Une route sélectionnée ne possède pas de catégorie exploitable.");
+      const group = groups.get(category) ?? [];
+      group.push(feature); groups.set(category, group);
+    }
+    const otherLayers = currentLayers.filter(layer => !managedIds.has(layer.id));
+    const next = [...groups].map(([category, features], index) => {
+      const previous = managedLayers.find(layer => layer.sourceVersion === `dromap-routes-v2:${category}`);
+      const layer = createRoadGeoJsonLayer({ ...input, features, categories: [category], layerName: `Routes — ${getDromapRoadImportCategoryLabel(category)}`, existingLayerCount: otherLayers.length + index });
+      return previous ? { ...layer, id: previous.id, style: previous.style, visible: previous.visible, opacity: previous.opacity, createdAt: previous.createdAt } : layer;
+    });
+    useEditorFeaturesStore.getState().commitFeaturesHistory({ includeParticipants: true });
+    store.setGeoJsonLayers([...otherLayers, ...next]);
+    return { layerId: next[0].id, layerName: next.map(layer => layer.name).join(" · "), selectedCount: input.features.length, removed: false,
+      categoryLayers: next.map(layer => ({ id: layer.id, name: layer.name, category: layer.sourceVersion?.split(":")[1], count: layer.data.features.length })) };
+  }
 
   if (input.features.length === 0) {
     if (!managedLayers.length) {

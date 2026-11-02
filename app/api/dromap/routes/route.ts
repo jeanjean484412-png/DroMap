@@ -1,5 +1,6 @@
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextRequest, NextResponse } from "next/server";
+import { queryOverpass } from "@/lib/dromap/server/overpass";
 
 import {
   getDromapRoadCategoryForHighway,
@@ -13,7 +14,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_RAW_WAYS = 60_000;
 const MAX_SELECTION_FEATURES = 25_000;
 const PARALLEL_ROAD_DISTANCE_M = {
@@ -21,10 +21,6 @@ const PARALLEL_ROAD_DISTANCE_M = {
   main: 70,
 } as const;
 
-const DEFAULT_OVERPASS_ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-] as const;
 
 type Bounds = {
   south: number;
@@ -137,24 +133,6 @@ function getAreaKm2(bounds: Bounds) {
   return widthKm * heightKm;
 }
 
-function getOverpassEndpoints() {
-  const configured = process.env.DROMAP_OVERPASS_API_URLS
-    ?.split(",")
-    .map((value: string) => value.trim())
-    .filter(Boolean);
-
-  if (configured?.length) {
-    return configured;
-  }
-
-  const single = process.env.DROMAP_OVERPASS_API_URL?.trim();
-  if (single) {
-    return [single];
-  }
-
-  return [...DEFAULT_OVERPASS_ENDPOINTS];
-}
-
 function buildQuery(bounds: Bounds, highwayValues: string[]) {
   const escapedValues = highwayValues.map((value) => value.replace(/[^a-z_]/g, ""));
   const pattern = `^(${escapedValues.join("|")})$`;
@@ -162,48 +140,11 @@ function buildQuery(bounds: Bounds, highwayValues: string[]) {
 
   // `body geom` conserve les identifiants de nœuds : ils permettent de distinguer
   // une vraie liaison entre deux autoroutes d'une simple bretelle de sortie.
-  return `[out:json][timeout:40];\nway["highway"~"${pattern}"](${bbox});\nout body geom qt;`;
+  return `[out:json][timeout:20];\nway["highway"~"${pattern}"](${bbox});\nout body geom qt;`;
 }
 
 async function fetchOverpass(query: string) {
-  let lastError: unknown = null;
-
-  for (const endpoint of getOverpassEndpoints()) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-          "User-Agent": "DroMap/1.0 road-import",
-        },
-        body: new URLSearchParams({ data: query }),
-        cache: "no-store",
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Service routes indisponible (${response.status}).`);
-      }
-
-      const payload = (await response.json()) as OverpassResponse;
-      if (typeof payload.remark === "string" && /runtime error|timed out|out of memory/i.test(payload.remark)) {
-        throw new Error("La requête de routes est trop lourde pour le service de données.");
-      }
-      return payload;
-    } catch (error) {
-      lastError = error;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Le service de routes est momentanément indisponible.");
+  return await queryOverpass(query) as OverpassResponse;
 }
 
 function parseTags(value: unknown) {

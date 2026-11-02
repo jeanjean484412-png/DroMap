@@ -9,6 +9,25 @@ export type AiPlanIssue = {
   question: string;
 };
 
+export function validateAiPlanRequest(prompt: string, plan: DroMapAiPlan): AiPlanIssue[] {
+  if (!plan.commands.length || plan.commands.some(command => ["import_buildings", "import_routes"].includes(command.type))) return [];
+  const text = prompt.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const issues: AiPlanIssue[] = [];
+  const requireAction = (valid: boolean, detail: string) => {
+    if (!valid) issues.push({ commandId: "__intent__", index: -1, code: "MISSING_REQUESTED_ACTION", detail, question: "Le plan ne contient pas toutes les actions demandées. " + detail });
+  };
+  const quantities: Record<string, number> = { deux: 2, trois: 3, quatre: 4, cinq: 5, six: 6, sept: 7, huit: 8, neuf: 9, dix: 10 };
+  const territories = text.match(/\b(\d+|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\s+(?:pays|etats|regions|departements)\b/);
+  const expectedFills = territories ? quantities[territories[1]] ?? Number(territories[1]) : 0;
+  if (expectedFills && /color|rempli/.test(text)) {
+    requireAction(plan.commands.filter(command => command.type === "fill_boundary").length >= expectedFills || plan.commands.some(command => command.type === "create_choropleth"), `Conserver les remplissages terrestres des ${expectedFills} territoires demandés.`);
+  }
+  if (/\b(?:fleches?|flux)\s+courbes?\b/.test(text) && !/sans\s+(?:fleches?|flux)/.test(text)) {
+    requireAction(plan.commands.some(command => ["create_line", "create_proportional_flows"].includes(command.type)), "Ajouter les flèches courbes demandées.");
+  }
+  return issues;
+}
+
 const HEX = /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i;
 const validCoordinate = (value: { lng: number; lat: number }) =>
   Number.isFinite(value.lng) && Number.isFinite(value.lat) &&
@@ -115,7 +134,7 @@ export function validateAiPlan(
     if (command.type === "create_proportional_markers" && command.seriesItems.some((item) => !item.place && !item.coordinate)) {
       add(command, index, "SERIES_LOCATION", "Figuré proportionnel sans lieu.", "Pour quelles localités dois-je placer ces valeurs ?");
     }
-    if (command.type === "create_marker_series" && (command.seriesItems.length === 0 || command.seriesItems.some((item) => !item.coordinate))) {
+    if (command.type === "create_marker_series" && (command.seriesItems.length === 0 || command.seriesItems.some((item) => !item.coordinate && !item.place))) {
       add(command, index, "SERIES_LOCATION", "Série de marqueurs sans coordonnées vérifiées.", "Je n'ai pas de coordonnées vérifiées pour tous ces lieux.");
     }
     if (command.type === "create_proportional_flows" && command.seriesItems.some((item) =>

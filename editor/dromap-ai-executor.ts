@@ -1,6 +1,6 @@
 "use client";
 
-import { createCurvedLineCoordinates, createMultiCurvedLine } from "@/lib/dromap/curved-line";
+import { createMultiCurvedLine } from "@/lib/dromap/curved-line";
 
 import type {
   DroMapFeature,
@@ -48,7 +48,7 @@ import {
 } from "./dromap-layer-to-geojson-conversion";
 import { duplicateDroMapFeature } from "./feature-duplication";
 import { getLegendDedupeKey, getLegendFeatureLabel } from "./legend-entry";
-import { getGeoJsonLayerLegendId } from "./geojson-layer-legend";
+import { getGeoJsonLayerLegendId, getGeoJsonLayerLegendKinds, getGeoJsonLayerLegendDedupeKey } from "./geojson-layer-legend";
 import {
   DEFAULT_EXPORT_LEGEND_SYMBOL_SIZE,
   MAX_EXPORT_LEGEND_SYMBOL_SIZE,
@@ -60,7 +60,9 @@ import {
   createWorkspaceWaterFillFeatureAtLngLat,
   createZoneFeatureFromBoundaryPolygon,
 } from "./zone-fill";
-import { getAiVectorLines, getAiVectorPolygons, loadAiPlaceVectorGeometry } from "./dromap-ai-vector-source";
+import { getAiVectorLines, getAiVectorPolygons, getAiVectorSource, loadAiPlaceVectorGeometry } from "./dromap-ai-vector-source";
+import { curvedFlowHandles } from "./ai-flow-geometry";
+import { buildingSource, fetchAiBuildings } from "./ai-building-source";
 import {
   fitDroMapAiMapBounds,
   flyDroMapAiMapTo,
@@ -657,10 +659,9 @@ function createLineFeature(
   if (command.lineVariant === "curved" && coordinates.length > 64) {
     throw new Error("Un trait courbe accepte jusqu’à 64 poignées.");
   }
-  const points: [number, number][] = coordinates.map(({ lng, lat }) => [lng, lat]);
-  const curve = command.lineVariant === "curved"
-    ? points.length >= 3 ? createMultiCurvedLine(points) : { coordinates: createCurvedLineCoordinates(points[0], points[1]), indices: [0, 64, 128] }
-    : null;
+  const handles = command.lineVariant === "curved" && coordinates.length === 2 ? curvedFlowHandles(coordinates[0], coordinates[1]) : coordinates;
+  const points: [number, number][] = handles.map(({ lng, lat }) => [lng, lat]);
+  const curve = command.lineVariant === "curved" ? createMultiCurvedLine(points) : null;
   return {
     type: "Feature",
     id: base.id,
@@ -670,6 +671,7 @@ function createLineFeature(
     },
     properties: {
       type: "line",
+      mapLabelVisibility: command.mapLabelVisibility ?? "hide",
       style: base.style,
       label: base.label,
       ...(base.legendLabel ? { legendLabel: base.legendLabel } : {}),
@@ -742,6 +744,7 @@ function createZoneFeature(
     },
     properties: {
       type: "zone",
+      mapLabelVisibility: command.mapLabelVisibility ?? "hide",
       style: base.style,
       label: base.label,
       ...(base.legendLabel ? { legendLabel: base.legendLabel } : {}),
@@ -766,26 +769,24 @@ async function createBoundaryFillFeature(
   };
   const layerId = resolveLayerId(command.layerRef, aliases);
   if (command.place) {
-    try {
-      const geometry = await loadAiPlaceVectorGeometry(command.place, "area");
-      if (geometry) {
-        const label = cleanString(command.label) ?? command.place;
-        return getAiVectorPolygons(geometry).map((polygon) => {
-          const feature = createZoneFeatureFromBoundaryPolygon({ polygon, label, style, legendLabel: cleanString(command.legendLabel) ?? label });
-          feature.properties.layerId = layerId;
-          feature.properties.locked = command.locked ?? false;
-          feature.properties.geometryLocked = command.geometryLocked ?? false;
-          feature.properties.source = {
-            type: "geojson", importId: command.id, sourceName: command.place,
-            sourceLabel: "OpenStreetMap / Nominatim", sourceUrl: "https://www.openstreetmap.org/copyright",
-            sourceLicense: "ODbL", sourceAttribution: "© OpenStreetMap contributors",
-          };
-          return feature;
-        });
-      }
-    } catch {
-      // Les frontières déjà disponibles restent utilisables si la source distante échoue.
+    const geometry = await loadAiPlaceVectorGeometry(command.place, "area");
+    if (geometry) {
+      const label = cleanString(command.label) ?? command.place;
+      return getAiVectorPolygons(geometry).map((polygon) => {
+        const feature = createZoneFeatureFromBoundaryPolygon({ polygon, label, style, legendLabel: cleanString(command.legendLabel) ?? label });
+        feature.properties.layerId = layerId;
+        feature.properties.locked = command.locked ?? false;
+        feature.properties.geometryLocked = command.geometryLocked ?? false;
+        feature.properties.mapLabelVisibility = command.mapLabelVisibility ?? "hide";
+        feature.properties.source = {
+          type: "geojson", importId: command.id, sourceName: command.place,
+          ...getAiVectorSource(geometry),
+          originalProperties: { dromapBoundaryKind: "land", dromapBoundaryPlace: command.place },
+        };
+        return feature;
+      });
     }
+    throw new Error(`Aucun contour terrestre vérifié n'a été trouvé pour ${command.place}. Précise le pays, la région ou le département.`);
   }
   const point = await resolvePoint(command, cache);
   const workspace = useEditorWorkspaceStore.getState().workspaceBounds;
@@ -826,6 +827,7 @@ async function createBoundaryFillFeature(
     properties: {
       ...match.feature.properties,
       label: cleanString(command.label) ?? match.sourceLabel,
+      mapLabelVisibility: command.mapLabelVisibility ?? "hide",
       legendLabel: cleanString(command.legendLabel) ?? "Zone",
       layerId,
       locked: command.locked ?? false,
@@ -851,8 +853,8 @@ async function createBoundaryTraceFeatures(command: DroMapAiCommand, aliases: Ma
     const feature = createLineFeature({ ...command, lineVariant: "traced" }, line.map(([lng, lat]) => ({ lng, lat })), layerId);
     if (geometry) feature.properties.source = {
       type: "geojson", importId: command.id, sourceName: command.place,
-      sourceLabel: "OpenStreetMap / Nominatim", sourceUrl: "https://www.openstreetmap.org/copyright",
-      sourceLicense: "ODbL", sourceAttribution: "© OpenStreetMap contributors",
+      ...getAiVectorSource(geometry),
+      originalProperties: { dromapBoundaryKind: geometry.type.includes("Polygon") ? "land" : "waterway", dromapBoundaryPlace: command.place },
     };
     return feature;
   });
@@ -1251,6 +1253,18 @@ function configureFeatureLegend(
   aliases: Map<string, string>,
   fallbackFeatures: DroMapFeature[] = [],
 ) {
+  const geoLayers = command.selector.layerName && (!command.selector.featureType || command.selector.sourceType === "geojson")
+    ? useEditorGeoJsonLayersStore.getState().geoJsonLayers.filter(layer => normalizeKey(layer.name) === normalizeKey(command.selector.layerName)) : [];
+  if (geoLayers.length) {
+    const store = useEditorExportStore.getState();
+    for (const layer of geoLayers) for (const { kind } of getGeoJsonLayerLegendKinds(layer)) {
+      const key = getGeoJsonLayerLegendDedupeKey(layer.id, kind);
+      if (command.label !== null) store.setLegendGroupLabel(key, command.label);
+      if (command.section !== null) store.setLegendGroupSection(key, command.section);
+      if (command.hidden !== null && command.hidden !== store.hiddenLegendGroupKeys.includes(key)) store.toggleLegendGroupVisibility(key);
+    }
+    return;
+  }
   const allFeatures = useEditorFeaturesStore.getState().features;
   const byId = new Map<string, DroMapFeature>(
     allFeatures.map((feature) => [feature.id, feature]),
@@ -1797,18 +1811,20 @@ async function createProportionalMarkers(
   return features;
 }
 
-function createMarkerSeries(
+async function createMarkerSeries(
   command: DroMapAiCommand,
   aliases: Map<string, string>,
   ensureHistory: () => void,
+  cache: Map<string, PlaceSearchResult>,
 ) {
-  if (!command.seriesItems.length || command.seriesItems.some((item) => !item.coordinate)) {
+  if (!command.seriesItems.length || command.seriesItems.some((item) => !item.coordinate && !item.place)) {
     throw new Error("La série de marqueurs exige des coordonnées vérifiées pour chaque lieu.");
   }
   const layerId = resolveLayerId(command.layerRef, aliases);
   const features: DroMapFeature[] = [];
   ensureHistory();
   for (const item of command.seriesItems) {
+    const point = await resolveSeriesPoint(item, cache);
     const derived: DroMapAiCommand = {
       ...command,
       type: "create_marker",
@@ -1821,7 +1837,7 @@ function createMarkerSeries(
       },
       mapLabelVisibility: command.mapLabelVisibility ?? "hide",
     };
-    const feature = createPointFeature(derived, item.coordinate!, layerId, aliases);
+    const feature = createPointFeature(derived, point, layerId, aliases);
     if (item.sourceTitle && item.sourceUrl) {
       feature.properties.source = {
         type: "geojson",
@@ -1829,8 +1845,8 @@ function createMarkerSeries(
         sourceName: item.sourceTitle,
         sourceLabel: item.sourceTitle,
         sourceUrl: item.sourceUrl,
-        sourceLicense: item.sourceTitle.includes("OpenStreetMap") ? "ODbL" : "Domaine public",
-        sourceAttribution: item.sourceTitle.includes("OpenStreetMap") ? "© OpenStreetMap contributors" : "Natural Earth",
+        sourceLicense: item.sourceTitle.includes("OpenStreetMap") ? "ODbL" : item.sourceUrl.includes("geo.api.gouv.fr") ? "Licence ouverte Etalab 2.0" : item.sourceTitle.includes("Natural Earth") ? "Domaine public" : undefined,
+        sourceAttribution: item.sourceTitle.includes("OpenStreetMap") ? "© OpenStreetMap contributors" : item.sourceUrl.includes("geo.api.gouv.fr") ? "API Découpage administratif / INSEE" : item.sourceTitle,
         originalFeatureId: item.id,
         originalProperties: item.value > 1 ? { population: item.value } : {},
       };
@@ -1913,7 +1929,8 @@ async function createProportionalFlows(
         arrowEnd: command.style.arrowEnd ?? true,
       },
     };
-    const feature = createLineFeature(derived, [from, to], layerId);
+    const feature = createLineFeature(derived, command.lineVariant === "curved" ? curvedFlowHandles(from, to) : [from, to], layerId);
+    if (command.lineVariant === "curved") feature.properties.source = { type: "geojson", importId: command.id, originalProperties: { dromapAiCurvedFlow: true } };
     useEditorFeaturesStore.getState().addFeature(feature);
     features.push(feature);
     aliases.set(item.id, feature.id);
@@ -2209,51 +2226,7 @@ async function fetchBuildingsForArea(
   bounds: BuildingSearchBounds,
   maxFeatures: number,
 ) {
-  const params = new URLSearchParams(
-    Object.fromEntries(
-      Object.entries(bounds).map(([key, value]) => [key, String(value)]),
-    ),
-  );
-
-  try {
-    const response = await fetch(`/api/dromap/buildings?${params}`, {
-      headers: { Accept: "application/geo+json,application/json" },
-      cache: "no-store",
-    });
-    const data = (await response.json()) as Record<string, unknown>;
-    if (response.ok && Array.isArray(data.features) && data.features.length) {
-      const { enrichBuildingNamesFromOverturePlaces } = await import(
-        "./overture-buildings-client"
-      );
-      const enrichment = await enrichBuildingNamesFromOverturePlaces(
-        data.features as BuildingFeature[],
-        bounds,
-        {
-          maxPlaces: Math.min(25_000, Math.max(5_000, maxFeatures * 4)),
-        },
-      );
-      return enrichment.features as BuildingFeature[];
-    }
-  } catch {
-    // Le client Overture prend le relais.
-  }
-
-  const {
-    downloadOvertureBuildings,
-    enrichBuildingNamesFromOverturePlaces,
-  } = await import("./overture-buildings-client");
-  const payload = await downloadOvertureBuildings(bounds, { maxFeatures });
-  const features = Array.isArray(payload.features)
-    ? (payload.features as BuildingFeature[])
-    : [];
-  const enrichment = await enrichBuildingNamesFromOverturePlaces(
-    features,
-    bounds,
-    {
-      maxPlaces: Math.min(25_000, Math.max(5_000, maxFeatures * 4)),
-    },
-  );
-  return enrichment.features as BuildingFeature[];
+  return await fetchAiBuildings(bounds, maxFeatures) as BuildingFeature[];
 }
 
 function getBuildingFeatureKey(feature: BuildingFeature, fallbackIndex: number) {
@@ -2594,7 +2567,7 @@ async function resolveInteractiveBuildingSelectionArea(
 
   for (const query of queries) {
     try {
-      const result = await searchPlace(query, placeCache);
+      const result = await searchPlace(query, placeCache).catch(() => searchPlace(query.replace(/^(?:ancienne?\s+)/i, "").replace(/,\s*\d+.*$/, ""), placeCache));
       queryTargets.push({
         query,
         coordinate: { lng: result.lng, lat: result.lat },
@@ -2670,6 +2643,7 @@ export type DroMapAiRouteSelectionImportResult = {
   layerName: string | null;
   categories: DromapRoadImportCategory[];
   removed: boolean;
+  categoryLayers?: Array<{ id: string; name: string; category: string | undefined; count: number }>;
 };
 
 function getRoadCommandCategories(command: DroMapAiCommand): DromapRoadImportCategory[] {
@@ -2688,24 +2662,14 @@ function approximateBoundsAreaKm2(bounds: BuildingSearchBounds) {
   return widthKm * heightKm;
 }
 
-function clampRoadBoundsToAllowedArea(
+function validateRoadBoundsArea(
   bounds: BuildingSearchBounds,
   categories: readonly DromapRoadImportCategory[],
 ) {
   const maxArea = getDromapRoadImportMaxAreaKm2(categories);
   const area = approximateBoundsAreaKm2(bounds);
-  if (!maxArea || !Number.isFinite(area) || area <= maxArea * 0.96) return bounds;
-  const ratio = Math.sqrt((maxArea * 0.9) / Math.max(area, 1));
-  const centerLat = (bounds.south + bounds.north) / 2;
-  const centerLng = (bounds.west + bounds.east) / 2;
-  const halfLat = ((bounds.north - bounds.south) / 2) * ratio;
-  const halfLng = ((bounds.east - bounds.west) / 2) * ratio;
-  return {
-    south: centerLat - halfLat,
-    west: centerLng - halfLng,
-    north: centerLat + halfLat,
-    east: centerLng + halfLng,
-  };
+  if (maxArea && area > maxArea) throw new Error("La zone demandée est trop grande pour ces catégories de routes. Réduis-la : aucune sous-zone ne sera choisie automatiquement.");
+  return bounds;
 }
 
 function getWorkspaceRoadBounds(): BuildingSearchBounds | null {
@@ -2727,18 +2691,21 @@ async function resolveRouteSelectionBounds(
   const categories = getRoadCommandCategories(command);
   const workspace = getWorkspaceRoadBounds();
   if (options.preferWorkspace && workspace) {
-    return clampRoadBoundsToAllowedArea(workspace, categories);
+    if (approximateBoundsAreaKm2(workspace) > getDromapRoadImportMaxAreaKm2(categories)) {
+      throw new Error("La zone de travail dépasse la surface disponible pour ces catégories de routes. Réduis-la : aucune sous-zone ne sera choisie automatiquement.");
+    }
+    return workspace;
   }
   if (command.bounds) {
-    return clampRoadBoundsToAllowedArea(normalizeBuildingBounds(command.bounds), categories);
+    return validateRoadBoundsArea(normalizeBuildingBounds(command.bounds), categories);
   }
   const explicitPlace = cleanString(command.place);
   if (explicitPlace) {
     const place = await searchPlace(explicitPlace, placeCache);
-    return clampRoadBoundsToAllowedArea(placeResultBounds(place), categories);
+    return validateRoadBoundsArea(placeResultBounds(place), categories);
   }
   if (workspace) {
-    return clampRoadBoundsToAllowedArea(workspace, categories);
+    return validateRoadBoundsArea(workspace, categories);
   }
   throw new Error(
     "DroMap n'a pas pu déterminer la zone utile aux routes. Précise une ville, une région ou une emprise dans la demande IA.",
@@ -2807,9 +2774,9 @@ export async function prepareDroMapAiAutomaticRouteWorkspaceProposal(
   const merged = mergeBuildingBounds(bounds);
   if (!merged) return null;
   const strictestCategories = routeCommands.flatMap(getRoadCommandCategories);
-  const clamped = clampRoadBoundsToAllowedArea(merged, strictestCategories);
+  const validated = validateRoadBoundsArea(merged, strictestCategories);
   return {
-    bounds: clamped,
+    bounds: validated,
     label: Array.from(new Set(labels)).slice(0, 4).join(" · ") || "secteur utile aux routes demandées",
   };
 }
@@ -2824,7 +2791,7 @@ export async function prepareDroMapAiRouteSelection(
   const categories = getRoadCommandCategories(command);
   const placeCache = new Map<string, PlaceSearchResult>();
   const bounds = searchBoundsOverride
-    ? clampRoadBoundsToAllowedArea(normalizeBuildingBounds(searchBoundsOverride), categories)
+    ? validateRoadBoundsArea(normalizeBuildingBounds(searchBoundsOverride), categories)
     : await resolveRouteSelectionBounds(command, placeCache, { preferWorkspace: true });
   const analysis = await analyzeDromapRoads({ bounds, categories });
   const existingLayers = getDromapManagedRoadLayers();
@@ -2866,12 +2833,14 @@ export function importDroMapAiSelectedRoutes(
     categories: preparation.categories,
     mode: command.roadSelectionMode === "all" ? "all" : "selection",
     layerName: command.layerName,
+    splitByCategory: true,
   });
   return {
     selectedCount: result.selectedCount,
     layerName: result.layerName,
     categories: preparation.categories,
     removed: result.removed,
+    categoryLayers: result.categoryLayers,
   };
 }
 
@@ -2983,7 +2952,9 @@ async function suggestBuildingsForInteractiveSelection(
         });
     }
 
-    const compactBounds = target.bounds
+    if (scored.length) continue;
+    const isComplex = /(campus|universit|hopital|palais|complexe|site militaire|caserne|arsenal)/.test(normalizeKey(target.query));
+    const compactBounds = isComplex && target.bounds
       ? normalizeBuildingBounds(target.bounds)
       : null;
     if (compactBounds) {
@@ -3025,16 +2996,10 @@ async function suggestBuildingsForInteractiveSelection(
 
     if (nearby.length) {
       const nearestDistance = nearby[0].distance;
-      const radius = Math.min(
-        320,
-        Math.max(
-          suggestedBuildingRadiusMeters(target.query),
-          nearestDistance + 55,
-        ),
-      );
+      const radius = isComplex ? Math.min(320, Math.max(suggestedBuildingRadiusMeters(target.query), nearestDistance + 55)) : Math.min(40, nearestDistance + 5);
       nearby
         .filter((entry) => entry.distance <= radius)
-        .slice(0, 55)
+        .slice(0, isComplex ? 55 : 1)
         .forEach((entry) => {
           if (!selected.has(entry.id)) selected.set(entry.id, target.query);
         });
@@ -3101,6 +3066,8 @@ export async function prepareDroMapAiBuildingSelection(
           resolved.queryTargets,
         );
   const requestedQueries = getRequestedBuildingQueries(command);
+  const missingQueries = requestedQueries.filter(query => !resolved.queryTargets.some(target => target.query === query));
+  if (missingQueries.length) warnings.push(`Lieux non localisés : ${missingQueries.join(" ; ")}. Leur sélection doit être complétée manuellement.`);
   if (features.length >= maxFeatures) {
     warnings.push(
       `La zone contient au moins ${maxFeatures.toLocaleString("fr-FR")} bâtiments. La récupération a atteint la limite de sécurité ; si le bâtiment recherché n'apparaît pas, resserre la zone de recherche de cette étape.`,
@@ -3115,7 +3082,7 @@ export async function prepareDroMapAiBuildingSelection(
   return {
     commandId: command.id,
     features,
-    bounds: resolved.bounds,
+    bounds: effectiveSearchBounds,
     suggestedFeatureIds: Array.from(suggested.keys()),
     suggestedGroupByFeatureId: Object.fromEntries(suggested),
     queryTargets: resolved.queryTargets,
@@ -3162,6 +3129,8 @@ export function importDroMapAiSelectedBuildings(
     groups.set(group, [...(groups.get(group) ?? []), feature]);
   });
 
+  const missingGroups = getRequestedBuildingQueries(command).filter(query => !groups.has(query));
+  if (missingGroups.length) throw new Error(`Sélection incomplète : aucun bâtiment pour ${missingGroups.join(" ; ")}. Complète ces groupes avant de valider.`);
   const createdFeatureIds: string[] = [];
   const createdGeoJsonLayerIds: string[] = [];
   const createdLayerNames: string[] = [];
@@ -3183,7 +3152,7 @@ export function importDroMapAiSelectedBuildings(
           useEditorGeoJsonLayersStore.getState().geoJsonLayers.length,
         precisionMode: "original",
         catalogDatasetId: `ai-building-selection:${command.id}:${normalizeKey(groupLabel)}:${Date.now()}`,
-        sourceLabel: "IGN BD TOPO® / Overture Maps",
+        ...buildingSource(groupFeatures),
       },
     );
 
@@ -3207,6 +3176,7 @@ export function importDroMapAiSelectedBuildings(
         ...feature.properties,
         geometryLocked: true,
         locked: false,
+        mapLabelVisibility: command.mapLabelVisibility ?? "hide",
         meta: { version: 1 } as const,
       },
     }));
@@ -3352,7 +3322,7 @@ async function importBuildings(
     fetched.forEach((feature, index) => {
       allFeatures.set(getBuildingFeatureKey(feature, index), feature);
     });
-    if (allFeatures.size >= maxFeatures) break;
+    if (allFeatures.size > maxFeatures) throw new Error(`Plus de ${maxFeatures} bâtiments ont été trouvés. Réduis la zone.`);
   }
 
   const availableFeatures = Array.from(allFeatures.values());
@@ -3372,19 +3342,13 @@ async function importBuildings(
           warnings,
         )
       : availableFeatures;
-  const features = selectedFeatures.slice(0, maxFeatures);
+  const features = selectedFeatures;
 
   if (!features.length) {
     throw new Error(
       selectionMode === "named"
-        ? "Aucun des bâtiments demandés n'a pu être identifié dans les données IGN/Overture de la zone."
+        ? "Aucun des bâtiments demandés n'a pu être identifié dans les données IGN/OpenStreetMap de la zone."
         : "Aucun bâtiment exploitable n'a été trouvé.",
-    );
-  }
-
-  if (selectedFeatures.length > features.length) {
-    warnings.push(
-      `${selectedFeatures.length - features.length} bâtiment(s) n'ont pas été importés pour respecter la limite maxFeatures=${maxFeatures}.`,
     );
   }
 
@@ -3393,7 +3357,7 @@ async function importBuildings(
   ).length;
   if (unnamedBuildingCount > 0) {
     warnings.push(
-      `${unnamedBuildingCount} bâtiment${unnamedBuildingCount > 1 ? "s restent" : " reste"} sans nom propre après croisement IGN, OpenStreetMap et Overture Maps Places. Une recherche supplémentaire par coordonnées est proposée dans l'outil Bâtiments ; elle n'est jamais lancée sans l'accord de l'utilisateur.`,
+      `${unnamedBuildingCount} bâtiment${unnamedBuildingCount > 1 ? "s ne possèdent" : " ne possède"} pas de nom dans la source utilisée. Leurs emprises restent sélectionnables manuellement.`,
     );
   }
 
@@ -3408,7 +3372,7 @@ async function importBuildings(
       existingLayerCount: geoStore.geoJsonLayers.length,
       precisionMode: "original",
       catalogDatasetId: `ai-buildings:${Date.now()}`,
-      sourceLabel: "IGN BD TOPO® / Overture Maps",
+      ...buildingSource(features),
     },
   );
 
@@ -3427,13 +3391,13 @@ async function importBuildings(
           : "Bâtiments éditables individuellement"),
     );
   const dromapFeatures = convertGeoJsonLayerToDromapFeatures(layer, layerId)
-    .slice(0, maxFeatures)
     .map((feature) => ({
       ...feature,
       properties: {
         ...feature.properties,
         geometryLocked: true,
         locked: false,
+        mapLabelVisibility: command.mapLabelVisibility ?? "hide",
         meta: { version: 1 } as const,
       },
     }));
@@ -3441,7 +3405,7 @@ async function importBuildings(
   aliases.set(command.id, layerId);
   if (features.length > dromapFeatures.length) {
     warnings.push(
-      `${features.length - dromapFeatures.length} bâtiment(s) n'ont pas été transformés pour respecter la limite demandée.`,
+      `${features.length - dromapFeatures.length} bâtiment(s) n'ont pas pu être convertis en objets éditables.`,
     );
   }
   return { layer: null, features: dromapFeatures };
@@ -3619,7 +3583,9 @@ export async function executeDroMapAiPlan(
       automaticWorkspaceEstablished = true;
     };
 
+    const createdIdsByCommand = new Map<string, string[]>();
     for (const command of orderedCommands) {
+      const startFeatureIndex = createdFeatures.length;
       if (
         workspaceMode === "automatic" &&
         workspaceDependentCommandSet.has(command) &&
@@ -3654,7 +3620,7 @@ export async function executeDroMapAiPlan(
             flyDroMapAiMapTo(command.coordinate, command.zoom);
           else {
             const selected = hasSelectorConstraint(command.selector)
-              ? selectFeatures(command.selector)
+              ? selectFeatures({ ...command.selector, featureIds: command.selector.featureIds.flatMap(id => createdIdsByCommand.get(id) ?? [aliases.get(id) ?? id]) })
               : createdFeatures;
             const bounds = getFeatureBounds(selected);
             if (bounds)
@@ -3877,7 +3843,8 @@ export async function executeDroMapAiPlan(
         }
         case "create_marker_series": {
           lastLegendCandidateFeatures = [];
-          const features = createMarkerSeries(command, aliases, ensureFeatureHistory);
+          const features = await createMarkerSeries(command, aliases, ensureFeatureHistory, placeCache);
+          if (features[0]) aliases.set(command.id, features[0].id);
           createdFeatures.push(...features);
           lastLegendCandidateFeatures = [...features];
           break;
@@ -4162,6 +4129,7 @@ export async function executeDroMapAiPlan(
           }
           break;
       }
+      if (createdFeatures.length > startFeatureIndex) createdIdsByCommand.set(command.id, createdFeatures.slice(startFeatureIndex).map(feature => feature.id));
       appliedCommandCount += 1;
     }
 

@@ -1,6 +1,7 @@
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextRequest, NextResponse } from "next/server";
 import { checkAiAccess } from "@/lib/dromap/server/ai-access";
+import { resolveLandBoundary } from "@/lib/dromap/server/land-boundaries";
 
 const NOMINATIM_SEARCH_URL =
   process.env.NOMINATIM_SEARCH_URL?.trim() ||
@@ -258,7 +259,7 @@ async function handleGET(request: NextRequest) {
 
   const requestedLanguage = request.headers.get("accept-language") ?? "fr";
   const acceptLanguage = requestedLanguage.slice(0, 80) || "fr";
-  const cacheKey = `${withGeometry ? "geometry::" : ""}${acceptLanguage.toLowerCase()}::${query.toLowerCase()}`;
+  const cacheKey = `${withGeometry ? `geometry:${request.nextUrl.searchParams.get("kind")}::` : ""}${acceptLanguage.toLowerCase()}::${query.toLowerCase()}`;
   const cached = readCachedResponse(cacheKey);
 
   if (cached) {
@@ -270,9 +271,18 @@ async function handleGET(request: NextRequest) {
   }
 
   try {
+    if (withGeometry) {
+      const land = await resolveLandBoundary(query);
+      if (land) return NextResponse.json({ results: [{ geometry: land.geometry, source: land.source, boundaryKind: "land", displayName: land.label }], attribution: land.source.sourceAttribution });
+    }
     const payload = await runSerialized(() =>
       fetchNominatimResults(query, acceptLanguage, withGeometry),
     );
+    // Waterways can use Nominatim lines. Administrative polygons are never
+    // accepted here: they are not evidence of a terrestrial boundary.
+    if (withGeometry) payload.results = payload.results.filter(result =>
+      request.nextUrl.searchParams.get("kind") === "line" &&
+      ["LineString", "MultiLineString"].includes(result.geometry?.type ?? ""));
     writeCachedResponse(cacheKey, payload);
 
     return NextResponse.json(payload, {

@@ -1,4 +1,5 @@
 "use client";
+import { validateExportGeometry } from "./export-validation";
 
 import { isCurvedLineFeature, getCurvedLegendPoints, readCurveHandleIndices } from "@/lib/dromap/curved-line";
 import {
@@ -74,7 +75,6 @@ import {
   getTextFeatureFontSize,
   getTextFeatureItalic,
   getTextFeatureRotation,
-  getTextMapZoomScale,
   hexToRgba,
   splitTextLines,
   TEXT_HORIZONTAL_PADDING,
@@ -5877,6 +5877,7 @@ async function renderCanvasExportToCanvas(
   quality: ExportVisualQuality = "standard",
   showDromapGuestWatermark = false,
 ) {
+  validateExportGeometry(input);
   const points = getWorkspaceBoundsPoints(input.workspaceBounds);
 
   if (!points) {
@@ -6174,8 +6175,7 @@ async function renderCanvasExportToCanvas(
   const exportFeatureMapLabelRenderScale = hasEditorFeatureMapLabelContext
     ? (input.featureMapLabelRenderScale as number) *
       featureMapLabelEditorOffsetScale
-    : getTextMapZoomScale(projectionVisualZoom, fallbackReferenceZoom) *
-      (input.featureMapLabelScale ?? 1);
+    : layout.mapRenderScale * (input.featureMapLabelScale ?? 1);
 
   // Les étiquettes sont calculées ensemble afin d'éviter les chevauchements.
   // Si l'éditeur a déjà résolu leur placement, ce décalage devient la source

@@ -1,5 +1,6 @@
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextRequest, NextResponse } from "next/server";
+import { fetchOsmBuildings } from "@/lib/dromap/server/osm-buildings";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -21,7 +22,7 @@ const MAX_OSM_NAME_CANDIDATES = 6_000;
 const OSM_NAME_GRID_SIZE = 0.0025;
 const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
 ] as const;
 
 const USEFUL_PROPERTY_PATTERN =
@@ -188,8 +189,7 @@ async function fetchIgn(url: URL, accept: string) {
         Accept: accept,
         "User-Agent": "DroMap/1.0 IGN-BDTOPO-workspace-buildings",
       },
-      cache: "force-cache",
-      next: { revalidate: 21_600 },
+      cache: "no-store",
       signal: controller.signal,
     });
 
@@ -1105,6 +1105,9 @@ async function handleGET(request: NextRequest) {
   }
 
   try {
+    if (request.nextUrl.searchParams.get("provider") === "osm") {
+      return NextResponse.json(await fetchOsmBuildings(bounds, MAX_FEATURES));
+    }
     const matchedCount = await getMatchedCount(bounds);
 
     if (matchedCount !== null && matchedCount > MAX_FEATURES) {
@@ -1196,6 +1199,9 @@ async function handleGET(request: NextRequest) {
       startIndex += returnedCount;
     }
 
+    if (features.length >= MAX_FEATURES && knownMatchedCount === null) {
+      return NextResponse.json({ error: `La limite de ${MAX_FEATURES} bâtiments est atteinte sans pouvoir confirmer que la liste est complète. Réduis la zone.`, code: "TOO_MANY_BUILDINGS" }, { status: 413 });
+    }
     if (features.length === 0) {
       return NextResponse.json(
         {
@@ -1239,6 +1245,10 @@ async function handleGET(request: NextRequest) {
       },
     );
   } catch (error) {
+    if (request.nextUrl.searchParams.get("provider") === "osm") {
+      const limit = error instanceof Error && "status" in error && error.status === 413;
+      return NextResponse.json({ error: error instanceof Error ? error.message : "Recherche de bâtiments indisponible." }, { status: limit ? 413 : 503 });
+    }
     const message =
       error instanceof Error && error.name === "AbortError"
         ? "Le service de bâtiments IGN a mis trop de temps à répondre. Réduis la zone de travail puis réessaie."

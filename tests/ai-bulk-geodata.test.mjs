@@ -49,6 +49,8 @@ const modules = {
     readPublicUrl: async (url) => JSON.stringify(url.pathname.endsWith("countries.geojson")
       ? countries : url.pathname.endsWith("places.geojson") ? places : osm),
   },
+  "./land-boundaries": { resolveLandBoundary: async () => null },
+  "./overpass": { queryOverpass: async () => osm },
 };
 new Function("require", "module", "exports", compiled)(
   (name) => {
@@ -69,7 +71,7 @@ test("la zone signifie les limites du projet et exclut les points hors zone", as
 });
 
 test("les villes utilisent un seuil strict et le pays demandé", async () => {
-  const request = parseBulkPlaceRequest("Affiche toutes les villes de plus de 100 000 habitants en France");
+  const request = parseBulkPlaceRequest("Affiche toutes les agglomérations de plus de 100 000 habitants en France");
   assert.equal(request?.minimumPopulation, 100_000);
   const result = await resolveBulkPlaces(request, null);
   assert.deepEqual(result.items.map((item) => item.label), ["Paris", "Lyon"]);

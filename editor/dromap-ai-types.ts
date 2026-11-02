@@ -449,6 +449,7 @@ export type DroMapAiRouteContinuation = {
     commandId: string;
     selectedCount: number;
     layerName: string | null;
+    categoryLayers?: Array<{ id: string; name: string; category: string | undefined; count: number }>;
     categories: DromapRoadImportCategory[];
   }>;
 };
