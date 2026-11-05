@@ -109,7 +109,10 @@ function LoginForm() {
             className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
           />
         </label>
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-between gap-2">
+          <Link href="/resend-confirmation" className="text-sm font-semibold text-teal-700 hover:text-teal-600">
+            E-mail de confirmation perdu ?
+          </Link>
           <Link href="/forgot-password" className="text-sm font-semibold text-teal-700 hover:text-teal-600">
             Mot de passe oublié ?
           </Link>

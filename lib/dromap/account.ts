@@ -119,12 +119,23 @@ export async function signUpDromapAccount(
     authenticated: boolean;
     requiresEmailConfirmation?: boolean;
     account?: DromapAccountSession;
+    code?: string;
     error?: string;
   }>(response);
 }
 
 export async function requestDromapPasswordReset(email: string) {
   const response = await fetch("/api/dromap/auth/request-reset", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  return readApiJson<{ ok: boolean; error?: string }>(response);
+}
+
+export async function resendDromapSignupConfirmation(email: string) {
+  const response = await fetch("/api/dromap/auth/resend-confirmation", {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },

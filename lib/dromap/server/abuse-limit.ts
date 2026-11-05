@@ -5,11 +5,12 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdminKey } from "@/lib/dromap/server/supabase-rest";
 import { securityRpc } from "@/lib/dromap/server/security-rpc";
 
-type Scope = "sign-in" | "sign-up" | "reset" | "contact";
+type Scope = "sign-in" | "sign-up" | "reset" | "confirmation" | "contact";
 const POLICIES = {
   "sign-in": { seconds: 600, identity: 10, network: 60 },
   "sign-up": { seconds: 3600, identity: 3, network: 15 },
   reset: { seconds: 3600, identity: 3, network: 20 },
+  confirmation: { seconds: 3600, identity: 3, network: 20 },
   contact: { seconds: 600, identity: 5, network: 10 },
 } as const;
 

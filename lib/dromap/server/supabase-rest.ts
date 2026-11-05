@@ -9,6 +9,7 @@ export const DROMAP_RECOVERY_COOKIE = "dromap-auth-recovery";
 export type SupabaseAuthUser = {
   id: string;
   email?: string | null;
+  identities?: unknown[] | null;
   user_metadata?: Record<string, unknown> | null;
 };
 
@@ -52,6 +53,7 @@ export type SupabaseTokenPayload = {
     user?: SupabaseAuthUser | null;
   } | null;
   error?: string;
+  code?: string;
   error_description?: string;
   msg?: string;
   message?: string;

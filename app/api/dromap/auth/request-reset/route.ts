@@ -1,6 +1,7 @@
 import { checkAbuseLimit } from "@/lib/dromap/server/abuse-limit";
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
+import { getDromapSiteUrl } from "@/lib/dromap/site-url";
 
 import {
   getSupabaseConfig,
@@ -25,8 +26,7 @@ async function handlePOST(request: Request) {
   }
 
   try {
-    const origin = new URL(request.url).origin;
-    const redirectTo = `${origin}/reset-password`;
+    const redirectTo = `${getDromapSiteUrl()}/reset-password`;
     const authResponse = await supabaseAuthFetch(
       `/auth/v1/recover?redirect_to=${encodeURIComponent(redirectTo)}`,
       { method: "POST", body: JSON.stringify({ email }) },

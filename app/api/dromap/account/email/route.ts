@@ -1,5 +1,6 @@
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
+import { getDromapSiteUrl } from "@/lib/dromap/site-url";
 
 import {
   getAuthenticatedRequestUser,
@@ -45,8 +46,7 @@ async function handlePOST(request: Request) {
   }
 
   try {
-    const origin = new URL(request.url).origin;
-    const redirectTo = `${origin}/account?email-change=confirmed`;
+    const redirectTo = `${getDromapSiteUrl()}/account?email-change=confirmed`;
     const response = await supabaseAuthFetch(
       `/auth/v1/user?redirect_to=${encodeURIComponent(redirectTo)}`,
       {

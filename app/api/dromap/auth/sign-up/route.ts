@@ -1,5 +1,7 @@
 import { checkAbuseLimit } from "@/lib/dromap/server/abuse-limit";
 import { safeReturnTo } from "@/lib/dromap/safe-return-to";
+import { getDromapSiteUrl } from "@/lib/dromap/site-url";
+import { securityRpc } from "@/lib/dromap/server/security-rpc";
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextResponse } from "next/server";
 
@@ -73,8 +75,15 @@ async function handlePOST(request: Request) {
   }
 
   try {
-    const origin = new URL(request.url).origin;
-    const redirectTo = `${origin}/login?confirmed=1&returnTo=${encodeURIComponent(returnTo)}`;
+    const emailExists = await securityRpc("dromap_email_exists", { p_email: email });
+    if (emailExists !== false) {
+      if (emailExists !== true) throw new Error("EMAIL_LOOKUP_UNAVAILABLE");
+      return NextResponse.json(
+        { error: "Cette adresse e-mail est déjà utilisée. Connecte-toi ou renvoie l’e-mail de confirmation.", code: "email_already_used" },
+        { status: 409 },
+      );
+    }
+    const redirectTo = `${getDromapSiteUrl()}/login?confirmed=1&returnTo=${encodeURIComponent(returnTo)}`;
     const authResponse = await supabaseAuthFetch(
       `/auth/v1/signup?redirect_to=${encodeURIComponent(redirectTo)}`,
       {
@@ -95,6 +104,12 @@ async function handlePOST(request: Request) {
     );
     const payload = await parseJsonResponse<SupabaseTokenPayload>(authResponse);
     if (!authResponse.ok) {
+      if (payload?.code === "user_already_exists") {
+        return NextResponse.json(
+          { error: "Cette adresse e-mail est déjà utilisée. Connecte-toi ou renvoie l’e-mail de confirmation.", code: "email_already_used" },
+          { status: 409 },
+        );
+      }
       return NextResponse.json(
         {
           error:
@@ -110,6 +125,12 @@ async function handlePOST(request: Request) {
 
     const tokens = extractTokens(payload);
     const user = tokens.user ?? payload?.user ?? null;
+    if (Array.isArray(user?.identities) && user.identities.length === 0) {
+      return NextResponse.json(
+        { error: "Cette adresse e-mail est déjà utilisée. Connecte-toi ou renvoie l’e-mail de confirmation.", code: "email_already_used" },
+        { status: 409 },
+      );
+    }
     if (tokens.accessToken && tokens.refreshToken && user?.id) {
       const response = NextResponse.json({
         authenticated: true,

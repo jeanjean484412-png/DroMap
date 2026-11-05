@@ -24,6 +24,7 @@ function SignupForm() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [confirmationSent, setConfirmationSent] = useState(false);
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
 
@@ -35,6 +36,7 @@ function SignupForm() {
     }
     setLoading(true);
     setError(null);
+    setEmailError(null);
     const result = await signUpDromapAccount(
       email,
       password,
@@ -44,7 +46,11 @@ function SignupForm() {
       DROMAP_TERMS_VERSION,
     );
     if (!result.ok || !result.data) {
-      setError(result.error ?? "Création du compte impossible.");
+      if (result.status === 409 && result.data?.code === "email_already_used") {
+        setEmailError(result.error ?? "Cette adresse e-mail est déjà utilisée.");
+      } else {
+        setError(result.error ?? "Création du compte impossible.");
+      }
       setLoading(false);
       return;
     }
@@ -71,6 +77,9 @@ function SignupForm() {
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-900">
           Le projet que tu utilisais en invité reste conservé sur cet appareil et sera transféré automatiquement dès ta première connexion.
         </div>
+        <Link href="/resend-confirmation" className="mt-4 block text-center text-sm font-semibold text-teal-700 hover:text-teal-600">
+          E-mail introuvable ou lien expiré ? Renvoyer la confirmation
+        </Link>
         <Link href={`/login?returnTo=${encodeURIComponent(returnTo)}`} className="mt-5 inline-flex w-full justify-center rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-teal-500">
           Aller à la connexion
         </Link>
@@ -117,9 +126,12 @@ function SignupForm() {
             autoComplete="email"
             required
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
+            onChange={(event) => { setEmail(event.target.value); setEmailError(null); }}
+            aria-invalid={emailError ? true : undefined}
+            aria-describedby={emailError ? "signup-email-error" : undefined}
+            className={`mt-2 w-full rounded-xl border px-3 py-2.5 outline-none focus:ring-4 ${emailError ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-100" : "border-slate-300 focus:border-teal-500 focus:ring-teal-100"}`}
           />
+          {emailError ? <span id="signup-email-error" role="alert" className="mt-1 block text-xs font-normal text-red-700">{emailError}</span> : null}
         </label>
         <label className="block text-sm font-semibold text-slate-800">
           Mot de passe
