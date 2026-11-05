@@ -1,6 +1,6 @@
 import { checkAbuseLimit } from "@/lib/dromap/server/abuse-limit";
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
-import { getSupabaseConfig, supabaseAuthFetch } from "@/lib/dromap/server/supabase-rest";
+import { getSupabaseConfig, parseJsonResponse, supabaseAuthFetch } from "@/lib/dromap/server/supabase-rest";
 import { NextResponse } from "next/server";
 import { getDromapSiteUrl } from "@/lib/dromap/site-url";
 
@@ -26,7 +26,15 @@ async function handlePOST(request: Request) {
       { method: "POST", body: JSON.stringify({ type: "signup", email }) },
     );
     if (response.status === 429) {
-      return NextResponse.json({ error: "Trop de demandes. Réessaie dans quelques instants." }, { status: 429 });
+      const payload = await parseJsonResponse<{ code?: string }>(response);
+      return NextResponse.json(
+        {
+          error: payload?.code === "over_email_send_rate_limit"
+            ? "La limite d’envoi des e-mails de confirmation est atteinte. Réessaie plus tard."
+            : "Trop de demandes. Réessaie dans quelques instants.",
+        },
+        { status: 429 },
+      );
     }
     if (!response.ok && response.status !== 400 && response.status !== 404 && response.status !== 422) {
       return NextResponse.json({ error: "L’e-mail de confirmation ne peut pas être envoyé pour le moment." }, { status: 503 });

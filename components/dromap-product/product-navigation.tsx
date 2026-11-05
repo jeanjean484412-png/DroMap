@@ -247,10 +247,17 @@ export function DromapProductNavigation() {
             <span aria-hidden="true" className="text-[13px] leading-none">©</span>
             Crédits
           </Link>
-          <div className="truncate text-sm font-semibold">{accountName}</div>
-          <div className="mt-1 text-xs text-slate-400">
-            {userMode === "guest" ? "Projet temporaire sur cet appareil" : accountEmail ?? "Compte DroMap"}
-          </div>
+          <Link
+            href="/account"
+            onClick={() => setMobileOpen(false)}
+            aria-label={`Ouvrir le compte de ${accountName || "DroMap"}`}
+            className="-mx-2 block rounded-xl px-2 py-2 transition hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+          >
+            <span className="block truncate text-sm font-semibold">{accountName}</span>
+            <span className="mt-1 block truncate text-xs text-slate-400">
+              {userMode === "guest" ? "Projet temporaire sur cet appareil" : accountEmail ?? "Compte DroMap"}
+            </span>
+          </Link>
         </div>
       </aside>
 
