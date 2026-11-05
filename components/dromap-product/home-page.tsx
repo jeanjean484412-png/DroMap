@@ -30,7 +30,7 @@ export function DromapHomePage() {
           </div>
         </section>
         <section className={styles.exampleGrid} aria-label="Exemples de cartes DroMap">
-          <figure className={styles.exampleCard}>
+          <div className={styles.exampleCard}>
             <div className={styles.exampleImage}>
               <Image
                 src="/examples/DromapExample.webp"
@@ -39,8 +39,7 @@ export function DromapHomePage() {
                 sizes="(max-width: 700px) 100vw, 33vw"
               />
             </div>
-            <figcaption>Établissements et emprises militaires à Lyon</figcaption>
-          </figure>
+          </div>
           {[2, 3].map((slot) => <div key={slot} className={styles.examplePlaceholder}>carte d’exemple à venir</div>)}
         </section>
         <section className={styles.section}>
