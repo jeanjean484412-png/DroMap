@@ -19,7 +19,6 @@ const nextConfig: NextConfig = {
     // publications (y compris celles déjà enregistrées) ou les routes API.
     localPatterns: [
       { pathname: "/dromap-logo-mark-crop.png", search: "" },
-      { pathname: "/examples/DromapExample.webp", search: "" },
     ],
     remotePatterns: [],
   },
