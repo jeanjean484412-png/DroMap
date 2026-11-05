@@ -517,8 +517,15 @@ export function WorkspaceActions() {
               onClick={handleModifyWorkspace}
               className="flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-neutral-100"
             >
-              <span className="mt-0.5 text-base" aria-hidden="true">
-                ▣
+              <span className="mt-0.5 shrink-0 text-blue-700" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                  <rect x="4" y="5" width="16" height="14" rx="1" />
+                  <rect x="2.5" y="3.5" width="3" height="3" rx="0.5" fill="white" />
+                  <rect x="18.5" y="3.5" width="3" height="3" rx="0.5" fill="white" />
+                  <rect x="2.5" y="17.5" width="3" height="3" rx="0.5" fill="white" />
+                  <rect x="18.5" y="17.5" width="3" height="3" rx="0.5" fill="white" />
+                  <path d="M12 3.5v3M12 17.5v3M2.5 12h3M18.5 12h3" />
+                </svg>
               </span>
               <span>
                 <strong className="block text-xs text-neutral-900">
@@ -527,7 +534,7 @@ export function WorkspaceActions() {
                     : "Continuer la sélection manuelle"}
                 </strong>
                 <span className="mt-0.5 block text-[11px] leading-relaxed text-neutral-500">
-                  Dessine directement le rectangle sur la carte.
+                  Ajuste le rectangle avec ses poignées, ou trace une nouvelle zone.
                 </span>
               </span>
             </button>
@@ -544,8 +551,11 @@ export function WorkspaceActions() {
                   : "cursor-not-allowed opacity-45",
               ].join(" ")}
             >
-              <span className="mt-0.5 text-base" aria-hidden="true">
-                ◉
+              <span className="mt-0.5 shrink-0 text-sky-700" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M3 12h18M12 3c-3 2.5-4.5 5.5-4.5 9s1.5 6.5 4.5 9M12 3c3 2.5 4.5 5.5 4.5 9S15 18.5 12 21" />
+                </svg>
               </span>
               <span>
                 <strong className="block text-xs text-neutral-900">

@@ -56,3 +56,21 @@ html.dromap-reduce-motion [role="dialog"] {
 @media (prefers-reduced-motion: reduce) {
   .dromap-skeleton { animation: none; }
 }
+
+.dromap-workspace-handle {
+  box-sizing: border-box;
+  border: 2px solid #1d4ed8;
+  border-radius: 5px;
+  background: #fff;
+  box-shadow: 0 1px 5px #0f172a66;
+  cursor: move;
+}
+
+.dromap-workspace-handle--north,
+.dromap-workspace-handle--south { cursor: ns-resize; }
+.dromap-workspace-handle--east,
+.dromap-workspace-handle--west { cursor: ew-resize; }
+.dromap-workspace-handle--north-west,
+.dromap-workspace-handle--south-east { cursor: nwse-resize; }
+.dromap-workspace-handle--north-east,
+.dromap-workspace-handle--south-west { cursor: nesw-resize; }

@@ -15,9 +15,12 @@ const nextConfig: NextConfig = {
     ] }];
   },
   images: {
-    // Seul le logo statique utilise next/image. Ne jamais optimiser les images
-    // de publications (y compris celles déjà enregistrées) ou les routes API.
-    localPatterns: [{ pathname: "/dromap-logo-mark-crop.png", search: "" }],
+    // Optimiser uniquement les visuels statiques connus, jamais les images de
+    // publications (y compris celles déjà enregistrées) ou les routes API.
+    localPatterns: [
+      { pathname: "/dromap-logo-mark-crop.png", search: "" },
+      { pathname: "/examples/DromapExample.webp", search: "" },
+    ],
     remotePatterns: [],
   },
   async redirects() {

@@ -27,6 +27,16 @@ export type WorkspaceClampBounds = {
   east: number;
 };
 
+export type WorkspaceResizeHandle =
+  | "north-west"
+  | "north"
+  | "north-east"
+  | "east"
+  | "south-east"
+  | "south"
+  | "south-west"
+  | "west";
+
 type LatLngLike = {
   lat: number;
   lng: number;
@@ -207,6 +217,39 @@ export function clampWorkspaceBounds(
     bounds.northEast,
     clampBounds,
   );
+}
+
+/** Déplace uniquement les côtés tenus par la poignée, sans retourner le rectangle. */
+export function resizeWorkspaceBounds(
+  bounds: WorkspaceBounds,
+  handle: WorkspaceResizeHandle,
+  point: LatLngLike,
+  clampBounds?: WorkspaceClampBounds | null,
+): WorkspaceBounds {
+  const original = clampWorkspaceBounds(bounds, clampBounds);
+  const limits = clampBounds ?? {
+    south: WORKSPACE_MIN_LAT,
+    north: WORKSPACE_MAX_LAT,
+    west: WORKSPACE_MIN_LNG,
+    east: WORKSPACE_MAX_LNG,
+  };
+  const southWest = { ...original.southWest };
+  const northEast = { ...original.northEast };
+
+  if (handle.includes("north")) {
+    northEast.lat = clampToRange(point.lat, southWest.lat + WORKSPACE_MIN_SIZE_DEGREES, limits.north);
+  }
+  if (handle.includes("south")) {
+    southWest.lat = clampToRange(point.lat, limits.south, northEast.lat - WORKSPACE_MIN_SIZE_DEGREES);
+  }
+  if (handle.includes("west")) {
+    southWest.lng = clampToRange(point.lng, limits.west, northEast.lng - WORKSPACE_MIN_SIZE_DEGREES);
+  }
+  if (handle.includes("east")) {
+    northEast.lng = clampToRange(point.lng, southWest.lng + WORKSPACE_MIN_SIZE_DEGREES, limits.east);
+  }
+
+  return normalizeWorkspaceBounds(southWest, northEast, clampBounds);
 }
 
 export function boundsFromRectangle(

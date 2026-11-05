@@ -348,7 +348,7 @@ const TOUR_STEPS: TourStep[] = [
       {
         label: "Zone de travail",
         explanation:
-          "Il est possible de modifier la zone de travail en deux clics ou de sélectionner le monde entier lorsque le fond de carte le permet.",
+          "Trace une nouvelle zone en deux clics ou étire le rectangle existant grâce aux poignées des angles et des côtés. Le monde entier peut aussi être sélectionné lorsque le fond de carte le permet.",
         target: { text: "Zone de travail" },
       },
       {

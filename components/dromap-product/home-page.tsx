@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { DromapBetaNotice } from "./beta-notice";
 import { IBM_Plex_Sans } from "next/font/google";
 import { DromapHomeAccountActions } from "@/components/dromap-product/home-account-actions";
@@ -28,8 +29,19 @@ export function DromapHomePage() {
             <div><div className={styles.actions}><Link className={styles.button} href="/projects/new">Commencer ma carte <span aria-hidden="true">↗</span></Link><Link className={styles.textLink} href="/library">Explorer les cartes</Link></div><div className={styles.note}>Créez une carte sans inscription. Export PNG standard disponible.</div></div>
           </div>
         </section>
-        <section className={styles.exampleGrid} aria-label="Cartes d’exemple à venir">
-          {[1, 2, 3].map((slot) => <div key={slot} className={styles.examplePlaceholder}>carte d’exemple à venir</div>)}
+        <section className={styles.exampleGrid} aria-label="Exemples de cartes DroMap">
+          <figure className={styles.exampleCard}>
+            <div className={styles.exampleImage}>
+              <Image
+                src="/examples/DromapExample.webp"
+                alt="Carte de Lyon montrant les établissements d’enseignement supérieur et les emprises militaires avec une légende colorée"
+                fill
+                sizes="(max-width: 700px) 100vw, 33vw"
+              />
+            </div>
+            <figcaption>Établissements et emprises militaires à Lyon</figcaption>
+          </figure>
+          {[2, 3].map((slot) => <div key={slot} className={styles.examplePlaceholder}>carte d’exemple à venir</div>)}
         </section>
         <section className={styles.section}>
           <p className={styles.eyebrow}>Du premier repère à la carte finale</p>

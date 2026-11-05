@@ -153,10 +153,11 @@ const HELP_ARTICLES: HelpArticle[] = [
       "cadrage",
       "limites",
       "deux clics",
+      "poignées",
     ],
     steps: [
       "La zone de travail correspond au territoire utilisé pour construire et cadrer la carte.",
-      "Il est possible de modifier la zone en deux clics ou de sélectionner le monde entier lorsque le fond de carte le permet.",
+      "Il est possible de tracer une nouvelle zone en deux clics, puis de l’ajuster avec les poignées des angles et des côtés. Le monde entier peut aussi être sélectionné lorsque le fond de carte le permet.",
       "Après validation, DroMap calcule le cadrage de référence et le niveau de détail associé.",
       "Modifier la zone ne doit pas supprimer silencieusement les objets déjà présents à l’extérieur de la nouvelle emprise.",
     ],
