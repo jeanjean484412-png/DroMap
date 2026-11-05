@@ -22,7 +22,7 @@ export function getExportCanvasFontFamily() {
   return 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 }
 
-export type ExportTextFontWeight = 400 | 500 | 600 | 700;
+export type ExportTextFontWeight = 400 | 500 | 600 | 700 | 800;
 
 let textMeasureCanvas: HTMLCanvasElement | null = null;
 let textMeasureContext: CanvasRenderingContext2D | null = null;

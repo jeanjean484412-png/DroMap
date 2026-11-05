@@ -2485,9 +2485,11 @@ function ExportMapTitlePreview(input: {
       onClick={(event) => {
         drag.consumeClickAfterDrag(event);
       }}
-      className="absolute z-[950] max-w-[82%] cursor-grab touch-none select-none whitespace-pre-wrap border-0 bg-transparent px-2 py-1 text-center font-extrabold leading-[1.12] transition active:cursor-grabbing hover:ring-2 hover:ring-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-500"
+      className="absolute z-[950] cursor-grab touch-none select-none whitespace-pre-wrap break-words border-0 bg-transparent px-2 py-1 text-center font-extrabold leading-[1.12] transition active:cursor-grabbing hover:ring-2 hover:ring-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-500"
       style={{
         ...getFreeMapElementPositionStyle(input.position),
+        width: "max-content",
+        maxWidth: "calc(100% - 16px)",
         fontSize: input.fontSize,
         color: input.color,
         textShadow:

@@ -118,7 +118,7 @@ import {
 import { drawZoneHatchingOnCanvas } from "./zone-hatching";
 import { drawExportScaleBarOnCanvas, type ExportScaleUnits } from "./export-scale";
 import { drawExportNorthArrowOnCanvas } from "./export-north-arrow";
-import { getExportCanvasFontFamily } from "./export-text-metrics";
+import { getExportCanvasFontFamily, wrapExportTextLines } from "./export-text-metrics";
 import { renderMapLibreStyleToCanvas } from "./openfreemap-maplibre";
 import {
   drawAlignedZoneOutlineOnCanvas,
@@ -2696,7 +2696,7 @@ function drawMapTitleOnCanvas(
     mapRect.x + clamp(safePosition.x, 0, 1) * mapRect.width;
   const centerY =
     mapRect.y + clamp(safePosition.y, 0, 1) * mapRect.height;
-  const maxWidth = Math.max(120, mapRect.width * 0.82);
+  const maxWidth = Math.max(1, mapRect.width - 16);
   const lineHeight = safeFontSize * 1.12;
 
   ctx.save();
@@ -2706,12 +2706,7 @@ function drawMapTitleOnCanvas(
   ctx.lineJoin = "round";
   ctx.miterLimit = 2;
 
-  const lines = safeTitle
-    .split(/\r?\n/)
-    .flatMap((line) =>
-      wrapLegendTextLines(line.trim() || " ", maxWidth, safeFontSize),
-    )
-    .slice(0, 6);
+  const lines = wrapExportTextLines(safeTitle, maxWidth, safeFontSize, 800);
   const totalHeight = Math.max(lineHeight, lines.length * lineHeight);
   const minCenterY = mapRect.y + totalHeight / 2 + 8;
   const maxCenterY = mapRect.y + mapRect.height - totalHeight / 2 - 8;
