@@ -1,5 +1,6 @@
 "use client";
-import { DROMAP_BETA, DROMAP_BETA_PROJECT_LIMIT } from "@/lib/dromap/release-mode";
+import { DROMAP_BETA } from "@/lib/dromap/release-mode";
+import { hasReachedDromapProjectQuota } from "@/lib/dromap/project-quota";
 
 import { create } from "zustand";
 import { createScopedProjectCache } from "@/lib/dromap/scoped-project-cache";
@@ -1738,7 +1739,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   },
 
   createProject: (options = {}) => {
-    if (DROMAP_BETA && get().projects.filter(p => p.status !== "trashed").length >= DROMAP_BETA_PROJECT_LIMIT) { set({ lastSyncError: "La version de test permet de conserver trois cartes. Place une carte dans la corbeille pour libérer une place." }); return null; }
+    if (hasReachedDromapProjectQuota(get())) { set({ lastSyncError: "La version de test permet de conserver trois cartes. Place une carte dans la corbeille pour libérer une place." }); return null; }
     const state = get();
     if (options.id && state.projects.some(project => project.id === options.id)) return null;
     const activeProjects = state.projects.filter((project) => project.status !== "trashed");
@@ -1779,7 +1780,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   },
 
   duplicateProject: async (projectId) => {
-    if (DROMAP_BETA && get().projects.filter(p => p.status !== "trashed").length >= DROMAP_BETA_PROJECT_LIMIT) { set({ lastSyncError: "La version de test permet de conserver trois cartes. Place une carte dans la corbeille pour libérer une place." }); return null; }
+    if (hasReachedDromapProjectQuota(get())) { set({ lastSyncError: "La version de test permet de conserver trois cartes. Place une carte dans la corbeille pour libérer une place." }); return null; }
     const state = get();
     if (state.userMode === "guest") return null;
     const initialSource = state.projects.find((project) => project.id === projectId);
@@ -2061,7 +2062,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   },
 
   restoreProject: (projectId) => {
-    if (DROMAP_BETA && get().projects.filter(p => p.status !== "trashed").length >= DROMAP_BETA_PROJECT_LIMIT) { set({ lastSyncError: "La version de test permet de conserver trois cartes. Place une carte dans la corbeille pour libérer une place." }); return; }
+    if (hasReachedDromapProjectQuota(get())) { set({ lastSyncError: "La version de test permet de conserver trois cartes. Place une carte dans la corbeille pour libérer une place." }); return; }
     const target = get().projects.find(p => p.id === projectId);
     if (target && isDromapTrashExpired(target)) { set({lastSyncError: "Le délai de restauration de cette carte est expiré."}); return; }
     set((state) => ({

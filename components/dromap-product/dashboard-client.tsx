@@ -465,10 +465,15 @@ function DashboardContent() {
   }, [userMode]);
 
   function startNewProject(replaceGuestProject = false) {
+    setImportError(null);
     const id = createProject({ replaceGuestProject });
     if (!id && userMode === "guest") {
       setPendingAction("new");
       setReplaceDialogOpen(true);
+      return;
+    }
+    if (!id) {
+      setImportError(useDromapProductStore.getState().lastSyncError ?? "Le projet n’a pas pu être créé.");
       return;
     }
     if (id) {
@@ -569,7 +574,7 @@ function DashboardContent() {
       ) : null}
 
       {importError ? (
-        <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <div role="alert" className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {importError}
         </div>
       ) : null}

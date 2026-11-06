@@ -11,9 +11,11 @@ test('beta release: atomic quota, legacy retention, restoration, and restricted 
       create schema cron; create function cron.schedule(text,text,text) returns bigint language sql as $$select 1::bigint$$;
       create table dromap_projects(owner_id uuid,project_id text,current_revision text,chunk_count integer,encoding text,payload_size_bytes bigint,updated_at timestamptz,deleted_at timestamptz,metadata jsonb,primary key(owner_id,project_id));
       create table dromap_project_chunks(owner_id uuid,project_id text);
+      create table dromap_billing_accounts(user_id uuid primary key,plan text);
     `);
     const sql=readFileSync(new URL('../../supabase/migrations/20261102203608_dromap_beta_release.sql',import.meta.url),'utf8');
     await db.exec(sql);
+    await db.exec(readFileSync(new URL('../../supabase/migrations/20261106171831_dromap_tester_project_quota.sql',import.meta.url),'utf8'));
     const save=async(id,revision=null,patch={})=>(await db.query('select dromap_beta_save_project($1,$2,$3,null,$4::jsonb) r',[owner,id,revision,JSON.stringify({current_revision:'revision1',chunk_count:1,encoding:'base64',payload_size_bytes:4,metadata:{},deleted_at:null,...patch})])).rows[0].r;
     const results=await Promise.all(['a','b','c','d'].map(id=>save(id)));
     assert.equal(results.filter(r=>r.row).length,3);
@@ -32,6 +34,16 @@ test('beta release: atomic quota, legacy retention, restoration, and restricted 
     await db.exec('select dromap_purge_beta_trash()');
     assert.equal((await db.query("select count(*)::int n from dromap_projects where project_id='legacy'")).rows[0].n,1);
     assert.equal((await db.query("select count(*)::int n from dromap_projects where project_id='a'")).rows[0].n,0);
+    assert.equal((await save('forged',null,{metadata:{plan:'tester'}})).error,'LIMIT','client metadata cannot grant tester access');
+    await db.query('insert into dromap_billing_accounts values ($1,$2)',[owner,'tester']);
+    assert.ok((await save('tester-fourth')).row,'server-stored tester plan bypasses quota');
+    assert.ok((await save('tester-fifth')).row);
+    const testerTrash=await save('tester-fifth','revision1',{deleted_at:new Date().toISOString()});
+    assert.ok(testerTrash.row.trash_expires_at,'tester beta trash retains its existing lifetime');
+    assert.ok((await save('tester-fifth','revision1')).row,'tester restoration bypasses quota');
+    await db.query('update dromap_billing_accounts set plan=$1 where user_id=$2',['free',owner]);
+    assert.equal((await save('downgraded')).error,'LIMIT','removing tester access restores quota');
+    assert.ok((await save('tester-fourth','revision1')).row,'existing maps remain editable above quota');
     await db.exec('set role authenticated');
     await assert.rejects(save('x'),/permission denied/);
     await assert.rejects(db.query('select dromap_purge_beta_trash()'),/permission denied/);
