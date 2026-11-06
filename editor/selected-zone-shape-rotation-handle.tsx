@@ -23,7 +23,6 @@ import {
   getQuickShapeRotation,
   resizeQuickShapeFeatureFromMapPointer,
   rotateQuickShapeFeature,
-  type QuickShapeRectangleResizeHandle,
   type QuickShapeResizeHandle,
 } from "./quick-shape";
 

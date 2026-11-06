@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMap } from "react-leaflet";
 
@@ -47,7 +47,7 @@ export function SelectedTextInlineEditor() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const finishingRef = useRef(false);
   const [draftValue, setDraftValue] = useState("");
-  const [viewportRevision, setViewportRevision] = useState(0);
+  const [, setViewportRevision] = useState(0);
 
   const editingTextFeatureId = useEditorTextEditStore(
     (state) => state.editingTextFeatureId,
@@ -73,7 +73,7 @@ export function SelectedTextInlineEditor() {
     };
   }, [map]);
 
-  useEffect(() => {
+  const onTextEditingStarted = useEffectEvent(() => {
     if (!editingTextFeatureId || !isTextPointFeature(feature)) {
       return;
     }
@@ -87,6 +87,10 @@ export function SelectedTextInlineEditor() {
     });
 
     return () => window.cancelAnimationFrame(animationFrameId);
+  });
+
+  useEffect(() => {
+    return onTextEditingStarted();
   }, [editingTextFeatureId, feature?.id]);
 
   useEffect(() => {
@@ -103,7 +107,9 @@ export function SelectedTextInlineEditor() {
     }
   }, [editingTextFeatureId, feature, layers, stopEditingTextFeature]);
 
-  const editorGeometry = useMemo(() => {
+  // Leaflet change sa projection sans changer l'identité de `map`. Recalculer
+  // lors des rendus déclenchés par zoom/move/resize garde le texte bien placé.
+  const editorGeometry = (() => {
     if (!isTextPointFeature(feature)) {
       return null;
     }
@@ -128,7 +134,7 @@ export function SelectedTextInlineEditor() {
       metrics,
       rotation: getTextFeatureRotation(feature),
     };
-  }, [draftValue, feature, map, viewportRevision]);
+  })();
 
   if (!isTextPointFeature(feature) || !editorGeometry) {
     return null;

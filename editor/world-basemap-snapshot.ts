@@ -5,7 +5,6 @@ import { DROMAP_FULL_WORLD_WORKSPACE_BOUNDS } from "@/lib/dromap/workspace-bound
 
 import { renderMapLibreStyleToCanvas } from "./openfreemap-maplibre";
 
-const TILE_SIZE = 256;
 const WEB_MERCATOR_MAX_LATITUDE = 85.05112878;
 const DEFAULT_WORLD_SNAPSHOT_SIZE = 2048;
 const SATELLITE_WORLD_SNAPSHOT_SIZE = 3072;

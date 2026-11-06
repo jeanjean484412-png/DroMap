@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DroMapFeature } from "@/lib/dromap/feature";
 import {
   getFeatureLockOverride,
@@ -252,19 +252,19 @@ export function SelectedFeatureActions() {
     const feature = featuresById.get(featureId);
     return feature ? [feature] : [];
   });
-  const effectiveSelectedFeatureIds = selectedFeatureIds.length
-    ? selectedFeatureIds
-    : selectedFeatureId
-      ? [selectedFeatureId]
-      : [];
+  const effectiveSelectedFeatureIds = useMemo(
+    () => selectedFeatureIds.length ? selectedFeatureIds : selectedFeatureId ? [selectedFeatureId] : [],
+    [selectedFeatureIds, selectedFeatureId],
+  );
   const selectedFeatureIdsSignature = effectiveSelectedFeatureIds.join("|");
+  const hasSelectedFeature = Boolean(selectedFeature);
 
   function commitActionBarPosition(position: FloatingActionBarPosition | null) {
     actionBarPositionRef.current = position;
     setActionBarPosition(position);
   }
 
-  function repositionActionBar(force = false) {
+  const repositionActionBar = useCallback((force = false) => {
     const bar = actionBarRef.current;
     if (!bar || typeof window === "undefined") return;
 
@@ -305,12 +305,12 @@ export function SelectedFeatureActions() {
     ) {
       commitActionBarPosition(next);
     }
-  }
+  }, [effectiveSelectedFeatureIds]);
 
   useEffect(() => {
     if (
       typeof document === "undefined" ||
-      !selectedFeature ||
+      !hasSelectedFeature ||
       !effectiveSelectedFeatureIds.length
     ) {
       setIsDraggingSelectedObject(false);
@@ -388,7 +388,7 @@ export function SelectedFeatureActions() {
       window.removeEventListener("blur", finishObjectDrag);
       window.removeEventListener("resize", finishObjectDrag);
     };
-  }, [selectedFeature?.id, selectedFeatureIdsSignature]);
+  }, [hasSelectedFeature, selectedFeature?.id, selectedFeatureIdsSignature, effectiveSelectedFeatureIds, repositionActionBar]);
 
   const floatingBarStyle = actionBarPosition
     ? { left: actionBarPosition.x, top: actionBarPosition.y }

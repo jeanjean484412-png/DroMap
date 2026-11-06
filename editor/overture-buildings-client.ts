@@ -245,8 +245,16 @@ async function loadOvertureCatalog(signal?: AbortSignal) {
 
 async function loadGeoArrowModule() {
   if (!geoArrowModulePromise) {
-    geoArrowModulePromise = import("@geoarrow/geoarrow-wasm")
-      .then((module) => {
+    // Le point d'entrée ESM charge le WASM comme un asset navigateur, sans
+    // entraîner le chargeur WASM Node de Turbopack dans le rendu serveur.
+    geoArrowModulePromise = import("@geoarrow/geoarrow-wasm/esm/index.js")
+      .then(async (module) => {
+        await module.default({
+          module_or_path: new URL(
+            "@geoarrow/geoarrow-wasm/esm/index_bg.wasm",
+            import.meta.url,
+          ),
+        });
         const typedModule = module as unknown as GeoArrowModule;
         typedModule.set_panic_hook();
         return typedModule;

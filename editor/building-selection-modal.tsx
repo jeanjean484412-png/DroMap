@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import L, { type GeoJSON as LeafletGeoJsonLayer, type Path } from "leaflet";
 import { MapContainer, Rectangle, TileLayer, useMap } from "react-leaflet";
@@ -249,8 +249,10 @@ function SelectionLayer({
   const onToggleRef = useRef(onToggle);
   const idByFeatureRef = useRef(new WeakMap<object, string>());
 
-  selectedIdsRef.current = selectedIds;
-  onToggleRef.current = onToggle;
+  useLayoutEffect(() => {
+    selectedIdsRef.current = selectedIds;
+    onToggleRef.current = onToggle;
+  }, [selectedIds, onToggle]);
 
   useEffect(() => {
     const paneName = "dromap-building-selection-pane";
@@ -397,7 +399,7 @@ export function BuildingSelectionModal({
       })),
     [workingFeatures],
   );
-  const initialSelectedIdsKey = initialSelectedIds.join("|");
+  const initialSelectedIdsKey = JSON.stringify(initialSelectedIds);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
     () => new Set(initialSelectedIds),
   );
@@ -410,7 +412,7 @@ export function BuildingSelectionModal({
 
   useEffect(() => {
     setWorkingFeatures(features.map((feature) => structuredClone(feature)));
-    setSelectedIds(new Set(initialSelectedIds));
+    setSelectedIds(new Set<string>(JSON.parse(initialSelectedIdsKey)));
     setNameSearchMessage(null);
     setNameProposals([]);
     setAcceptedProposalIds(new Set());

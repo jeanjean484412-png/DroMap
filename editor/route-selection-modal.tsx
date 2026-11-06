@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import L, { type GeoJSON as LeafletGeoJsonLayer, type Path } from "leaflet";
 import { MapContainer, Rectangle, TileLayer, useMap } from "react-leaflet";
@@ -8,7 +8,6 @@ import "leaflet/dist/leaflet.css";
 
 import {
   getDromapRoadImportCategoryLabel,
-  type DromapRoadImportCategory,
 } from "@/lib/dromap/road-import";
 
 export type RouteSelectionFeature = GeoJSON.Feature<
@@ -132,8 +131,10 @@ function SelectionLayer({
   const onToggleRef = useRef(onToggle);
   const idByFeatureRef = useRef(new WeakMap<object, string>());
 
-  selectedIdsRef.current = selectedIds;
-  onToggleRef.current = onToggle;
+  useLayoutEffect(() => {
+    selectedIdsRef.current = selectedIds;
+    onToggleRef.current = onToggle;
+  }, [selectedIds, onToggle]);
 
   useEffect(() => {
     const paneName = "dromap-route-selection-pane";
@@ -241,14 +242,14 @@ export function RouteSelectionModal({
   onConfirm,
 }: RouteSelectionModalProps) {
   const [portalReady, setPortalReady] = useState(false);
-  const initialSelectedIdsKey = initialSelectedIds.join("|");
+  const initialSelectedIdsKey = JSON.stringify(initialSelectedIds);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
     () => new Set(initialSelectedIds),
   );
 
   useEffect(() => setPortalReady(true), []);
   useEffect(() => {
-    setSelectedIds(new Set(initialSelectedIds));
+    setSelectedIds(new Set<string>(JSON.parse(initialSelectedIdsKey)));
   }, [features, initialSelectedIdsKey]);
 
   useEffect(() => {

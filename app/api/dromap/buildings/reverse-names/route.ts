@@ -7,9 +7,6 @@ export const maxDuration = 60;
 const NOMINATIM_REVERSE_URL =
   process.env.NOMINATIM_REVERSE_URL?.trim() ||
   "https://nominatim.openstreetmap.org/reverse";
-const NOMINATIM_USER_AGENT =
-  process.env.NOMINATIM_USER_AGENT?.trim() ||
-  "DroMap/1.0 building-reverse-name";
 const MAX_POINTS_PER_REQUEST = 20;
 const MIN_DELAY_MS = 1_100;
 const REQUEST_TIMEOUT_MS = 10_000;

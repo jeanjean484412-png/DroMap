@@ -5,6 +5,7 @@ import { DromapAiAssistantIcon } from "@/components/dromap-product/ai-assistant-
 import dynamic from "next/dynamic";
 import {
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -571,16 +572,19 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     setError(null);
   }, [conversationStorageKey, productProjectId, setProjectAiConversation]);
 
+  const onManualWorkspaceValidated = useEffectEvent(() => {
+    appendMessage("system", "Zone manuelle validée. Tu peux maintenant décrire la carte à créer ou la modification à effectuer.");
+  });
+  const onAutomaticBuildingZoneValidated = useEffectEvent(openCurrentBuildingSelection);
+  const onAutomaticRouteZoneValidated = useEffectEvent(openCurrentRouteSelection);
+
   useEffect(() => {
     if (!pendingManualWorkspace || !workspaceValidated) return;
     setPendingManualWorkspace(false);
     setWorkspaceMode("manual");
     setIsOpen(true);
     setError(null);
-    appendMessage(
-      "system",
-      "Zone manuelle validée. Tu peux maintenant décrire la carte à créer ou la modification à effectuer.",
-    );
+    onManualWorkspaceValidated();
   }, [pendingManualWorkspace, workspaceValidated]);
 
   useEffect(() => {
@@ -616,7 +620,7 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     setIsOpen(false);
     setError(null);
 
-    void openCurrentBuildingSelection(validatedBounds);
+    void onAutomaticBuildingZoneValidated(validatedBounds);
   }, [
     automaticBuildingZoneReview,
     buildingFlow,
@@ -653,7 +657,7 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
     });
     setIsOpen(false);
     setError(null);
-    void openCurrentRouteSelection(validatedBounds);
+    void onAutomaticRouteZoneValidated(validatedBounds);
   }, [
     automaticRouteZoneReview,
     routeFlow,

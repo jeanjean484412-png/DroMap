@@ -1413,6 +1413,58 @@ function MarkerSymbolPreview({
   );
 }
 
+function getGeoJsonToolCapabilities(
+  geoJsonLayers: Parameters<typeof getGeoJsonLayerLoadedDisplayData>[0][],
+  workspaceBounds: Parameters<typeof getGeoJsonLayerLoadedDisplayData>[1],
+) {
+  let canFill = false;
+  let canTrace = false;
+
+  for (const layer of geoJsonLayers) {
+    if (layer.visible === false || layer.opacity <= 0) {
+      continue;
+    }
+
+    const displayData = getGeoJsonLayerLoadedDisplayData(
+      layer,
+      workspaceBounds,
+    );
+
+    for (const feature of displayData.features) {
+      const geometryType = feature.geometry.type;
+      const isPolygon =
+        geometryType === "Polygon" || geometryType === "MultiPolygon";
+      const isTraceableGeometry =
+        geometryType === "LineString" ||
+        geometryType === "MultiLineString" ||
+        isPolygon;
+
+      const isClosedLine =
+        geometryType === "LineString" &&
+        isClosedVectorRing(feature.geometry.coordinates);
+      const hasClosedMultiLine =
+        geometryType === "MultiLineString" &&
+        feature.geometry.coordinates.some((line) => isClosedVectorRing(line));
+      if (isPolygon || isClosedLine || hasClosedMultiLine) {
+        canFill = true;
+      }
+
+      if (isTraceableGeometry) {
+        const style = getEffectiveGeoJsonFeatureStyle(layer, feature);
+        if (style.strokeOpacity > 0 && style.zoneStrokeEnabled !== false) {
+          canTrace = true;
+        }
+      }
+
+      if (canFill && canTrace) {
+        return { canFill, canTrace };
+      }
+    }
+  }
+
+  return { canFill, canTrace };
+}
+
 type ModeToolbarProps = {
   variant?: "floating" | "embedded";
   showUtilityControls?: boolean;
@@ -1477,54 +1529,10 @@ export default function ModeToolbar({
       (layer) => layer.displayRole !== "country-neighbor-context",
     ),
   );
-  const geoJsonToolCapabilities = useMemo(() => {
-    let canFill = false;
-    let canTrace = false;
-
-    for (const layer of geoJsonLayers) {
-      if (layer.visible === false || layer.opacity <= 0) {
-        continue;
-      }
-
-      const displayData = getGeoJsonLayerLoadedDisplayData(
-        layer,
-        workspaceBounds,
-      );
-
-      for (const feature of displayData.features) {
-        const geometryType = feature.geometry.type;
-        const isPolygon =
-          geometryType === "Polygon" || geometryType === "MultiPolygon";
-        const isTraceableGeometry =
-          geometryType === "LineString" ||
-          geometryType === "MultiLineString" ||
-          isPolygon;
-
-        const isClosedLine =
-          geometryType === "LineString" &&
-          isClosedVectorRing(feature.geometry.coordinates);
-        const hasClosedMultiLine =
-          geometryType === "MultiLineString" &&
-          feature.geometry.coordinates.some((line) => isClosedVectorRing(line));
-        if (isPolygon || isClosedLine || hasClosedMultiLine) {
-          canFill = true;
-        }
-
-        if (isTraceableGeometry) {
-          const style = getEffectiveGeoJsonFeatureStyle(layer, feature);
-          if (style.strokeOpacity > 0 && style.zoneStrokeEnabled !== false) {
-            canTrace = true;
-          }
-        }
-
-        if (canFill && canTrace) {
-          return { canFill, canTrace };
-        }
-      }
-    }
-
-    return { canFill, canTrace };
-  }, [geoJsonLayers, workspaceBounds]);
+  const geoJsonToolCapabilities = useMemo(
+    () => getGeoJsonToolCapabilities(geoJsonLayers, workspaceBounds),
+    [geoJsonLayers, workspaceBounds],
+  );
   const canUseFillToolOnCurrentBasemap =
     hasUsableBasemapBoundaries || geoJsonToolCapabilities.canFill;
   const canUseTraceToolOnCurrentBasemap =

@@ -72,7 +72,7 @@ function SignupForm() {
     return (
       <DromapAuthShell
         title="Confirme ton adresse e-mail"
-        description="Ton compte est créé. Clique sur le lien reçu par e-mail, puis connecte-toi à DroMap."
+        description="Consulte tes e-mails pour confirmer ton adresse. Si tu possèdes déjà un compte, connecte-toi ou utilise le lien de renvoi de confirmation."
       >
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-900">
           Le projet que tu utilisais en invité reste conservé sur cet appareil et sera transféré automatiquement dès ta première connexion.

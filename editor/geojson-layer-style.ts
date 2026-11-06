@@ -146,13 +146,13 @@ export function getEffectiveGeoJsonFeatureStyle(
   };
 }
 
-export function getGeoJsonDashArray(style: Pick<DromapGeoJsonLayerStyle, "dashStyle">) {
+export function getGeoJsonDashArray(style: Pick<DromapGeoJsonLayerStyle, "dashStyle">, graphicScale = 1) {
   if (style.dashStyle === "dotted") {
-    return "1 8";
+    return `${graphicScale} ${8 * graphicScale}`;
   }
 
   if (style.dashStyle === "dashed") {
-    return "10 8";
+    return `${10 * graphicScale} ${8 * graphicScale}`;
   }
 
   return undefined;

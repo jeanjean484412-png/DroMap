@@ -3,7 +3,7 @@
 import { isCurvedLineFeature, getCurvedLegendPath } from "@/lib/dromap/curved-line";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   ChangeEvent as ReactChangeEvent,
@@ -605,155 +605,6 @@ function renderLegendPreviewLineStroke({
           />
         );
       })}
-    </g>
-  );
-}
-
-function renderLegendPreviewZoneOutline({
-  feature,
-  color,
-  opacity,
-  x,
-  y,
-  width,
-  height,
-  strokeWidth,
-  symbolStyle,
-}: {
-  feature: DroMapFeature;
-  color: string;
-  opacity: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  strokeWidth: number;
-  symbolStyle?: ExportLegendSymbolStyle;
-}) {
-  const dashStyle = symbolStyle?.dashStyle ?? getLegendDashStyle(feature);
-
-  if (dashStyle === "solid") {
-    return (
-      <rect
-        x={x}
-        y={y}
-        width={width}
-        height={height}
-        rx={2}
-        fill="none"
-        stroke={color}
-        strokeOpacity={opacity}
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    );
-  }
-
-  if (dashStyle === "dotted") {
-    const radius = Math.max(1.6, Math.min(strokeWidth * 0.58, 2.8));
-    const spacing = Math.max(radius * 2 + 0.5, symbolStyle?.dotSpacing ?? 7);
-    const topBottomCount = Math.max(2, Math.round(width / spacing) + 1);
-    const sideCount = Math.max(2, Math.round(height / spacing) + 1);
-    const topBottom = createEvenSteps(topBottomCount, x, x + width);
-    const sides = createEvenSteps(sideCount, y, y + height).slice(1, -1);
-
-    return (
-      <g fill={color} fillOpacity={opacity}>
-        {topBottom.map((dotX, index) => (
-          <circle key={`top-${index}`} cx={dotX} cy={y} r={radius} />
-        ))}
-        {topBottom.map((dotX, index) => (
-          <circle
-            key={`bottom-${index}`}
-            cx={dotX}
-            cy={y + height}
-            r={radius}
-          />
-        ))}
-        {sides.map((dotY, index) => (
-          <circle key={`left-${index}`} cx={x} cy={dotY} r={radius} />
-        ))}
-        {sides.map((dotY, index) => (
-          <circle key={`right-${index}`} cx={x + width} cy={dotY} r={radius} />
-        ))}
-      </g>
-    );
-  }
-
-  const segments = [];
-  const horizontalGap = Math.max(
-    0,
-    symbolStyle?.dashGap ?? Math.max(5, width * 0.08),
-  );
-  const verticalGap = Math.max(
-    0,
-    symbolStyle?.dashGap ?? Math.max(4, height * 0.12),
-  );
-  const requestedLength = Math.max(1, symbolStyle?.dashLength ?? 14);
-  const horizontalSegments = Math.max(
-    1,
-    Math.floor(
-      (width + horizontalGap) / Math.max(1, requestedLength + horizontalGap),
-    ),
-  );
-  const verticalSegments = Math.max(
-    1,
-    Math.floor(
-      (height + verticalGap) / Math.max(1, requestedLength + verticalGap),
-    ),
-  );
-  const horizontalLength = Math.min(
-    requestedLength,
-    (width - horizontalGap * (horizontalSegments - 1)) / horizontalSegments,
-  );
-  const verticalLength = Math.min(
-    requestedLength,
-    (height - verticalGap * (verticalSegments - 1)) / verticalSegments,
-  );
-
-  for (let index = 0; index < horizontalSegments; index += 1) {
-    const x1 = x + index * (horizontalLength + horizontalGap);
-    const x2 = x1 + horizontalLength;
-
-    segments.push(
-      <line key={`top-${index}`} x1={x1} y1={y} x2={x2} y2={y} />,
-      <line
-        key={`bottom-${index}`}
-        x1={x1}
-        y1={y + height}
-        x2={x2}
-        y2={y + height}
-      />,
-    );
-  }
-
-  for (let index = 0; index < verticalSegments; index += 1) {
-    const y1 = y + index * (verticalLength + verticalGap);
-    const y2 = y1 + verticalLength;
-
-    segments.push(
-      <line key={`left-${index}`} x1={x} y1={y1} x2={x} y2={y2} />,
-      <line
-        key={`right-${index}`}
-        x1={x + width}
-        y1={y1}
-        x2={x + width}
-        y2={y2}
-      />,
-    );
-  }
-
-  return (
-    <g
-      stroke={color}
-      strokeOpacity={opacity}
-      strokeWidth={strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      fill="none"
-    >
-      {segments}
     </g>
   );
 }
@@ -1635,6 +1486,8 @@ function ExportLegendPreview({
     }
   }
 
+  const onWindowPointerDrag = useEffectEvent(updatePointerDrag);
+
   useEffect(() => {
     if (!pointerDrag) {
       return;
@@ -1646,7 +1499,7 @@ function ExportLegendPreview({
       }
 
       event.preventDefault();
-      updatePointerDrag(event.pointerId, event.clientX, event.clientY);
+      onWindowPointerDrag(event.pointerId, event.clientX, event.clientY);
     }
 
     function handleWindowPointerUp(event: PointerEvent) {

@@ -41,7 +41,6 @@ import {
 import { getDromapExportDataAttributionText } from "./export-attribution";
 import { getFeatureDashGap, getFeatureDashLength, getFeatureDashStyle, getFeatureMarkerSize } from "./feature-style";
 import {
-  FEATURE_MAP_LABEL_FONT_SIZE_PX,
   FEATURE_MAP_LABEL_MAX_WIDTH_PX,
   createFeatureMapLabelScreenLayouts,
   getFeatureMapLabelAnchor,
@@ -1366,24 +1365,6 @@ function getCanvasLineDash(feature: DroMapFeature, lineWidth: number) {
   return [0.001, dashGap];
 }
 
-function getLegendZoneStrokeWidth(feature: DroMapFeature, weight: number) {
-  const dashStyle = getFeatureDashStyle(feature);
-  const baseWidth = Math.max(3, Math.min(weight * 1.35, 9));
-
-  // Dans la légende, un contour trop épais masque vite les interruptions des
-  // tirets/pointillés. On limite seulement le figuré de légende pour préserver
-  // la lisibilité, sans changer l'objet réel sur la carte ou dans le PNG.
-  if (dashStyle === "dotted") {
-    return Math.min(baseWidth, 4.2);
-  }
-
-  if (dashStyle === "dashed") {
-    return Math.min(baseWidth, 5);
-  }
-
-  return baseWidth;
-}
-
 function getCleanLegendLineWidth(weight: number) {
   return Math.max(3.2, Math.min(weight * 1.35, 7.2));
 }
@@ -1504,139 +1485,6 @@ function drawCleanLegendLineStrokeOnCanvas(
     ctx.lineTo(segmentEndX, centerY + offset2);
     ctx.stroke();
   }
-}
-
-function drawCleanLegendZoneOutlineOnCanvas(
-  ctx: CanvasRenderingContext2D,
-  feature: DroMapFeature,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  color: string,
-  opacity: number,
-  lineWidth: number,
-  symbolStyle?: ExportLegendSymbolStyle,
-) {
-  const dashStyle = symbolStyle?.dashStyle ?? getFeatureDashStyle(feature);
-
-  ctx.save();
-  ctx.globalAlpha = opacity;
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.lineWidth = lineWidth;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-
-  if (dashStyle === "solid") {
-    ctx.beginPath();
-    ctx.roundRect(x, y, width, height, 2);
-    ctx.stroke();
-    ctx.restore();
-    return;
-  }
-
-  if (dashStyle === "dotted") {
-    const radius = Math.max(1.6, Math.min(lineWidth * 0.58, 2.8));
-    const spacing = Math.max(radius * 2 + 0.5, symbolStyle?.dotSpacing ?? 7);
-    const topBottomCount = Math.max(2, Math.round(width / spacing) + 1);
-    const sideCount = Math.max(2, Math.round(height / spacing) + 1);
-
-    for (let index = 0; index < topBottomCount; index += 1) {
-      const progress = topBottomCount <= 1 ? 0 : index / (topBottomCount - 1);
-      const dotX = x + width * progress;
-
-      ctx.beginPath();
-      ctx.arc(dotX, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(dotX, y + height, radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    for (let index = 1; index < sideCount - 1; index += 1) {
-      const progress = index / (sideCount - 1);
-      const dotY = y + height * progress;
-
-      ctx.beginPath();
-      ctx.arc(x, dotY, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(x + width, dotY, radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    ctx.restore();
-    return;
-  }
-
-  const horizontalGap = Math.max(
-    0,
-    symbolStyle?.dashGap ?? Math.max(5, width * 0.08),
-  );
-  const verticalGap = Math.max(
-    0,
-    symbolStyle?.dashGap ?? Math.max(4, height * 0.12),
-  );
-  const requestedLength = Math.max(1, symbolStyle?.dashLength ?? 14);
-  const horizontalSegments = Math.max(
-    1,
-    Math.floor(
-      (width + horizontalGap) / Math.max(1, requestedLength + horizontalGap),
-    ),
-  );
-  const verticalSegments = Math.max(
-    1,
-    Math.floor(
-      (height + verticalGap) / Math.max(1, requestedLength + verticalGap),
-    ),
-  );
-  const horizontalLength = Math.min(
-    requestedLength,
-    Math.max(
-      1,
-      (width - horizontalGap * (horizontalSegments - 1)) / horizontalSegments,
-    ),
-  );
-  const verticalLength = Math.min(
-    requestedLength,
-    Math.max(
-      1,
-      (height - verticalGap * (verticalSegments - 1)) / verticalSegments,
-    ),
-  );
-
-  for (let index = 0; index < horizontalSegments; index += 1) {
-    const segmentX = x + index * (horizontalLength + horizontalGap);
-
-    ctx.beginPath();
-    ctx.moveTo(segmentX, y);
-    ctx.lineTo(segmentX + horizontalLength, y);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(segmentX, y + height);
-    ctx.lineTo(segmentX + horizontalLength, y + height);
-    ctx.stroke();
-  }
-
-  for (let index = 0; index < verticalSegments; index += 1) {
-    const segmentY = y + index * (verticalLength + verticalGap);
-
-    ctx.beginPath();
-    ctx.moveTo(x, segmentY);
-    ctx.lineTo(x, segmentY + verticalLength);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(x + width, segmentY);
-    ctx.lineTo(x + width, segmentY + verticalLength);
-    ctx.stroke();
-  }
-
-  ctx.restore();
 }
 
 function geoJsonPositionToLatLng(position: unknown): ExportLatLngPoint | null {

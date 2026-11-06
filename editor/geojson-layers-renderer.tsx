@@ -27,6 +27,7 @@ type RenderedGeoJsonLayerEntry = {
   sourceData: DromapGeoJsonLayer["data"];
   precisionMode: DromapGeoJsonLayer["precisionMode"];
   loadingKey: string;
+  graphicScale: number;
 };
 
 function isRenderedGeoJsonLayer(layer: L.Layer): layer is DromapLeafletGeoJsonLayer {
@@ -56,7 +57,7 @@ function removeRenderedGeoJsonLayers(map: L.Map) {
  * monte toutes les features chargées dans la zone de travail et n'importe
  * aucun module situé sous `editor-only`.
  */
-export function FullGeoJsonLayersRenderer() {
+export function FullGeoJsonLayersRenderer({ graphicScale = 1 }: { graphicScale?: number }) {
   const map = useMap();
   const layers = useEditorGeoJsonLayersStore((state) => state.geoJsonLayers);
   const workspaceBounds = useEditorWorkspaceStore((state) => state.workspaceBounds);
@@ -87,10 +88,11 @@ export function FullGeoJsonLayersRenderer() {
         previousEntry.sourceData === layer.data &&
         previousEntry.precisionMode === layer.precisionMode &&
         previousEntry.loadingKey === loadingKey &&
+        previousEntry.graphicScale === graphicScale &&
         previousEntry.paneName === paneName;
 
       if (canReuseLayer) {
-        applyLeafletGeoJsonLayerStyle(previousEntry.leafletLayer, layer, paneName);
+        applyLeafletGeoJsonLayerStyle(previousEntry.leafletLayer, layer, paneName, graphicScale);
         return;
       }
 
@@ -102,6 +104,7 @@ export function FullGeoJsonLayersRenderer() {
         layer,
         paneName,
         workspaceBounds,
+        graphicScale,
       );
       leafletLayer.addTo(map);
       renderedLayersRef.current.set(layer.id, {
@@ -111,9 +114,10 @@ export function FullGeoJsonLayersRenderer() {
         sourceData: layer.data,
         precisionMode: layer.precisionMode,
         loadingKey,
+        graphicScale,
       });
     });
-  }, [layers, map, workspaceBounds]);
+  }, [graphicScale, layers, map, workspaceBounds]);
 
   useEffect(() => {
     const renderedLayers = renderedLayersRef.current;

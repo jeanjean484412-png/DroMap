@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import {
   LegendPanel,
@@ -32,12 +32,14 @@ export function DromapEditorInspector({
     onCollapsedChange?.(nextCollapsed);
   }
 
+  const setCollapsedFromEffect = useEffectEvent(setCollapsed);
+
   useEffect(() => {
     const mobileQuery = window.matchMedia("(max-width: 767px)");
-    if (mobileQuery.matches) setCollapsed(true);
+    if (mobileQuery.matches) setCollapsedFromEffect(true);
 
     const handleViewportChange = (event: MediaQueryListEvent) => {
-      if (event.matches) setCollapsed(true);
+      if (event.matches) setCollapsedFromEffect(true);
     };
     mobileQuery.addEventListener("change", handleViewportChange);
     return () => mobileQuery.removeEventListener("change", handleViewportChange);
@@ -77,7 +79,7 @@ export function DromapEditorInspector({
 
     setActiveTab("selected");
     if (collapsed) {
-      setCollapsed(false);
+      setCollapsedFromEffect(false);
     }
   }, [
     collapsed,

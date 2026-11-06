@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
@@ -303,10 +303,12 @@ export function LayersPanel({
     }
   }, [capabilities.canSaveLayersToLibrary]);
 
+  const onSavedLayersAccessRequested = useEffectEvent(requestSavedLayersAccess);
+
   useEffect(() => {
     const handleOpenSavedLayersLibrary = () => {
       if (!capabilities.canSaveLayersToLibrary) {
-        requestSavedLayersAccess();
+        onSavedLayersAccessRequested();
         return;
       }
       setPanelZIndex(bringFloatingPanelToFront());
@@ -318,8 +320,9 @@ export function LayersPanel({
   }, [capabilities.canSaveLayersToLibrary, embedded]);
 
   useEffect(() => {
+    const pendingSliderPatches = pendingSliderPatchesRef.current;
     return () => {
-      (Object.values(pendingSliderPatchesRef.current) as PendingSliderPatch[]).forEach((pending) => {
+      (Object.values(pendingSliderPatches) as PendingSliderPatch[]).forEach((pending) => {
         if (pending.timeoutId) {
           window.clearTimeout(pending.timeoutId);
         }

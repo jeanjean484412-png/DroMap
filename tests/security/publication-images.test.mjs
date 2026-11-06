@@ -35,7 +35,7 @@ function loadSource(relativePath, mocks = {}) {
 
 const imageModule = loadSource("lib/dromap/server/image-data-url.ts");
 const { decodeSupportedImageDataUrl: decode } = imageModule;
-const publicationValues = loadSource("lib/dromap/publications.ts");
+const publicationValues = loadSharedSource("lib/dromap/publications.ts");
 const dataUrl = (bytes, format = "jpeg") => `data:image/${format};base64,${bytes.toString("base64")}`;
 let jpeg, webp, avif, png;
 

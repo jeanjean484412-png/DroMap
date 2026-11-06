@@ -17,14 +17,14 @@ function loadTs(relativePath) {
   const code = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  const module = { exports: {} };
-  cache.set(path, module.exports);
+  const loadedModule = { exports: {} };
+  cache.set(path, loadedModule.exports);
   const localRequire = (name) => name.startsWith(".")
     ? loadTs(resolve(dirname(path), `${name}.ts`))
     : require(name);
-  new Function("require", "module", "exports", code)(localRequire, module, module.exports);
-  cache.set(path, module.exports);
-  return module.exports;
+  new Function("require", "module", "exports", code)(localRequire, loadedModule, loadedModule.exports);
+  cache.set(path, loadedModule.exports);
+  return loadedModule.exports;
 }
 
 const { chooseAiModel } = loadTs("editor/dromap-ai-router.ts");

@@ -82,6 +82,7 @@ export function getGeoJsonLayerPathOptions(
   feature: DromapGeoJsonFeature | null | undefined,
   paneName: string,
   renderer?: L.Renderer,
+  graphicScale = 1,
 ): L.PathOptions & { pane: string; pmIgnore: boolean } {
   const style = getEffectiveGeoJsonFeatureStyle(layer, feature);
   const layerOpacity = Math.max(0, Math.min(1, layer.opacity));
@@ -97,11 +98,11 @@ export function getGeoJsonLayerPathOptions(
     stroke: strokeOpacity > 0,
     fill: style.zoneFillEnabled && fillOpacity > 0,
     color: style.strokeColor,
-    weight: Math.max(1, style.strokeWeight),
+    weight: Math.max(1, style.strokeWeight * graphicScale),
     opacity: strokeOpacity,
     fillColor: style.fillColor,
     fillOpacity,
-    dashArray: getGeoJsonDashArray(style),
+    dashArray: getGeoJsonDashArray(style, graphicScale),
     lineCap: "round",
     lineJoin: "round",
     className: "dromap-geojson-layer",
@@ -113,16 +114,17 @@ export function getGeoJsonLayerPointOptions(
   feature: DromapGeoJsonFeature | null | undefined,
   paneName: string,
   renderer?: L.Renderer,
+  graphicScale = 1,
 ): L.CircleMarkerOptions & { pane: string; pmIgnore: boolean } {
   const style = getEffectiveGeoJsonFeatureStyle(layer, feature);
   const layerOpacity = Math.max(0, Math.min(1, layer.opacity));
   const pointOpacity = Math.max(0, Math.min(1, style.strokeOpacity * layerOpacity));
 
   return {
-    ...getGeoJsonLayerPathOptions(layer, feature, paneName, renderer),
+    ...getGeoJsonLayerPathOptions(layer, feature, paneName, renderer, graphicScale),
     stroke: pointOpacity > 0,
     fill: pointOpacity > 0,
-    radius: Math.max(2, style.markerSize / 2),
+    radius: Math.max(2, (style.markerSize / 2) * graphicScale),
     color: style.strokeColor,
     fillColor: style.strokeColor,
     opacity: pointOpacity,
@@ -154,6 +156,7 @@ export function applyLeafletGeoJsonFeatureStyle(
   layer: DromapGeoJsonLayer,
   paneName: string,
   renderer?: L.Renderer,
+  graphicScale = 1,
 ) {
   setGeoJsonFeatureReference(featureLayer, feature);
   const isPoint =
@@ -163,7 +166,7 @@ export function applyLeafletGeoJsonFeatureStyle(
   // Point direct reçoit les options de CircleMarker ; un MultiPoint est un
   // FeatureGroup et reçoit le style Path via FeatureGroup#setStyle.
   if (featureLayer instanceof L.CircleMarker && isPoint) {
-    const options = getGeoJsonLayerPointOptions(layer, feature, paneName, renderer);
+    const options = getGeoJsonLayerPointOptions(layer, feature, paneName, renderer, graphicScale);
     featureLayer.setRadius(options.radius ?? 4);
     featureLayer.setStyle(options);
     return;
@@ -172,7 +175,7 @@ export function applyLeafletGeoJsonFeatureStyle(
   const pathLayer = featureLayer as L.Path;
   if (typeof pathLayer.setStyle === "function") {
     pathLayer.setStyle(
-      getGeoJsonLayerPathOptions(layer, feature, paneName, renderer),
+      getGeoJsonLayerPathOptions(layer, feature, paneName, renderer, graphicScale),
     );
   }
 }
@@ -181,11 +184,12 @@ export function applyLeafletGeoJsonLayerStyle(
   leafletLayer: L.GeoJSON,
   layer: DromapGeoJsonLayer,
   paneName: string,
+  graphicScale = 1,
 ) {
   leafletLayer.eachLayer((childLayer) => {
     const feature = (childLayer as DromapLeafletGeoJsonLayer).feature;
     if (feature) {
-      applyLeafletGeoJsonFeatureStyle(childLayer, feature, layer, paneName);
+      applyLeafletGeoJsonFeatureStyle(childLayer, feature, layer, paneName, undefined, graphicScale);
     }
   });
 }
@@ -194,21 +198,22 @@ export function createFullLeafletGeoJsonLayer(
   layer: DromapGeoJsonLayer,
   paneName: string,
   workspaceBounds: WorkspaceBounds | null | undefined,
+  graphicScale = 1,
 ): L.GeoJSON {
   const displayData = getGeoJsonLayerLoadedDisplayData(layer, workspaceBounds);
   const geoJsonLayer = L.geoJSON(displayData as GeoJSON.GeoJsonObject, {
     pane: paneName,
     interactive: !layer.locked,
     style: (feature) =>
-      getGeoJsonLayerPathOptions(layer, feature as DromapGeoJsonFeature, paneName),
+      getGeoJsonLayerPathOptions(layer, feature as DromapGeoJsonFeature, paneName, undefined, graphicScale),
     pointToLayer: (feature, latLng) =>
       L.circleMarker(
         latLng,
-        getGeoJsonLayerPointOptions(layer, feature as DromapGeoJsonFeature, paneName),
+        getGeoJsonLayerPointOptions(layer, feature as DromapGeoJsonFeature, paneName, undefined, graphicScale),
       ),
   });
 
-  applyLeafletGeoJsonLayerStyle(geoJsonLayer, layer, paneName);
+  applyLeafletGeoJsonLayerStyle(geoJsonLayer, layer, paneName, graphicScale);
   markGeoJsonLayer(geoJsonLayer, layer.id);
 
   return geoJsonLayer;

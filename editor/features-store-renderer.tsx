@@ -500,8 +500,6 @@ function applyFeatureLayerDrawOrder(
     currentLayers.push(layer);
     layersByFeatureId.set(ownerId, currentLayers);
 
-    const orderIndex = orderIndexByFeatureId.get(ownerId) ?? 0;
-
     if (layer instanceof L.Marker) {
       layer.setZIndexOffset(0);
     }

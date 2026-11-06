@@ -291,7 +291,7 @@ export function DromapPersonalLibrarySync() {
       const task = (async () => {
         do {
           rerunRef.current = false;
-          let meta = readMeta(accountUserId);
+          const meta = readMeta(accountUserId);
           let localPayload = buildLocalPayload(meta);
           const localSignature = stableSignature(localPayload);
           const localChangedBeforeFetch = localSignature !== meta.syncedSignature;

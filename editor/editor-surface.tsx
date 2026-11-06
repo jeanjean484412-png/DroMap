@@ -295,7 +295,7 @@ export function EditorSurface({
   return (
     <div className="relative h-full w-full overflow-hidden">
       <SharedEditorStyles />
-      <EditorMapCore />
+      <EditorMapCore onMapPresentationReady={onMapPresentationReady} />
       <ModeToolbar />
       <LegendPanel />
       <LayersPanel />

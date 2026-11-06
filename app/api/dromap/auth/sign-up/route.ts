@@ -19,6 +19,15 @@ function passwordLooksValid(password: string) {
   return password.length >= 8;
 }
 
+function emailConfirmationResponse() {
+  // Ne pas révéler si l'adresse est nouvelle, confirmée ou encore en attente.
+  return NextResponse.json({
+    authenticated: false,
+    requiresEmailConfirmation: true,
+    message: "Consulte tes e-mails pour confirmer ton adresse, ou connecte-toi si tu possèdes déjà un compte.",
+  });
+}
+
 async function handlePOST(request: Request) {
   const networkLimit = await checkAbuseLimit(request, "sign-up");
   if (networkLimit) return networkLimit;
@@ -78,10 +87,7 @@ async function handlePOST(request: Request) {
     const emailExists = await securityRpc("dromap_email_exists", { p_email: email });
     if (emailExists !== false) {
       if (emailExists !== true) throw new Error("EMAIL_LOOKUP_UNAVAILABLE");
-      return NextResponse.json(
-        { error: "Cette adresse e-mail est déjà utilisée. Connecte-toi ou renvoie l’e-mail de confirmation.", code: "email_already_used" },
-        { status: 409 },
-      );
+      return emailConfirmationResponse();
     }
     const redirectTo = `${getDromapSiteUrl()}/login?confirmed=1&returnTo=${encodeURIComponent(returnTo)}`;
     const authResponse = await supabaseAuthFetch(
@@ -105,10 +111,7 @@ async function handlePOST(request: Request) {
     const payload = await parseJsonResponse<SupabaseTokenPayload>(authResponse);
     if (!authResponse.ok) {
       if (payload?.code === "user_already_exists") {
-        return NextResponse.json(
-          { error: "Cette adresse e-mail est déjà utilisée. Connecte-toi ou renvoie l’e-mail de confirmation.", code: "email_already_used" },
-          { status: 409 },
-        );
+        return emailConfirmationResponse();
       }
       return NextResponse.json(
         {
@@ -126,10 +129,7 @@ async function handlePOST(request: Request) {
     const tokens = extractTokens(payload);
     const user = tokens.user ?? payload?.user ?? null;
     if (Array.isArray(user?.identities) && user.identities.length === 0) {
-      return NextResponse.json(
-        { error: "Cette adresse e-mail est déjà utilisée. Connecte-toi ou renvoie l’e-mail de confirmation.", code: "email_already_used" },
-        { status: 409 },
-      );
+      return emailConfirmationResponse();
     }
     if (tokens.accessToken && tokens.refreshToken && user?.id) {
       const response = NextResponse.json({
@@ -150,11 +150,7 @@ async function handlePOST(request: Request) {
       return setAuthCookies(response, tokens.accessToken, tokens.refreshToken, tokens.expiresIn);
     }
 
-    return NextResponse.json({
-      authenticated: false,
-      requiresEmailConfirmation: true,
-      message: "Compte créé. Consulte ton e-mail pour confirmer ton adresse avant de te connecter.",
-    });
+    return emailConfirmationResponse();
   } catch {
     return NextResponse.json(
       { error: "Le service de création de compte est momentanément indisponible." },

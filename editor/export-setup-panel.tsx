@@ -313,7 +313,6 @@ export function ExportSetupPanel() {
     enabled: productRuntimeEnabled,
     projectId: productProjectId,
     capabilities,
-    singleMapMaxExportPurchased,
     singleMapPurchaseRequiresZoneLock,
     singleMapZoneLocked,
     markSingleMapZoneLockedLocally,

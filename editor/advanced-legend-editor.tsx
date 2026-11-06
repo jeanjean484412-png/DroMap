@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useEffectEvent,
   useId,
   useMemo,
   useRef,
@@ -1289,12 +1290,14 @@ export function AdvancedLegendEditor({
     setAlignmentPassesRemaining(4);
   }
 
+  const onAlignmentPass = useEffectEvent(applyLegendSizesFromCurrentMapScale);
+
   useEffect(() => {
     if (alignmentPassesRemaining <= 0) {
       return;
     }
 
-    applyLegendSizesFromCurrentMapScale();
+    onAlignmentPass();
     setAlignmentPassesRemaining((remaining) => Math.max(0, remaining - 1));
   }, [
     alignmentPassesRemaining,

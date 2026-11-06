@@ -165,10 +165,11 @@ function MarkerVisualPreview({
   symbol,
   size = 32,
 }: MarkerVisualPreviewProps) {
-  const style = feature.properties?.style ?? {};
+  const featureStyle = feature.properties?.style;
   const html = useMemo(
-    () =>
-      getMarkerSymbolHtml(
+    () => {
+      const style = featureStyle ?? {};
+      return getMarkerSymbolHtml(
         {
           properties: {
             style: {
@@ -183,8 +184,9 @@ function MarkerVisualPreview({
           },
         },
         { size },
-      ),
-    [size, style, symbol],
+      );
+    },
+    [size, featureStyle, symbol],
   );
 
   return (
@@ -713,9 +715,6 @@ export function LegendPanel({
     (state) => state.setLegendGroupLabel,
   );
 
-  const selectedFeatureId = useEditorSelectionStore(
-    (state) => state.selectedFeatureId,
-  );
   const selectedFeatureIds = useEditorSelectionStore(
     (state) => state.selectedFeatureIds,
   );
@@ -782,9 +781,6 @@ export function LegendPanel({
     () => new Map(features.map((feature) => [feature.id, feature])),
     [features],
   );
-  const selectedFeature = selectedFeatureId
-    ? featuresById.get(selectedFeatureId)
-    : undefined;
   const selectedFeatures = selectedFeatureIds.flatMap((featureId) => {
     const feature = featuresById.get(featureId);
     return feature ? [feature] : [];

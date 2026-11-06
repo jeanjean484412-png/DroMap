@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { DromapProductBootstrap } from "./product-bootstrap";
@@ -182,29 +182,29 @@ function AccountContent() {
     };
   }, []);
 
-  async function refreshUsage() {
+  const refreshUsage = useCallback(async () => {
     if (userMode !== "authenticated") return;
     setUsageLoading(true);
     const result = await getDromapAccountUsage();
     setUsageLoading(false);
     if (result.ok && result.data) setUsage(result.data);
-  }
+  }, [userMode]);
 
   useEffect(() => {
     void refreshUsage();
-  }, [userMode]);
+  }, [refreshUsage]);
 
-  async function refreshBilling() {
+  const refreshBilling = useCallback(async () => {
     if (userMode !== "authenticated") return;
     setBillingLoading(true);
     const result = await getDromapBillingStatus();
     setBillingLoading(false);
     if (result.ok && result.data) setBillingStatus(result.data);
-  }
+  }, [userMode]);
 
   useEffect(() => {
     void refreshBilling();
-  }, [userMode, accountPlan]);
+  }, [refreshBilling, accountPlan]);
 
   async function openBillingPortal() {
     setBillingLoading(true);

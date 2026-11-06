@@ -867,52 +867,6 @@ type FreeResearchBundle = {
   }>;
 };
 
-function normalizeFreeResearchPlan(value: unknown): FreeResearchPlan {
-  const source = isRecord(value) ? value : {};
-  const entities = Array.isArray(source.wikidataEntities)
-    ? source.wikidataEntities.slice(0, 15).flatMap((item) => {
-        if (!isRecord(item)) return [];
-        const name = asNullableString(item.name);
-        if (!name) return [];
-        const kind =
-          asEnum(item.kind, [
-            "city",
-            "country",
-            "region",
-            "historical",
-            "other",
-          ] as const) ?? "other";
-        return [{ name, country: asNullableString(item.country), kind }];
-      })
-    : [];
-  const indicators = Array.isArray(source.worldBankIndicators)
-    ? source.worldBankIndicators.slice(0, 12).flatMap((item) => {
-        if (!isRecord(item)) return [];
-        const countryCode = asNullableString(item.countryCode)?.toUpperCase();
-        const indicator = asNullableString(item.indicator)?.toUpperCase();
-        const label = asNullableString(item.label);
-        if (!countryCode || !indicator || !label) return [];
-        if (
-          !/^[A-Z0-9]{2,4}$/.test(countryCode) ||
-          !/^[A-Z0-9._-]{3,30}$/.test(indicator)
-        )
-          return [];
-        return [{ countryCode, indicator, label }];
-      })
-    : [];
-  const language =
-    asNullableString(source.language)
-      ?.toLowerCase()
-      .replace(/[^a-z-]/g, "")
-      .slice(0, 8) || "fr";
-  return {
-    language,
-    wikipediaQueries: asStringArray(source.wikipediaQueries, 10),
-    wikidataEntities: entities,
-    worldBankIndicators: indicators,
-  };
-}
-
 async function fetchExternalJson(url: string, timeoutMs = 5_000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);

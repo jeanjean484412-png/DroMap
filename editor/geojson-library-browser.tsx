@@ -176,63 +176,6 @@ function getPrecisionLabel(mode: DromapGeoJsonPrecisionMode) {
   );
 }
 
-function getRecordString(record: Record<string, unknown>, key: string) {
-  const value = record[key];
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function getRecordNumber(record: Record<string, unknown>, key: string) {
-  const value = record[key];
-  const numberValue =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number(value)
-        : Number.NaN;
-
-  return Number.isFinite(numberValue) ? numberValue : null;
-}
-
-function parseGeoBoundariesMetadata(value: unknown): GeoBoundariesMetadata {
-  const candidate = Array.isArray(value) ? value[0] : value;
-
-  if (!candidate || typeof candidate !== "object") {
-    throw new Error("La réponse geoBoundaries ne contient pas de métadonnées exploitables.");
-  }
-
-  const record = candidate as Record<string, unknown>;
-  const boundaryName = getRecordString(record, "boundaryName");
-  const boundaryType = getRecordString(record, "boundaryType");
-  const gjDownloadUrl = getRecordString(record, "gjDownloadURL");
-  const simplifiedGeometryGeoJson = getRecordString(
-    record,
-    "simplifiedGeometryGeoJSON",
-  );
-
-  if (!boundaryName || !boundaryType || (!gjDownloadUrl && !simplifiedGeometryGeoJson)) {
-    throw new Error("Ce niveau administratif n’est pas disponible dans geoBoundaries.");
-  }
-
-  return {
-    boundaryId: getRecordString(record, "boundaryID"),
-    boundaryName,
-    boundaryIso: getRecordString(record, "boundaryISO"),
-    boundaryType,
-    boundaryYearRepresented: getRecordString(
-      record,
-      "boundaryYearRepresented",
-    ),
-    boundarySource: getRecordString(record, "boundarySource"),
-    boundaryLicense: getRecordString(record, "boundaryLicense"),
-    licenseSource: getRecordString(record, "licenseSource"),
-    buildDate: getRecordString(record, "buildDate"),
-    admUnitCount: getRecordNumber(record, "admUnitCount"),
-    meanVertices: getRecordNumber(record, "meanVertices"),
-    gjDownloadUrl,
-    simplifiedGeometryGeoJson,
-  };
-}
-
 function formatGeoBoundariesUnitCount(value: number | null) {
   if (value === null) {
     return "nombre d’unités non indiqué";

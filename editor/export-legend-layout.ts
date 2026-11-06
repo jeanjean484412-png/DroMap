@@ -227,26 +227,6 @@ function getMaxColumnsByWidth(legendRect: ExportCanvasRect) {
   return Math.max(1, Math.min(5, Math.floor(legendRect.width / 360)));
 }
 
-function getColumnCount(
-  legendRect: ExportCanvasRect,
-  featuresCount: number,
-  maxRowsPerColumn: number,
-) {
-  const maxColumnsByWidth = getMaxColumnsByWidth(legendRect);
-
-  if (featuresCount <= 1 || maxColumnsByWidth <= 1) {
-    return 1;
-  }
-
-  if (maxRowsPerColumn <= 0) {
-    return maxColumnsByWidth;
-  }
-
-  const neededColumns = Math.ceil(featuresCount / maxRowsPerColumn);
-
-  return Math.max(1, Math.min(maxColumnsByWidth, neededColumns));
-}
-
 function getOverflowWarningText(hiddenOverflowCount: number) {
   if (hiddenOverflowCount <= 1) {
     return "Légende trop petite : 1 élément visible n’est pas affiché. Agrandis la légende ou masque des entrées.";
@@ -954,7 +934,7 @@ export function createExportLegendLayout({
     const availableWidth = Math.max(1, legendRect.width - padding * 2);
     const visibleItems: ExportLegendItemLayout[] = [];
     let y = itemsTop;
-    let hiddenOverflowCount = 0;
+    const hiddenOverflowCount = 0;
 
     for (
       let displayIndex = 0;

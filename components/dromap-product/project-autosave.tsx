@@ -83,12 +83,16 @@ export function DromapProjectAutosaveProvider({
   );
 
   const gestureTimerRef = useRef<number | null>(null);
-  const mountedAtRef = useRef(Date.now());
+  const mountedAtRef = useRef(0);
   const persistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
   const persistencePendingRef = useRef(0);
   const changeGenerationRef = useRef(0);
   const countedGenerationRef = useRef(0);
   const checkpointedGenerationRef = useRef(0);
+
+  useEffect(() => {
+    if (mountedAtRef.current === 0) mountedAtRef.current = Date.now();
+  }, []);
 
   const enqueuePersistence = useCallback((task: () => Promise<void>) => {
     persistencePendingRef.current += 1;

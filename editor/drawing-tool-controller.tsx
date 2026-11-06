@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import L from "leaflet";
 import { useMap } from "react-leaflet";
 
@@ -308,12 +308,6 @@ function enableLayerEdit(layer: L.Layer) {
     snappable: true,
     snapDistance: DROMAP_SNAP_DISTANCE,
     allowSelfIntersection: false,
-  });
-}
-
-function enableAllLayerEdit(map: L.Map) {
-  map.eachLayer((layer) => {
-    enableLayerEdit(layer);
   });
 }
 
@@ -767,20 +761,6 @@ function bindManualBodyDrag(map: L.Map, layer: L.Layer): () => void {
   };
 }
 
-function bindManualBodyDragToAllLayers(map: L.Map): (() => void)[] {
-  const cleanups: (() => void)[] = [];
-
-  map.eachLayer((layer) => {
-    if (!getEditableFeatureId(layer)) {
-      return;
-    }
-
-    cleanups.push(bindManualBodyDrag(map, layer));
-  });
-
-  return cleanups;
-}
-
 function getEffectiveSelectedFeatureIds(
   selectedFeatureId: string | null,
   selectedFeatureIds: string[],
@@ -851,10 +831,9 @@ export function DrawingToolController() {
     (state) => state.multiSelectionEnabled,
   );
   const selectedFeatureIdsSignature = selectedFeatureIds.join("|");
-  const effectiveSelectedFeatureIds = getEffectiveSelectedFeatureIds(
-    selectedFeatureId,
-    selectedFeatureIds,
-    multiSelectionEnabled,
+  const effectiveSelectedFeatureIds = useMemo(
+    () => getEffectiveSelectedFeatureIds(selectedFeatureId, selectedFeatureIds, multiSelectionEnabled),
+    [selectedFeatureId, selectedFeatureIds, multiSelectionEnabled],
   );
 
   const markerStyle = useEditorDrawingOptionsStore(
@@ -1316,6 +1295,7 @@ export function DrawingToolController() {
     activeTool,
     selectedFeatureId,
     selectedFeatureIdsSignature,
+    effectiveSelectedFeatureIds,
     multiSelectionEnabled,
     markerStyle,
     markerSymbol,

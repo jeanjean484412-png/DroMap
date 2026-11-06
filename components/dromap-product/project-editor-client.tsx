@@ -9,6 +9,7 @@ import { DromapProjectAutosaveProvider } from "./project-autosave";
 import { DromapProjectEditorTopbar } from "./project-editor-topbar";
 import { DromapProjectInfoDialog } from "./project-info-dialog";
 import { DromapEditorTour } from "./editor-tour";
+import { BetaEditorLoadingOverlay } from "./beta-editor-loading-overlay";
 import { DromapButton } from "@/components/dromap-ui/button";
 import { EditorSurface } from "@/editor/editor-surface";
 import {
@@ -18,6 +19,7 @@ import {
   type DromapEditorProjectSnapshot,
 } from "@/lib/dromap/editor-project-persistence";
 import { getDromapCapabilities, type DromapProject } from "@/lib/dromap/product";
+import { SHOW_BETA_EDITOR_INTRO } from "@/lib/dromap/release-mode";
 import { createDromapLayer } from "@/stores/editor-layers";
 import { useEditorBasemapStore } from "@/stores/editor-basemap";
 import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
@@ -314,9 +316,16 @@ function EditorContent({
   );
   const [ready, setReady] = useState(false);
   const [mapPresentationReady, setMapPresentationReady] = useState(false);
+  const [betaIntroElapsed, setBetaIntroElapsed] = useState(false);
   const [waitingForWorkspaceValidation, setWaitingForWorkspaceValidation] =
     useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!SHOW_BETA_EDITOR_INTRO || initialView !== "editor") return;
+    const timer = window.setTimeout(() => setBetaIntroElapsed(true), 2800);
+    return () => window.clearTimeout(timer);
+  }, [initialView]);
 
   useLayoutEffect(() => {
     // Changer de projet ouvre une nouvelle session d'historique AVANT les effets
@@ -423,6 +432,7 @@ function EditorContent({
     }
   }, [
     project,
+    projectId,
     loadProject,
     router,
     setActiveProjectId,
@@ -538,21 +548,30 @@ function EditorContent({
     return (
       <div className="grid h-screen place-items-center bg-slate-50 text-sm text-slate-600">
         Ouverture du projet…
+        {SHOW_BETA_EDITOR_INTRO && initialView === "editor" ? <BetaEditorLoadingOverlay /> : null}
       </div>
     );
   }
+
+  const showBetaIntro =
+    SHOW_BETA_EDITOR_INTRO &&
+    initialView === "editor" &&
+    (!betaIntroElapsed || !mapPresentationReady || waitingForWorkspaceValidation);
+  const showStandardMapLoading =
+    (!SHOW_BETA_EDITOR_INTRO || initialView !== "editor") &&
+    (!mapPresentationReady || waitingForWorkspaceValidation);
 
   return (
     <DromapProductRuntimeProvider projectId={project.id}>
       <DromapProjectAutosaveProvider projectId={project.id}>
         <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-slate-100">
           <DromapProjectEditorTopbar projectId={project.id} renderMode={initialView === "render"} />
-          <main className="relative min-h-0 flex-1 overflow-hidden">
+          <main className="relative min-h-0 flex-1 overflow-hidden" aria-busy={showBetaIntro}>
             <EditorSurface
               variant="product"
               onMapPresentationReady={handleMapPresentationReady}
             />
-            {!mapPresentationReady || waitingForWorkspaceValidation ? (
+            {showStandardMapLoading ? (
               <div className="absolute inset-0 z-[5000] grid place-items-center bg-slate-100">
                 <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-center shadow-lg">
                   <div className="text-sm font-black text-slate-950">
@@ -571,6 +590,7 @@ function EditorContent({
           </main>
           <DromapProjectInfoDialog projectId={project.id} />
           {initialView === "editor" ? <DromapEditorTour /> : null}
+          {showBetaIntro ? <BetaEditorLoadingOverlay /> : null}
         </div>
       </DromapProjectAutosaveProvider>
     </DromapProductRuntimeProvider>
@@ -584,9 +604,14 @@ export function DromapProjectEditorClient({
   projectId: string;
   initialView?: "editor" | "render";
 }) {
+  const hydrated = useDromapProductStore((state) => state.hydrated);
+
   return (
-    <DromapProductBootstrap>
-      <EditorContent projectId={projectId} initialView={initialView} />
-    </DromapProductBootstrap>
+    <>
+      <DromapProductBootstrap>
+        <EditorContent projectId={projectId} initialView={initialView} />
+      </DromapProductBootstrap>
+      {SHOW_BETA_EDITOR_INTRO && initialView === "editor" && !hydrated ? <BetaEditorLoadingOverlay /> : null}
+    </>
   );
 }

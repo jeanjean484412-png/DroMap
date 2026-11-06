@@ -58,7 +58,7 @@ function MarkerThumbnail({ marker }: { marker: DroMapCustomMarkerDefinition }) {
         },
         { size: 42 },
       ),
-    [marker.id, marker.kind, marker.updatedAt],
+    [marker],
   );
 
   return (

@@ -779,9 +779,8 @@ function getPreviewAttributionHtml(
 }
 
 export function ExportLeafletPreview({
-  symbolScale: _legacySymbolScale = 1,
+  symbolScale = 1,
 }: ExportLeafletPreviewProps) {
-  void _legacySymbolScale;
   const workspaceBounds = useEditorWorkspaceStore(
     (state) => state.workspaceBounds,
   );
@@ -1008,7 +1007,7 @@ export function ExportLeafletPreview({
         <BasemapBoundariesLayer boundaryOverlay={basemap.boundaryOverlay} />
 
         <ExportMapController bounds={leafletBounds} />
-        <FullGeoJsonLayersRenderer />
+        <FullGeoJsonLayersRenderer graphicScale={symbolScale} />
         <ExportFeatureLayers
           features={features}
           fallbackReferenceZoom={workspaceBasemapZoom}
