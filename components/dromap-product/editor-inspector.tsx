@@ -35,7 +35,7 @@ export function DromapEditorInspector({
   const setCollapsedFromEffect = useEffectEvent(setCollapsed);
 
   useEffect(() => {
-    const mobileQuery = window.matchMedia("(max-width: 767px)");
+    const mobileQuery = window.matchMedia("(max-width: 1023px), (max-height: 600px) and (max-width: 1366px)");
     if (mobileQuery.matches) setCollapsedFromEffect(true);
 
     const handleViewportChange = (event: MediaQueryListEvent) => {
@@ -117,6 +117,7 @@ export function DromapEditorInspector({
               }}
               className="flex h-10 w-10 items-center justify-center rounded-xl text-[10px] font-black text-slate-600 transition hover:bg-slate-100"
               title={tab.label}
+              aria-label={tab.label}
             >
               {tab.id === "selected"
                 ? "◉"

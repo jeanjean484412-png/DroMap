@@ -564,7 +564,7 @@ function EditorContent({
   return (
     <DromapProductRuntimeProvider projectId={project.id}>
       <DromapProjectAutosaveProvider projectId={project.id}>
-        <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-slate-100">
+        <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-slate-100">
           <DromapProjectEditorTopbar projectId={project.id} renderMode={initialView === "render"} />
           <main className="relative min-h-0 flex-1 overflow-hidden" aria-busy={showBetaIntro}>
             <EditorSurface

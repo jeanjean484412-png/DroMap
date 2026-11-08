@@ -1,6 +1,7 @@
 "use client";
 
 import { DromapLogoMark } from "@/components/dromap-product/dromap-brand";
+import mobileStyles from "./mobile-workspace.module.css";
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
@@ -721,6 +722,7 @@ function SetupMapStep({
     "Recherche une ville, un pays, une adresse ou trace directement un rectangle sur la carte.",
   );
   const [isSearching, setIsSearching] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const requestIdRef = useRef(0);
   const initialBoundsRef = useRef(initialBounds);
   const allowSelectWholeWorld = canSelectWholeWorldFromSetup(basemapId);
@@ -847,15 +849,24 @@ function SetupMapStep({
   }
 
   return (
-    <div className="relative h-full min-h-0 w-full overflow-hidden bg-slate-200">
-      <div className="absolute inset-0 z-0 isolate">
+    <div className={`${mobileStyles.setup} relative h-full min-h-0 w-full overflow-hidden bg-slate-200`}>
+      <div className={`${mobileStyles.setupMap} absolute inset-0 z-0 isolate`}>
         <GraphicZoomViewport>
           <SetupMap />
         </GraphicZoomViewport>
       </div>
 
-      <aside className="absolute bottom-4 left-4 top-4 z-[1300] flex w-[350px] max-w-[calc(100%-2rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+      <aside data-options-open={optionsOpen} className={`${mobileStyles.setupPanel} absolute bottom-4 left-4 top-4 z-[1300] flex w-[350px] max-w-[calc(100%-2rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg`}>
+        <div className={mobileStyles.setupSummary}>
+          <div>
+            <strong>Zone de travail</strong>
+            <p role="status">{isWorkspaceValidated ? "Zone validée" : workspaceBounds ? workspaceValidation.isValid ? "Zone sélectionnée" : workspaceValidation.message : "Trace un rectangle sur la carte."}</p>
+          </div>
+          <button type="button" aria-expanded={optionsOpen} aria-controls="setup-zone-options" onClick={() => setOptionsOpen((open) => !open)}>
+            {optionsOpen ? "Réduire" : "Rechercher / Options"}
+          </button>
+        </div>
+        <div id="setup-zone-options" className={`${mobileStyles.setupOptions} min-h-0 flex-1 overflow-y-auto overscroll-contain p-4`}>
           <div className="text-xs font-bold uppercase tracking-wide text-teal-600">
             Étape 3 sur 4
           </div>
@@ -940,7 +951,7 @@ function SetupMapStep({
           ) : null}
 
           {workspaceBounds ? (
-            <div className="mt-5 border-t border-slate-200 pt-4">
+            <div className={`${mobileStyles.desktopOnly} mt-5 border-t border-slate-200 pt-4`}>
               {isWorkspaceValidated ? (
                 <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3">
                   <div className="flex items-start gap-2">
@@ -986,27 +997,42 @@ function SetupMapStep({
 
         </div>
 
-        <div className="flex shrink-0 items-center gap-2 border-t border-slate-200 bg-white p-3 shadow-[0_-8px_20px_rgba(15,23,42,0.06)]">
+          <button type="button" onClick={onSkip} className={`${mobileStyles.setupSkip} rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600`}>
+            Passer les étapes
+          </button>
+        <div className={`${mobileStyles.setupActions} flex shrink-0 items-center gap-2 border-t border-slate-200 bg-white p-3 shadow-[0_-8px_20px_rgba(15,23,42,0.06)]`}>
           <DromapButton onClick={onBack}>Retour</DromapButton>
           <button
             type="button"
             onClick={onSkip}
-            className="shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800"
+            className={`${mobileStyles.desktopOnly} shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800`}
           >
             Passer les étapes
           </button>
           <DromapButton
             fullWidth
+            className={mobileStyles.desktopOnly}
             variant="primary"
             onClick={onContinue}
             disabled={!canContinue}
           >
             Continuer
           </DromapButton>
+          {isWorkspaceValidated ? (
+            <DromapButton className={mobileStyles.mobileOnly} onClick={handleModifyWorkspace}>Modifier</DromapButton>
+          ) : null}
+          <DromapButton
+            className={`${mobileStyles.mobileOnly} flex-1`}
+            variant="primary"
+            onClick={isWorkspaceValidated ? onContinue : handleValidateWorkspace}
+            disabled={isWorkspaceValidated ? !canContinue : !workspaceBounds || !workspaceValidation.isValid || currentMode === "edit"}
+          >
+            {isWorkspaceValidated ? "Continuer" : currentMode === "edit" ? "Validation…" : "Valider la zone"}
+          </DromapButton>
         </div>
       </aside>
 
-      <div className="pointer-events-none absolute bottom-4 left-1/2 z-[1200] -translate-x-1/2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-lg">
+      <div className={`${mobileStyles.desktopOnly} pointer-events-none absolute bottom-4 left-1/2 z-[1200] -translate-x-1/2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-lg`}>
         {!workspaceBounds
           ? allowSelectWholeWorld
             ? "Trace un rectangle ou choisis le monde entier"
@@ -1480,7 +1506,7 @@ function SetupContent({ projectId }: { projectId: string }) {
 
   return (
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#f7f9f8] text-slate-950">
-      <header className="shrink-0 border-b border-slate-200 bg-white px-3 py-2 shadow-sm sm:flex sm:min-h-14 sm:items-center sm:py-0">
+      <header className={`${mobileStyles.setupHeader} shrink-0 border-b border-slate-200 bg-white px-3 py-2 shadow-sm sm:flex sm:min-h-14 sm:items-center sm:py-0`}>
         <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:flex sm:justify-between sm:gap-4">
           <div className="flex items-center gap-3">
             <span className="grid h-10 w-10 place-items-center rounded-xl border border-[#b9ddd7] bg-[#e9f6f3] sm:h-11 sm:w-11 sm:rounded-2xl">

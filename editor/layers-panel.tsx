@@ -1107,6 +1107,8 @@ export function LayersPanel({
   if (!isOpen && !embedded) {
     return (
       <button
+        data-dromap-layers-trigger="true"
+        aria-label="Gérer les calques"
         type="button"
         onClick={() => {
           setPanelZIndex(bringFloatingPanelToFront());
@@ -1151,6 +1153,7 @@ export function LayersPanel({
   return (
     <>
       <aside
+        data-dromap-layers-panel={embedded ? "embedded" : "floating"}
         data-dromap-ignore-shortcuts="true"
         data-dromap-tour="inspector-content"
         className={

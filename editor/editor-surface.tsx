@@ -22,6 +22,7 @@ import { WorkspaceActions } from "./workspace-actions";
 import { RestrictedAiTrigger } from "@/components/dromap-product/restricted-ai-trigger";
 import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
 import { DromapEditorInspector } from "@/components/dromap-product/editor-inspector";
+import mobileStyles from "@/components/dromap-product/mobile-workspace.module.css";
 
 const EditorMap = dynamic<{ onPresentationReady?: () => void }>(
   () => import("./editor-map"),
@@ -90,7 +91,7 @@ function ProductTopDock() {
       />
       <PlaceSearchControl docked />
       {DROMAP_BETA || (runtime.enabled && !runtime.capabilities.canUseAi) ? (
-        <RestrictedAiTrigger docked />
+        <div className={DROMAP_BETA ? mobileStyles.desktopOnly : undefined}><RestrictedAiTrigger docked /></div>
       ) : (
         <DroMapAiPanel docked />
       )}
@@ -224,7 +225,7 @@ export function EditorSurface({
       : "clamp(22rem, 31vw, 25rem)";
 
     return (
-      <div className="relative flex h-full w-full min-w-0 overflow-hidden bg-slate-100">
+      <div className={`${mobileStyles.editor} relative flex h-full w-full min-w-0 overflow-hidden bg-slate-100`}>
         <SharedEditorStyles />
 
         <ModeToolbar variant="embedded" showUtilityControls={false} />
@@ -233,7 +234,7 @@ export function EditorSurface({
           data-dromap-product-map="true"
           data-dromap-tour="map"
           data-dromap-inspector-collapsed={inspectorCollapsed ? "true" : "false"}
-          className="relative min-w-0 flex-1 overflow-hidden bg-slate-200"
+          className={`${mobileStyles.editorMap} relative min-h-0 min-w-0 flex-1 overflow-hidden bg-slate-200`}
           style={{ "--dromap-inspector-width": inspectorWidth } as CSSProperties}
         >
           <div
@@ -275,13 +276,14 @@ export function EditorSurface({
             <LayersPanel />
           </div>
 
-          <div className="absolute bottom-4 left-4 z-[1050] rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur">
+          <div className={`${mobileStyles.workspaceActions} absolute bottom-4 left-4 z-[1050] rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur`}>
             <WorkspaceActions />
           </div>
         </section>
 
         <div
-          className="pointer-events-none absolute inset-y-0 right-0 z-[2400]"
+          data-collapsed={inspectorCollapsed}
+          className={`${mobileStyles.inspector} pointer-events-none absolute inset-y-0 right-0 z-[2400]`}
           style={{ width: inspectorWidth }}
         >
           <div className="pointer-events-auto h-full w-full">

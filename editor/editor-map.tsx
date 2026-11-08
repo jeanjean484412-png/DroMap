@@ -143,6 +143,29 @@ function MapViewStateBridge() {
   return null;
 }
 
+// A panel opening or an orientation change can resize the map without a window
+// resize event. Keep Leaflet's pixel coordinates aligned with its container.
+function MapContainerResizeObserver() {
+  const map = useMap();
+
+  useEffect(() => {
+    let frameId = 0;
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        map.invalidateSize({ pan: false, debounceMoveend: true });
+      });
+    });
+    observer.observe(map.getContainer());
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [map]);
+
+  return null;
+}
+
 function PendingMapViewRestore() {
   const map = useMap();
   const currentMode = useEditorModeStore((state) => state.currentMode);
@@ -168,11 +191,8 @@ function PendingMapViewRestore() {
             return;
           }
 
-          // L'étape Zone utilise désormais exactement la même surface de
-          // carte que l'éditeur : plein écran sous une barre de 56 px, avec les
-          // panneaux superposés sans réduire le viewport Leaflet. Le résultat
-          // de la validation peut donc être restauré sans aucun recalcul.
-          //
+          // La surface peut différer entre la sélection et l'éditeur mobile.
+          // On conserve néanmoins le niveau de détail validé.
           // Ne jamais refaire fitBounds ici : fitBounds recalcule le zoom selon
           // la taille courante du conteneur et peut donc modifier le niveau de
           // détail verrouillé. On reprend strictement le centre et le zoom
@@ -584,6 +604,7 @@ export default function EditorMap({ onPresentationReady }: EditorMapProps = {}) 
         <SelectedFeatureEditHandles />
         <SelectedTextInlineEditor />
         <MapViewStateBridge />
+        <MapContainerResizeObserver />
         <MapViewController />
         <PendingMapViewRestore />
         <MapPresentationReadyBridge onReady={onPresentationReady} />

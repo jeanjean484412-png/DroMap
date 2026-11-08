@@ -1944,6 +1944,7 @@ export default function ModeToolbar({
     <div
       ref={toolbarRootRef}
       data-dromap-tour="tools"
+      data-embedded={embedded}
       className={
         embedded
           ? "pointer-events-none relative flex h-full min-h-0 w-20 shrink-0 items-start overflow-visible bg-white sm:w-24"
@@ -1971,7 +1972,7 @@ export default function ModeToolbar({
             : "pointer-events-auto flex max-h-[calc(100vh-2rem)] w-24 flex-col gap-2 overflow-y-auto rounded-2xl border border-black/10 bg-white/95 p-2 shadow-lg backdrop-blur"
         }
       >
-        <div className="rounded-xl bg-neutral-900 px-2 py-2 text-center text-[10px] font-semibold leading-tight text-white">
+        <div data-dromap-mode-label="true" className="rounded-xl bg-neutral-900 px-2 py-2 text-center text-[10px] font-semibold leading-tight text-white">
           {EDITOR_MODE_LABELS[currentMode]}
         </div>
 

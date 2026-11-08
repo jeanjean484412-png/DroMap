@@ -694,6 +694,7 @@ export function BasemapControls() {
 
   return (
     <section
+      data-dromap-basemap-control="true"
       className="absolute right-4 top-4 text-sm"
       style={{ zIndex: panelZIndex }}
       onMouseDown={(event) => {
@@ -711,6 +712,7 @@ export function BasemapControls() {
         <button
           type="button"
           onClick={openBasemapMenu}
+          aria-label="Choisir le fond de carte"
           aria-expanded={isOpen}
           className="group flex min-w-56 cursor-pointer items-center justify-between gap-3 rounded-2xl border-2 border-emerald-200 bg-white/95 px-3 py-2.5 text-left text-slate-900 shadow-lg backdrop-blur transition hover:border-emerald-400 hover:bg-white focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-100"
         >

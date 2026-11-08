@@ -360,6 +360,7 @@ export function PlaceSearchControl({ docked = false }: PlaceSearchControlProps =
 
   return (
     <section
+      data-dromap-place-search={isOpen ? "open" : "closed"}
       className={[
         "pointer-events-none",
         productRuntimeEnabled && docked
