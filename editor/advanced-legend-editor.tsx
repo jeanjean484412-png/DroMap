@@ -28,10 +28,10 @@ import {
 } from "./export-legend-layout";
 import { ColorPicker } from "./color-picker";
 import {
-  DROMAP_BUILTIN_MARKER_SYMBOLS,
   DROMAP_MARKER_SYMBOL_CATEGORIES,
   getMarkerSymbolHtml,
 } from "./marker-symbol";
+import { DROMAP_BUILTIN_MARKER_SYMBOLS } from "./marker-symbol-catalog";
 
 const SYMBOL_KINDS: Array<{
   value: ExportLegendCustomSymbol;

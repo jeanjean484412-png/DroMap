@@ -1,6 +1,7 @@
 "use client";
 
 import { DromapAiAssistantIcon } from "@/components/dromap-product/ai-assistant-icon";
+import { MapDockButton } from "./map-dock-button";
 
 import dynamic from "next/dynamic";
 import {
@@ -293,6 +294,8 @@ function writeConversation(
 
 type DroMapAiPanelProps = {
   docked?: boolean;
+  initiallyOpen?: boolean;
+  initialZIndex?: number;
 };
 
 type DroMapAiBuildingFlowSelection = {
@@ -340,7 +343,11 @@ type DroMapAiAutomaticRouteZoneReview = {
   restoreZoneLock: boolean;
 };
 
-export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
+export function DroMapAiPanel({
+  docked = false,
+  initiallyOpen = false,
+  initialZIndex,
+}: DroMapAiPanelProps = {}) {
   const {
     enabled: productRuntimeEnabled,
     projectId: productProjectId,
@@ -372,8 +379,8 @@ export function DroMapAiPanel({ docked = false }: DroMapAiPanelProps = {}) {
   const workspaceValidated =
     hasMounted && currentMode === "edit" && workspaceBounds !== null;
 
-  const [isOpen, setIsOpen] = useState(false);
-  const [panelZIndex, setPanelZIndex] = useState(getInitialFloatingPanelZIndex());
+  const [isOpen, setIsOpen] = useState(initiallyOpen);
+  const [panelZIndex, setPanelZIndex] = useState(() => initialZIndex ?? getInitialFloatingPanelZIndex());
   const [workspaceMode, setWorkspaceMode] =
     useState<DroMapAiWorkspaceMode | null>(null);
   const [pendingManualWorkspace, setPendingManualWorkspace] = useState(false);
@@ -1789,10 +1796,10 @@ Routes validées. Voici la suite du plan.`,
     setIsAiSuspendedForRouteSelection(false);
   }
 
-  const closedPositionClass = productRuntimeEnabled
-    ? docked
-      ? "relative z-[1300]"
-      : "fixed left-4 top-[4.5rem] z-[1300] md:left-[32rem] lg:left-[44rem]"
+  const closedPositionClass = docked
+    ? "relative z-[1300]"
+    : productRuntimeEnabled
+      ? "fixed left-4 top-[4.5rem] z-[1300] md:left-[32rem] lg:left-[44rem]"
     : "fixed left-4 top-[4.5rem] z-[1300] md:left-[8.5rem] lg:left-[43rem] lg:top-4";
   const openedPositionClass = productRuntimeEnabled
     ? "fixed right-4 top-[4.5rem]"
@@ -1906,16 +1913,15 @@ Routes validées. Voici la suite du plan.`,
       >
       {!isOpen ? (
         previewResult || showAutomaticZoneOnlyGuidance || isAiSuspendedForBuildingSelection || isAiSuspendedForRouteSelection ? null : (
-        <button
-          type="button"
+        <MapDockButton
+          icon={<span className="text-lg font-black leading-none">IA</span>}
           onClick={openAssistant}
           title="Ouvrir l'assistant IA DroMap"
-          className="pointer-events-auto flex items-center gap-2 rounded-xl border border-teal-200 bg-white px-3 py-2 font-bold text-teal-800 shadow-lg transition hover:border-teal-400 hover:bg-white"
+          className="border-teal-200 text-teal-800 hover:border-teal-400"
           aria-label="Ouvrir l'assistant IA DroMap"
         >
-          <DromapAiAssistantIcon className="h-4 w-4" />
           Assistant IA
-        </button>
+        </MapDockButton>
         )
       ) : (
         <section

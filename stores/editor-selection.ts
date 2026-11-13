@@ -33,6 +33,7 @@ type EditorSelectionState = {
   /** Ensemble complet utilisé par la sélection multiple et les modifications groupées. */
   selectedFeatureIds: string[];
   multiSelectionEnabled: boolean;
+  multiSelectionHeld: boolean;
   /** Mode ponctuel : glisser un rectangle sur la carte pour sélectionner les objets qui le croisent. */
   areaSelectionEnabled: boolean;
   focusedSelectionRequest: SelectionRequest | null;
@@ -52,6 +53,7 @@ type EditorSelectionState = {
     options?: SelectFeatureOptions,
   ) => void;
   setMultiSelectionEnabled: (enabled: boolean) => void;
+  setMultiSelectionHeld: (held: boolean) => void;
   setAreaSelectionEnabled: (enabled: boolean) => void;
   clearSelectedFeatureId: () => void;
   requestMapFitToBounds: (
@@ -72,6 +74,7 @@ export const useEditorSelectionStore = create<EditorSelectionState>(
     selectedFeatureId: null,
     selectedFeatureIds: [],
     multiSelectionEnabled: false,
+    multiSelectionHeld: false,
     areaSelectionEnabled: false,
     focusedSelectionRequest: null,
     workspaceRecenterRequest: null,
@@ -175,6 +178,8 @@ export const useEditorSelectionStore = create<EditorSelectionState>(
         areaSelectionEnabled: enabled ? state.areaSelectionEnabled : false,
       }));
     },
+
+    setMultiSelectionHeld: (held) => set({ multiSelectionHeld: held }),
 
     setAreaSelectionEnabled: (enabled) => {
       set((state) => ({

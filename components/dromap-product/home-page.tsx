@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { DromapBetaNotice } from "./beta-notice";
 import { IBM_Plex_Sans } from "next/font/google";
 import { DromapHomeAccountActions } from "@/components/dromap-product/home-account-actions";
@@ -29,7 +30,13 @@ export function DromapHomePage() {
           </div>
         </section>
         <section className={styles.exampleGrid} aria-label="Exemples de cartes DroMap">
-          {[1, 2, 3].map((slot) => <div key={slot} className={styles.examplePlaceholder}>carte d’exemple à venir</div>)}
+          <figure className={styles.exampleCard}>
+            <div className={styles.exampleImage}>
+              <Image src="/examples/exemple-1.webp" alt="Carte de l’Union européenne montrant ses pays, ses capitales et son élargissement" width={8204} height={5488} sizes="(max-width: 700px) 100vw, (max-width: 1200px) 50vw, 380px" />
+            </div>
+            <figcaption className={styles.exampleCaption}>L’Union européenne et ses centres</figcaption>
+          </figure>
+          {[2, 3].map((slot) => <div key={slot} className={styles.examplePlaceholder}>carte d’exemple à venir</div>)}
         </section>
         <section className={styles.section}>
           <p className={styles.eyebrow}>Du premier repère à la carte finale</p>

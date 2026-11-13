@@ -1,4 +1,5 @@
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 
 import { decodeSupportedImageDataUrl } from "@/lib/dromap/server/image-data-url";
@@ -9,6 +10,7 @@ import {
 } from "@/lib/dromap/server/supabase-rest";
 import {
   createUniquePublicationSlug,
+  DROMAP_PUBLICATION_LIST_CACHE_TAG,
   dromapPublicationsConfigured,
   freezePublicationSourceFromProject,
   publicationRowToPublic,
@@ -122,7 +124,7 @@ async function handleGET() {
   try {
     const response = await publicationsAdminFetch(
       "/dromap_publications?select=slug,title,description,author_name,tags,access_mode,allow_creator_credit_removal,creator_credit_name,published_at,updated_at&order=published_at.desc&limit=120",
-      { method: "GET" },
+      { method: "GET", next: { revalidate: 30, tags: [DROMAP_PUBLICATION_LIST_CACHE_TAG] } },
     );
     const rows = response.ok ? await parseJsonResponse<DromapPublicationRow[]>(response) : null;
     if (!response.ok || !rows) {
@@ -250,6 +252,10 @@ async function handlePOST(request: Request) {
       if (!publication) {
         return NextResponse.json({ error: "La publication n’a pas pu être relue." }, { status: 502 });
       }
+      revalidatePath(`/library/${encodeURIComponent(slug)}`);
+      revalidateTag(DROMAP_PUBLICATION_LIST_CACHE_TAG, { expire: 0 });
+      revalidatePath("/library");
+      revalidatePath("/sitemap.xml");
       return NextResponse.json({ ok: true, publication, updated: true });
     }
 
@@ -299,6 +305,10 @@ async function handlePOST(request: Request) {
     if (!publication) {
       return NextResponse.json({ error: "La carte n’a pas pu être publiée." }, { status: 502 });
     }
+    revalidatePath(`/library/${encodeURIComponent(slug)}`);
+    revalidateTag(DROMAP_PUBLICATION_LIST_CACHE_TAG, { expire: 0 });
+    revalidatePath("/library");
+    revalidatePath("/sitemap.xml");
     return NextResponse.json({ ok: true, publication, updated: false });
   } catch (error) {
     console.error("DroMap publication:", error);

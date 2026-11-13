@@ -506,7 +506,7 @@ function toggleLayerSelection(layer: L.Layer) {
 
   const selectionStore = useEditorSelectionStore.getState();
 
-  if (selectionStore.multiSelectionEnabled) {
+  if (selectionStore.multiSelectionEnabled || selectionStore.multiSelectionHeld) {
     selectionStore.toggleFeatureSelection(featureId);
     return;
   }
@@ -828,7 +828,7 @@ export function DrawingToolController() {
     (state) => state.selectedFeatureIds,
   );
   const multiSelectionEnabled = useEditorSelectionStore(
-    (state) => state.multiSelectionEnabled,
+    (state) => state.multiSelectionEnabled || state.multiSelectionHeld,
   );
   const selectedFeatureIdsSignature = selectedFeatureIds.join("|");
   const effectiveSelectedFeatureIds = useMemo(
@@ -919,7 +919,7 @@ export function DrawingToolController() {
           const latestSelectedFeatureIds = getEffectiveSelectedFeatureIds(
             latestSelection.selectedFeatureId,
             latestSelection.selectedFeatureIds,
-            latestSelection.multiSelectionEnabled,
+            latestSelection.multiSelectionEnabled || latestSelection.multiSelectionHeld,
           );
           const latestSelectedIds = new Set(latestSelectedFeatureIds);
           const editableFeatureId = getEditableFeatureId(event.layer);
@@ -1180,7 +1180,7 @@ export function DrawingToolController() {
           const latestSelectedFeatureIds = getEffectiveSelectedFeatureIds(
             latestSelection.selectedFeatureId,
             latestSelection.selectedFeatureIds,
-            latestSelection.multiSelectionEnabled,
+            latestSelection.multiSelectionEnabled || latestSelection.multiSelectionHeld,
           );
           const latestSelectedIds = new Set(latestSelectedFeatureIds);
           const editableFeatureId = getEditableFeatureId(event.layer);

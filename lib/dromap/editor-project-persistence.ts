@@ -19,7 +19,7 @@ import {
   useEditorGeoJsonLayersStore,
 } from "@/stores/editor-geojson-layers";
 import { useEditorSelectionStore } from "@/stores/editor-selection";
-import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
+import { getValidatedWorkspace, useEditorWorkspaceStore } from "@/stores/editor-workspace";
 import { useEditorBasemapStore } from "@/stores/editor-basemap";
 import { useEditorMapLabelsStore } from "@/stores/editor-map-labels";
 import {
@@ -40,7 +40,7 @@ import {
 import { useEditorToolStore } from "@/stores/editor-tool";
 import { useEditorModeStore } from "@/stores/editor-mode";
 import { useEditorMapViewStore } from "@/stores/editor-map-view";
-import type { ImportedDromapProject } from "@/editor/export-download";
+import type { ImportedDromapProject } from "@/editor/project-file-import";
 import { normalizeLegendSymbolStyle } from "@/editor/export-custom-legend";
 
 export type DromapEditorExportSettings = {
@@ -583,12 +583,12 @@ export function createDromapEditorProjectSnapshot(): DromapEditorProjectSnapshot
   const featuresState = useEditorFeaturesStore.getState();
   const layersState = useEditorLayersStore.getState();
   const geoJsonState = useEditorGeoJsonLayersStore.getState();
-  const workspaceState = useEditorWorkspaceStore.getState();
+  const workspaceState = getValidatedWorkspace();
   const basemapState = useEditorBasemapStore.getState();
   const labelsState = useEditorMapLabelsStore.getState();
   const customMarkersState = useEditorCustomMarkersStore.getState();
   const exportSettings = createDromapEditorExportSettingsSnapshot();
-  const currentMapView = useEditorMapViewStore.getState().currentView;
+  const currentMapView = workspaceState.mapView;
 
   return {
     schemaVersion: 1,
@@ -784,6 +784,7 @@ export function restoreDromapEditorProjectSnapshot(
     snapshot.showBasemapLabels ?? exportSettings.showBasemapLabels,
   );
 
+  useEditorWorkspaceStore.setState({ workspaceBeforeModification: null });
   const workspaceStore = useEditorWorkspaceStore.getState();
   if (snapshot.workspaceBounds) {
     workspaceStore.setWorkspaceBounds(cloneValue(snapshot.workspaceBounds));
@@ -813,7 +814,7 @@ export function restoreDromapEditorProjectSnapshot(
     useEditorModeStore.getState().setCurrentMode("workspace-select");
   }
 
-  const normalizedMapView = normalizeDromapMapView(snapshot.mapView);
+  const normalizedMapView = snapshot.workspaceBounds ? normalizeDromapMapView(snapshot.mapView) : null;
 
   // Lorsqu'une vue exacte a été enregistrée, elle doit remplacer le cadrage
   // automatique de validation. Sans cela, l'éditeur exécute d'abord fitBounds

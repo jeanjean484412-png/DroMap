@@ -262,6 +262,16 @@ export default function GeomanControls() {
     container.addEventListener("click", onWorkspaceMapClick, true);
     updateWorkspaceRectangleTooltip();
 
+    const unsubscribeWorkspace = useEditorWorkspaceStore.subscribe((state, previous) => {
+      if (state.workspaceBounds || !previous.workspaceBounds || useEditorModeStore.getState().currentMode !== "workspace-select") {
+        return;
+      }
+
+      workspaceRectangleCornerIndex = 0;
+      applyGeomanForEditorMode(map, "workspace-select");
+      updateWorkspaceRectangleTooltip();
+    });
+
     let replayAnimationFrameId: number | null = null;
     const replayTimeoutIds = new Set<number>();
 
@@ -347,6 +357,7 @@ export default function GeomanControls() {
       replayTimeoutIds.clear();
 
       tooltipObserver.disconnect();
+      unsubscribeWorkspace();
       container.removeEventListener("click", onWorkspaceMapClick, true);
       container.removeEventListener("mousemove", rememberPointerPosition, true);
       container.removeEventListener("mouseleave", clearPointerPosition, true);

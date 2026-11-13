@@ -12,6 +12,7 @@ const DOWNLOAD_HOSTS = new Set([
   "geoboundaries.org",
   "github.com",
   "raw.githubusercontent.com",
+  "media.githubusercontent.com",
   "objects.githubusercontent.com",
   "githubusercontent.com",
 ]);

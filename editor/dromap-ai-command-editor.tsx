@@ -4,7 +4,7 @@ import { useState } from "react";
 import { AI_CAPABILITIES, AI_COMMAND_TYPES } from "./dromap-ai-capabilities";
 import { AI_COMMAND_FIELD_SCHEMAS } from "./dromap-ai-schema";
 import { DROMAP_GEOJSON_CATALOG } from "./geojson-data-catalog";
-import { DROMAP_BUILTIN_MARKER_SYMBOLS } from "./marker-symbol";
+import { DROMAP_BUILTIN_MARKER_SYMBOLS } from "./marker-symbol-catalog";
 import type { DroMapAiCommand, DroMapAiCommandType, DroMapAiPlan, DroMapAiProjectContext, DroMapAiWorkspaceMode } from "./dromap-ai-types";
 
 type Schema = Record<string, unknown>;

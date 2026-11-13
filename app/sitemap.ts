@@ -7,7 +7,8 @@ import {
 import { parseJsonResponse } from "@/lib/dromap/server/supabase-rest";
 import { DROMAP_CANONICAL_ORIGIN } from "@/lib/dromap/seo";
 
-export const revalidate = 3600;
+// Les cartes retirées ne doivent pas rester dans un sitemap mis en cache.
+export const revalidate = 0;
 
 type SitemapPublicationRow = {
   slug?: unknown;

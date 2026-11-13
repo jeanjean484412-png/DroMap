@@ -1060,25 +1060,19 @@ export function parseGeoJsonTextToDromapGeoJsonLayer(
   jsonText: string,
   options: ParseGeoJsonLayerOptions = {},
 ): DromapGeoJsonLayer {
-  const parsed = JSON.parse(jsonText) as unknown;
+  return parseGeoJsonValueToDromapGeoJsonLayer(JSON.parse(jsonText) as unknown, options);
+}
 
+export function parseGeoJsonValueToDromapGeoJsonLayer(
+  parsed: unknown,
+  options: ParseGeoJsonLayerOptions = {},
+): DromapGeoJsonLayer {
   if (!isRecord(parsed)) {
     throw new Error("Import GeoJSON impossible : le fichier doit contenir un objet GeoJSON.");
   }
 
   const flattened = flattenGeoJsonRecord(parsed, {});
-  const features = flattened.features.map((feature, index) => ({
-    ...feature,
-    id: `geojson-layer-feature-${index + 1}`,
-  }));
-
-  if (features.length === 0) {
-    throw new Error(
-      "Import GeoJSON impossible : aucun Point, LineString, Polygon ou Multi* exploitable n’a été trouvé.",
-    );
-  }
-
-  return createDromapGeoJsonLayerFromFeatures(features, {
+  return createDromapGeoJsonLayerFromFeatures(flattened.features, {
     ...options,
     skippedGeometries: flattened.skipped,
   });
@@ -1621,11 +1615,11 @@ export const useEditorGeoJsonLayersStore = create<EditorGeoJsonLayersState>((set
 
 
 registerEditorHistoryParticipant("geojson-layers", {
-  capture: () =>
-    cloneJsonValue(useEditorGeoJsonLayersStore.getState().geoJsonLayers),
+  // Store actions replace layers and their data instead of mutating them.
+  capture: () => useEditorGeoJsonLayersStore.getState().geoJsonLayers,
   restore: (snapshot) => {
-    useEditorGeoJsonLayersStore
-      .getState()
-      .setGeoJsonLayers(Array.isArray(snapshot) ? (snapshot as DromapGeoJsonLayer[]) : []);
+    useEditorGeoJsonLayersStore.setState({
+      geoJsonLayers: Array.isArray(snapshot) ? (snapshot as DromapGeoJsonLayer[]) : [],
+    });
   },
 });

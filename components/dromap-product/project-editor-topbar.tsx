@@ -10,6 +10,7 @@ import { UndoRedoControls } from "@/editor/undo-redo-controls";
 import { getProjectStatusLabel } from "@/lib/dromap/product";
 import { useDromapProductStore } from "@/stores/dromap-product";
 import { useEditorExportStore } from "@/stores/editor-export";
+import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
 import { useDromapProjectSave } from "./project-autosave";
 
 type DromapProjectEditorTopbarProps = {
@@ -47,12 +48,14 @@ export function DromapProjectEditorTopbar({
   if (!project) return null;
   const activeProject = project;
 
-  async function leaveEditor() {
+  async function leaveEditor(href: string) {
+    useEditorWorkspaceStore.getState().cancelWorkspaceZoneModification();
     await saveNow("navigation");
-    router.push("/dashboard");
+    router.push(href);
   }
 
   function openRenderPage() {
+    useEditorWorkspaceStore.getState().cancelWorkspaceZoneModification();
     // La préparation du rendu est un écran plein écran au-dessus de l'éditeur,
     // pas une nouvelle page de travail. Garder l'éditeur monté évite de
     // reconstruire Leaflet/MapLibre, de restaurer la zone et de recharger les
@@ -82,7 +85,7 @@ export function DromapProjectEditorTopbar({
     >
       <button
         type="button"
-        onClick={() => void leaveEditor()}
+        onClick={() => void leaveEditor("/dashboard")}
         aria-label="Retour au menu principal"
         className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
       >
@@ -152,7 +155,7 @@ export function DromapProjectEditorTopbar({
 
           <button
             type="button"
-            onClick={() => window.open("/help", "_blank", "noopener,noreferrer")}
+            onClick={() => void leaveEditor(`/help?projectId=${encodeURIComponent(projectId)}`)}
             data-dromap-tour="help"
             className="hidden h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-100 md:inline-flex"
             title="Ouvrir le centre d’aide"

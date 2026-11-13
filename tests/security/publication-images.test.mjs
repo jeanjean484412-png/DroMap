@@ -122,24 +122,37 @@ test("WebP animé refusé", async () => {
 function routeFixture(relativePath, options = {}) {
   const writes = [];
   const ownershipChecks = [];
+  const invalidatedPaths = [];
+  const invalidatedTags = [];
+  const reads = [];
+  const publicationListTag = "dromap-publication-list";
   const row = options.row ?? { slug: "carte-test", title: "Carte été", image_data_url: dataUrl(jpeg) };
   const auth = options.auth === false ? null : { accessToken: "token-simule", user: { id: "proprietaire" } };
   const publications = {
     dromapPublicationsConfigured: () => true,
+    DROMAP_PUBLICATION_LIST_CACHE_TAG: publicationListTag,
     publicationsAdminFetch: async (url, init) => {
-      if (init.method === "GET") return Response.json([row]);
-      writes.push({ url, ...init, body: JSON.parse(init.body) });
+      if (init.method === "GET") {
+        reads.push({ url, ...init });
+        return Response.json([row]);
+      }
+      writes.push({ url, ...init, body: init.body ? JSON.parse(init.body) : undefined });
       return new Response(null, { status: 204 });
     },
     createUniquePublicationSlug: async () => "carte-test",
     readOwnedPublication: async () => options.existing ? row : null,
     readPublicationBySlug: async () => row,
     publicationRowToPublic: (value) => value,
+    publicationRowToPublicWithImageRoutes: (value) => value,
     getPublicationViewerAccess: async () => ({ canExport: options.canExport !== false }),
     freezePublicationSourceFromProject: async () => { throw new Error("Copie modifiable hors de ce test"); },
   };
   const routes = loadSource(relativePath, {
     "@/lib/dromap/server/image-data-url": imageModule,
+    "next/cache": {
+      revalidatePath: (path) => invalidatedPaths.push(path),
+      revalidateTag: (tag, profile) => invalidatedTags.push([tag, profile]),
+    },
     "@/lib/dromap/server/publications": publications,
     "@/lib/dromap/publications": publicationValues,
     "@/lib/dromap/server/supabase-rest": {
@@ -154,7 +167,7 @@ function routeFixture(relativePath, options = {}) {
       },
     },
   });
-  return { ...routes, writes, ownershipChecks };
+  return { ...routes, writes, reads, ownershipChecks, invalidatedPaths, invalidatedTags };
 }
 
 function publicationRequest(overrides = {}) {
@@ -200,7 +213,22 @@ test("publication : création et mise à jour conservent les images et le filtre
     assert.equal(write.body.image_data_url, dataUrl(jpeg));
     if (existing) assert.equal(write.url, "/dromap_publications?owner_id=eq.proprietaire&project_id=eq.projet");
     else assert.equal(write.body.owner_id, "proprietaire");
+    assert.deepEqual(route.invalidatedPaths, ["/library/carte-test", "/library", "/sitemap.xml"]);
+    assert.deepEqual(route.invalidatedTags, [["dromap-publication-list", { expire: 0 }]]);
   }
+});
+
+test("bibliothèque : cache limité à la liste et invalidation immédiate après dépublication", async () => {
+  const list = routeFixture("app/api/dromap/publications/route.ts");
+  const detail = routeFixture("app/api/dromap/publications/[slug]/route.ts");
+  const url = "http://localhost/api/dromap/publications";
+  const context = { params: Promise.resolve({ slug: "carte-test" }) };
+  assert.equal((await list.GET(new Request(url))).status, 200);
+  assert.deepEqual(list.reads[0].next, { revalidate: 30, tags: ["dromap-publication-list"] });
+  assert.equal((await detail.GET(new Request(`${url}/carte-test`), context)).status, 200);
+  assert.equal(detail.reads[0].next, undefined);
+  assert.equal((await detail.DELETE(new Request(`${url}/carte-test`, { method: "DELETE" }), context)).status, 200);
+  assert.deepEqual(detail.invalidatedTags, [["dromap-publication-list", { expire: 0 }]]);
 });
 
 test("publication : authentification, abonnement et propriété restent obligatoires", async () => {
@@ -220,6 +248,7 @@ for (const [name, field] of [["preview-image", "preview_data_url"], ["share-imag
       if (status === 200) {
         assert.equal(response.headers.get("Content-Type"), `image/${format}`);
         assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
+        assert.equal(response.headers.get("Cache-Control"), "private, no-store");
         assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
       }
     }

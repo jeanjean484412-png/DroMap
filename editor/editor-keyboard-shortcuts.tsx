@@ -99,6 +99,9 @@ function deleteSelectedFeatures() {
 export function EditorKeyboardShortcuts() {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Control") {
+        useEditorSelectionStore.getState().setMultiSelectionHeld(true);
+      }
       if (event.defaultPrevented) {
         return;
       }
@@ -177,10 +180,25 @@ export function EditorKeyboardShortcuts() {
       }
     }
 
+    function handleKeyUp(event: KeyboardEvent) {
+      if (event.key === "Control") {
+        useEditorSelectionStore.getState().setMultiSelectionHeld(false);
+      }
+    }
+
+    function handleWindowBlur() {
+      useEditorSelectionStore.getState().setMultiSelectionHeld(false);
+    }
+
     document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleWindowBlur);
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleWindowBlur);
+      handleWindowBlur();
     };
   }, []);
 

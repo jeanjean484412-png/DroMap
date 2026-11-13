@@ -35,7 +35,7 @@ export function createScopedProjectCache(
     const scope = currentScope();
     const db = await open();
     try {
-      if (scope !== currentScope()) return;
+      if (scope !== currentScope()) return false;
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(storeName, "readwrite");
         tx.oncomplete = () => resolve();
@@ -45,6 +45,7 @@ export function createScopedProjectCache(
         store.put({ ...value, ownerScope: scope }, [scope, projectId]);
         if (legacyOwners.get(projectId) === scope) store.delete(projectId);
       });
+      return true;
     } finally { db.close(); }
   }
 

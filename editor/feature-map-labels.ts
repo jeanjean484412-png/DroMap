@@ -502,6 +502,13 @@ export type FeatureMapLabelScreenLayoutRequest = {
   manualOffsetY?: number;
 };
 
+export function getFeatureMapLabelScale(feature: DroMapFeature) {
+  const scale = feature.properties.mapLabelScale;
+  return typeof scale === "number" && Number.isFinite(scale)
+    ? Math.min(2.5, Math.max(0.5, scale))
+    : 1;
+}
+
 export type FeatureMapLabelScreenLayout = {
   featureId: string;
   /** Texte intégral, avec retours à la ligne lorsque le libellé est long. */
@@ -754,17 +761,10 @@ function getCenteredPlacementCandidates(
  */
 export function createFeatureMapLabelScreenLayouts(
   requests: FeatureMapLabelScreenLayoutRequest[],
-  viewport: FeatureMapLabelViewport,
+  _viewport: FeatureMapLabelViewport,
   measureTextWidth: (text: string, fontSize: number) => number,
   markerObstacles: FeatureMapLabelMarkerObstacle[] = [],
 ) {
-  const viewportPadding = 2;
-  const viewportRect: FeatureMapLabelScreenRect = {
-    left: viewport.x + viewportPadding,
-    top: viewport.y + viewportPadding,
-    right: viewport.x + viewport.width - viewportPadding,
-    bottom: viewport.y + viewport.height - viewportPadding,
-  };
   const markerRectByFeatureId = new Map<
     string,
     { featureId: string; rect: FeatureMapLabelScreenRect }
@@ -862,23 +862,9 @@ export function createFeatureMapLabelScreenLayouts(
     let bestScore = Number.POSITIVE_INFINITY;
 
     candidates.forEach((candidate, candidateIndex) => {
-      const minCenterX = viewportRect.left + width / 2;
-      const maxCenterX = viewportRect.right - width / 2;
-      const minCenterY = viewportRect.top + height / 2;
-      const maxCenterY = viewportRect.bottom - height / 2;
-      const centerX =
-        minCenterX > maxCenterX
-          ? (viewportRect.left + viewportRect.right) / 2
-          : Math.min(Math.max(candidate.x, minCenterX), maxCenterX);
-      const centerY =
-        minCenterY > maxCenterY
-          ? (viewportRect.top + viewportRect.bottom) / 2
-          : Math.min(Math.max(candidate.y, minCenterY), maxCenterY);
+      const centerX = candidate.x;
+      const centerY = candidate.y;
       const rect = createScreenRect(centerX, centerY, width, height);
-      const clampDistance = Math.hypot(
-        centerX - candidate.x,
-        centerY - candidate.y,
-      );
       const labelOverlap = hasManualOffset
         ? 0
         : occupiedLabelRects.reduce(
@@ -896,9 +882,8 @@ export function createFeatureMapLabelScreenLayouts(
             0,
           );
       const score = hasManualOffset
-        ? clampDistance
+        ? 0
         : (labelOverlap + markerOverlap) * 10_000 +
-          clampDistance * 100 +
           candidateIndex;
 
       if (score < bestScore) {

@@ -18,7 +18,7 @@ import {
   useEditorGeoJsonLayersStore,
 } from "@/stores/editor-geojson-layers";
 import { useEditorSelectionStore } from "@/stores/editor-selection";
-import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
+import { getValidatedWorkspace, useEditorWorkspaceStore } from "@/stores/editor-workspace";
 import { useEditorBasemapStore } from "@/stores/editor-basemap";
 import { useEditorMapLabelsStore } from "@/stores/editor-map-labels";
 import {
@@ -634,9 +634,6 @@ function LegacySaveLoadControls() {
     (state) => state.replaceFeatures,
   );
 
-  const workspaceBounds = useEditorWorkspaceStore(
-    (state) => state.workspaceBounds,
-  );
   const setWorkspaceBounds = useEditorWorkspaceStore(
     (state) => state.setWorkspaceBounds,
   );
@@ -645,12 +642,6 @@ function LegacySaveLoadControls() {
   );
   const validateWorkspaceZone = useEditorWorkspaceStore(
     (state) => state.validateWorkspaceZone,
-  );
-  const workspaceBasemapZoom = useEditorWorkspaceStore(
-    (state) => state.workspaceBasemapZoom,
-  );
-  const workspaceBasemapBaseZoom = useEditorWorkspaceStore(
-    (state) => state.workspaceBasemapBaseZoom,
   );
   const setWorkspaceBasemapZoom = useEditorWorkspaceStore(
     (state) => state.setWorkspaceBasemapZoom,
@@ -787,9 +778,7 @@ function LegacySaveLoadControls() {
     setStatus("Sauvegarde locale en attente...");
 
     const featuresSnapshot = features;
-    const workspaceBoundsSnapshot = workspaceBounds;
-    const workspaceBasemapZoomSnapshot = workspaceBasemapZoom;
-    const workspaceBasemapBaseZoomSnapshot = workspaceBasemapBaseZoom;
+    const validatedWorkspace = getValidatedWorkspace();
     const basemapIdSnapshot = basemapId;
     const showBasemapLabelsSnapshot = showBasemapLabels;
     const showCountryNeighborContextSnapshot = showCountryNeighborContext;
@@ -811,9 +800,9 @@ function LegacySaveLoadControls() {
         schemaVersion: 1,
         savedAt: new Date().toISOString(),
         features: featuresToSave,
-        workspaceBounds: workspaceBoundsSnapshot,
-        workspaceBasemapZoom: workspaceBasemapZoomSnapshot,
-        workspaceBasemapBaseZoom: workspaceBasemapBaseZoomSnapshot,
+        workspaceBounds: validatedWorkspace.workspaceBounds,
+        workspaceBasemapZoom: validatedWorkspace.workspaceBasemapZoom,
+        workspaceBasemapBaseZoom: validatedWorkspace.workspaceBasemapBaseZoom,
         basemapId: basemapIdSnapshot,
         showBasemapLabels: showBasemapLabelsSnapshot,
         showCountryNeighborContext: showCountryNeighborContextSnapshot,

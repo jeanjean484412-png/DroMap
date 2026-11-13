@@ -1,16 +1,26 @@
 import { create } from "zustand";
 
+import type { DromapMapView } from "@/lib/dromap/map-view";
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
 import {
   commitEditorHistoryBeforeWorkspaceChange,
   registerWorkspaceHistoryAccessors,
 } from "@/stores/editor-history-coordinator";
 import { useEditorModeStore } from "@/stores/editor-mode";
+import { useEditorMapViewStore } from "@/stores/editor-map-view";
 
 const WORKSPACE_BASEMAP_DETAIL_DELTA = 1;
 
+type ValidatedWorkspace = {
+  workspaceBounds: WorkspaceBounds | null;
+  workspaceBasemapZoom: number | null;
+  workspaceBasemapBaseZoom: number | null;
+  mapView: DromapMapView | null;
+};
+
 type EditorWorkspaceState = {
   workspaceBounds: WorkspaceBounds | null;
+  workspaceBeforeModification: (ValidatedWorkspace & { workspaceNavigationUnlocked: boolean }) | null;
   pendingFitToWorkspace: boolean;
   /** Niveau de détail actuellement utilisé par le fond figé. */
   workspaceBasemapZoom: number | null;
@@ -30,6 +40,7 @@ type EditorWorkspaceState = {
   clearWorkspaceBounds: () => void;
   validateWorkspaceZone: () => void;
   modifyWorkspaceZone: () => void;
+  cancelWorkspaceZoneModification: () => void;
   consumePendingWorkspaceFit: () => boolean;
   setWorkspaceBasemapZoom: (zoom: number | null) => void;
   setWorkspaceBasemapBaseZoom: (zoom: number | null) => void;
@@ -74,6 +85,7 @@ function workspaceBoundsEqual(
 export const useEditorWorkspaceStore = create<EditorWorkspaceState>(
   (set, get) => ({
     workspaceBounds: null,
+    workspaceBeforeModification: null,
     pendingFitToWorkspace: false,
     workspaceBasemapZoom: null,
     workspaceBasemapBaseZoom: null,
@@ -89,9 +101,10 @@ export const useEditorWorkspaceStore = create<EditorWorkspaceState>(
         return;
       }
 
-      // La création ou le remplacement de la zone fait désormais partie du
-      // même historique Ctrl+Z/Ctrl+Y que les objets de la carte.
-      commitEditorHistoryBeforeWorkspaceChange();
+      // En mode sélection, seul le cadrage validé entre dans l'historique.
+      if (useEditorModeStore.getState().currentMode === "edit") {
+        commitEditorHistoryBeforeWorkspaceChange();
+      }
       set({
         workspaceBounds: bounds,
         workspaceBasemapZoom: null,
@@ -107,6 +120,7 @@ export const useEditorWorkspaceStore = create<EditorWorkspaceState>(
       }
       if (
         state.workspaceBounds === null &&
+        !state.workspaceBeforeModification &&
         useEditorModeStore.getState().currentMode === "workspace-select"
       ) {
         return;
@@ -115,6 +129,7 @@ export const useEditorWorkspaceStore = create<EditorWorkspaceState>(
       commitEditorHistoryBeforeWorkspaceChange();
       set({
         workspaceBounds: null,
+        workspaceBeforeModification: null,
         pendingFitToWorkspace: false,
         workspaceBasemapZoom: null,
         workspaceBasemapBaseZoom: null,
@@ -125,14 +140,19 @@ export const useEditorWorkspaceStore = create<EditorWorkspaceState>(
     },
 
     validateWorkspaceZone: () => {
-      if (!get().workspaceBounds) {
+      const state = get();
+      if (!state.workspaceBounds) {
         return;
       }
 
-      // setWorkspaceBounds a déjà enregistré l'état précédent. Ne pas ajouter
-      // une seconde étape uniquement pour la validation, afin qu'un seul Ctrl+Z
-      // annule bien toute la sélection de zone.
+      if (
+        useEditorModeStore.getState().currentMode === "workspace-select" &&
+        !workspaceBoundsEqual(state.workspaceBounds, state.workspaceBeforeModification?.workspaceBounds ?? null)
+      ) {
+        commitEditorHistoryBeforeWorkspaceChange();
+      }
       set({
+        workspaceBeforeModification: null,
         pendingFitToWorkspace: true,
         workspaceBasemapZoom: null,
         workspaceBasemapBaseZoom: null,
@@ -143,10 +163,14 @@ export const useEditorWorkspaceStore = create<EditorWorkspaceState>(
     },
 
     modifyWorkspaceZone: () => {
-      if (get().workspaceZoneEditLocked) {
+      const state = get();
+      if (state.workspaceZoneEditLocked || useEditorModeStore.getState().currentMode === "workspace-select") {
         return;
       }
       set({
+        workspaceBeforeModification: state.workspaceBounds
+          ? { ...getValidatedWorkspace(), workspaceNavigationUnlocked: state.workspaceNavigationUnlocked }
+          : null,
         pendingFitToWorkspace: false,
         workspaceBasemapZoom: null,
         workspaceBasemapBaseZoom: null,
@@ -154,6 +178,29 @@ export const useEditorWorkspaceStore = create<EditorWorkspaceState>(
       });
 
       useEditorModeStore.getState().setCurrentMode("workspace-select");
+    },
+
+    cancelWorkspaceZoneModification: () => {
+      if (useEditorModeStore.getState().currentMode !== "workspace-select") return;
+
+      const { workspaceBounds, workspaceBeforeModification: previous } = get();
+      if (!workspaceBounds && !previous) return;
+
+      if (previous) {
+        const mapViewStore = useEditorMapViewStore.getState();
+        mapViewStore.setCurrentView(previous.mapView);
+        mapViewStore.requestRestoreView(previous.mapView);
+      }
+
+      set({
+        workspaceBounds: previous?.workspaceBounds ?? null,
+        workspaceBeforeModification: null,
+        pendingFitToWorkspace: Boolean(previous?.workspaceBounds && !previous.mapView),
+        workspaceBasemapZoom: previous?.workspaceBasemapZoom ?? null,
+        workspaceBasemapBaseZoom: previous?.workspaceBasemapBaseZoom ?? null,
+        workspaceNavigationUnlocked: previous?.workspaceNavigationUnlocked ?? false,
+      });
+      useEditorModeStore.getState().setCurrentMode(previous?.workspaceBounds ? "edit" : "workspace-select");
     },
 
     consumePendingWorkspaceFit: () => {
@@ -200,9 +247,7 @@ export const useEditorWorkspaceStore = create<EditorWorkspaceState>(
 
     setWorkspaceZoneEditLocked: (locked) => {
       set({ workspaceZoneEditLocked: locked });
-      if (locked && useEditorModeStore.getState().currentMode !== "edit" && get().workspaceBounds) {
-        useEditorModeStore.getState().setCurrentMode("edit");
-      }
+      if (locked) get().cancelWorkspaceZoneModification();
     },
 
     setWorkspaceNavigationUnlocked: (unlocked) => {
@@ -234,23 +279,38 @@ export const useEditorWorkspaceStore = create<EditorWorkspaceState>(
   }),
 );
 
+export function getValidatedWorkspace(): ValidatedWorkspace {
+  const state = useEditorWorkspaceStore.getState();
+  if (state.workspaceBeforeModification) return state.workspaceBeforeModification;
+
+  const validated = useEditorModeStore.getState().currentMode === "edit" || state.pendingFitToWorkspace;
+  return {
+    workspaceBounds: validated ? state.workspaceBounds : null,
+    workspaceBasemapZoom: validated ? state.workspaceBasemapZoom : null,
+    workspaceBasemapBaseZoom: validated ? state.workspaceBasemapBaseZoom : null,
+    mapView: validated && state.workspaceBounds ? useEditorMapViewStore.getState().currentView : null,
+  };
+}
+
 registerWorkspaceHistoryAccessors({
   capture: () => {
     const state = useEditorWorkspaceStore.getState();
+    const workspace = getValidatedWorkspace();
     return {
-      workspaceBounds: state.workspaceBounds
-        ? structuredClone(state.workspaceBounds)
+      workspaceBounds: workspace.workspaceBounds
+        ? structuredClone(workspace.workspaceBounds)
         : null,
-      pendingFitToWorkspace: state.pendingFitToWorkspace,
-      workspaceBasemapZoom: state.workspaceBasemapZoom,
-      workspaceBasemapBaseZoom: state.workspaceBasemapBaseZoom,
-      currentMode: useEditorModeStore.getState().currentMode,
+      pendingFitToWorkspace: state.workspaceBeforeModification ? true : state.pendingFitToWorkspace,
+      workspaceBasemapZoom: workspace.workspaceBasemapZoom,
+      workspaceBasemapBaseZoom: workspace.workspaceBasemapBaseZoom,
+      currentMode: workspace.workspaceBounds ? "edit" : "workspace-select",
     };
   },
   restore: (snapshot) => {
     const current = useEditorWorkspaceStore.getState();
     const preserveLockedZone = current.workspaceZoneEditLocked && current.workspaceBounds !== null;
     useEditorWorkspaceStore.setState({
+      workspaceBeforeModification: null,
       workspaceBounds: preserveLockedZone
         ? structuredClone(current.workspaceBounds)
         : snapshot.workspaceBounds

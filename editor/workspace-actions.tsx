@@ -4,10 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
-import {
-  DROMAP_FULL_WORLD_WORKSPACE_BOUNDS,
-  type WorkspaceBounds,
-} from "@/lib/dromap/workspace-bounds";
+import { DROMAP_FULL_WORLD_WORKSPACE_BOUNDS } from "@/lib/dromap/workspace-bounds";
 import { validateWorkspaceBoundsRatio } from "@/lib/dromap/workspace-validation";
 import { useEditorBasemapStore } from "@/stores/editor-basemap";
 import { useEditorFeaturesStore } from "@/stores/editor-features";
@@ -17,6 +14,7 @@ import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
 import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
 
 import { getFeatureIdsOutsideWorkspace } from "./workspace-feature-intersection";
+import { MapDockButton } from "./map-dock-button";
 
 type OutsideWorkspaceDecision = {
   featureIds: string[];
@@ -25,10 +23,12 @@ type OutsideWorkspaceDecision = {
 type WorkspaceMenuPosition = {
   left: number;
   top: number;
+  width: number;
+  maxHeight: number;
 };
 
 const WORKSPACE_MENU_WIDTH = 260;
-const WORKSPACE_MENU_ESTIMATED_HEIGHT = 205;
+const WORKSPACE_MENU_ESTIMATED_HEIGHT = 148;
 const WORKSPACE_MENU_GAP = 10;
 const WORKSPACE_MENU_VIEWPORT_MARGIN = 12;
 
@@ -66,9 +66,6 @@ export function WorkspaceActions() {
 
   const productRuntime = useDromapProductRuntime();
 
-  const workspaceBoundsBeforeModificationRef = useRef<WorkspaceBounds | null>(
-    null,
-  );
   const workspaceMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -90,6 +87,8 @@ export function WorkspaceActions() {
   const modifyWorkspaceZone = useEditorWorkspaceStore(
     (state) => state.modifyWorkspaceZone,
   );
+  const previousWorkspace = useEditorWorkspaceStore((state) => state.workspaceBeforeModification);
+  const cancelWorkspaceZoneModification = useEditorWorkspaceStore((state) => state.cancelWorkspaceZoneModification);
 
   const workspaceZoneEditLocked = useEditorWorkspaceStore(
     (state) => state.workspaceZoneEditLocked,
@@ -151,7 +150,8 @@ export function WorkspaceActions() {
       workspaceMenuTriggerRef.current?.focus();
     }
 
-    function closeWorkspaceMenuAfterViewportChange() {
+    function closeWorkspaceMenuAfterViewportChange(event: Event) {
+      if (event.target instanceof Node && workspaceMenuRef.current?.contains(event.target)) return;
       setWorkspaceMenuOpen(false);
       setWorkspaceMenuPosition(null);
     }
@@ -203,6 +203,8 @@ export function WorkspaceActions() {
 
   const validation = validateWorkspaceBoundsRatio(workspaceBounds);
   const canValidateWorkspace = workspaceBounds !== null && validation.isValid;
+  const selecting = currentMode === "workspace-select";
+  const canCancelDraft = selecting && Boolean(workspaceBounds || previousWorkspace);
   const basemap = getDromapBasemapConfig(basemapId);
   const canSelectFullWorld = basemap.kind !== "solid";
 
@@ -230,13 +232,13 @@ export function WorkspaceActions() {
     }
 
     const rect = trigger.getBoundingClientRect();
+    const width = Math.min(WORKSPACE_MENU_WIDTH, window.innerWidth - WORKSPACE_MENU_VIEWPORT_MARGIN * 2);
+    const maxLeft = window.innerWidth - width - WORKSPACE_MENU_VIEWPORT_MARGIN;
     const preferredLeft = rect.right + WORKSPACE_MENU_GAP;
-    const fallbackLeft = rect.left - WORKSPACE_MENU_WIDTH - WORKSPACE_MENU_GAP;
-    const left =
-      preferredLeft + WORKSPACE_MENU_WIDTH <=
-      window.innerWidth - WORKSPACE_MENU_VIEWPORT_MARGIN
-        ? preferredLeft
-        : Math.max(WORKSPACE_MENU_VIEWPORT_MARGIN, fallbackLeft);
+    const fallbackLeft = rect.left - width - WORKSPACE_MENU_GAP;
+    const left = preferredLeft <= maxLeft
+      ? preferredLeft
+      : Math.max(WORKSPACE_MENU_VIEWPORT_MARGIN, Math.min(fallbackLeft, maxLeft));
     const top = Math.min(
       Math.max(WORKSPACE_MENU_VIEWPORT_MARGIN, rect.top),
       Math.max(
@@ -247,13 +249,18 @@ export function WorkspaceActions() {
       ),
     );
 
-    setWorkspaceMenuPosition({ left, top });
+    setWorkspaceMenuPosition({
+      left,
+      top,
+      width,
+      maxHeight: window.innerHeight - top - WORKSPACE_MENU_VIEWPORT_MARGIN,
+    });
     setWorkspaceMenuOpen(true);
   }
 
   function completeWorkspaceValidation() {
+    closeWorkspaceMenu();
     validateWorkspaceZone();
-    workspaceBoundsBeforeModificationRef.current = null;
     setOutsideWorkspaceDecision(null);
   }
 
@@ -262,10 +269,7 @@ export function WorkspaceActions() {
       return;
     }
 
-    const isExistingWorkspaceModification =
-      workspaceBoundsBeforeModificationRef.current !== null;
-
-    if (!isExistingWorkspaceModification) {
+    if (!previousWorkspace) {
       completeWorkspaceValidation();
       return;
     }
@@ -292,18 +296,14 @@ export function WorkspaceActions() {
       return;
     }
 
-    if (currentMode === "workspace-select") {
-      return;
-    }
-
-    if (!workspaceBounds) {
-      return;
-    }
-
-    workspaceBoundsBeforeModificationRef.current =
-      structuredClone(workspaceBounds);
     setOutsideWorkspaceDecision(null);
     modifyWorkspaceZone();
+  }
+
+  function handleCancelWorkspace() {
+    closeWorkspaceMenu();
+    setOutsideWorkspaceDecision(null);
+    cancelWorkspaceZoneModification();
   }
 
   function handleSelectFullWorld() {
@@ -313,38 +313,9 @@ export function WorkspaceActions() {
       return;
     }
 
-    const wasAlreadyModifyingWorkspace =
-      workspaceBoundsBeforeModificationRef.current !== null;
-    const startsFromEditMode = currentMode === "edit" && workspaceBounds !== null;
-
-    if (startsFromEditMode && workspaceBounds) {
-      workspaceBoundsBeforeModificationRef.current =
-        structuredClone(workspaceBounds);
-      setOutsideWorkspaceDecision(null);
-      modifyWorkspaceZone();
-    }
-
-    const nextWorkspaceBounds = structuredClone(DROMAP_FULL_WORLD_WORKSPACE_BOUNDS);
-    setWorkspaceBounds(nextWorkspaceBounds);
-
-    const isExistingWorkspaceModification =
-      startsFromEditMode || wasAlreadyModifyingWorkspace;
-
-    if (isExistingWorkspaceModification) {
-      const featureIdsOutsideWorkspace = getFeatureIdsOutsideWorkspace(
-        features,
-        nextWorkspaceBounds,
-      );
-
-      if (featureIdsOutsideWorkspace.length > 0) {
-        setOutsideWorkspaceDecision({
-          featureIds: featureIdsOutsideWorkspace,
-        });
-        return;
-      }
-    }
-
-    completeWorkspaceValidation();
+    setOutsideWorkspaceDecision(null);
+    modifyWorkspaceZone();
+    setWorkspaceBounds(structuredClone(DROMAP_FULL_WORLD_WORKSPACE_BOUNDS));
   }
 
   function clearSelectionIfOutside(featureIds: string[]) {
@@ -376,7 +347,7 @@ export function WorkspaceActions() {
   const zoneLockedModal = zoneLockedMessageOpen
     ? createPortal(
         <div className="fixed inset-0 z-[4300] flex items-center justify-center bg-black/35 px-4">
-          <div className="w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-5 shadow-lg" role="dialog" aria-modal="true">
+          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-amber-200 bg-white p-5 shadow-lg" role="dialog" aria-modal="true">
             <div className="flex items-start gap-3">
               <YellowLockBadge className="h-9 w-9 shrink-0" />
               <div>
@@ -435,7 +406,7 @@ export function WorkspaceActions() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="workspace-outside-objects-title"
-            className="w-full max-w-md rounded-2xl border border-neutral-200 bg-white p-5 shadow-lg"
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-5 shadow-lg"
           >
             <h2
               id="workspace-outside-objects-title"
@@ -495,20 +466,14 @@ export function WorkspaceActions() {
             ref={workspaceMenuRef}
             role="menu"
             aria-label="Zone de travail"
-            className="fixed z-[4200] w-[260px] rounded-2xl border border-neutral-200 bg-white p-2 shadow-lg"
-            style={{
-              left: workspaceMenuPosition.left,
-              top: workspaceMenuPosition.top,
-            }}
+            className="fixed z-[4200] overflow-y-auto overscroll-contain rounded-2xl border border-neutral-200 bg-white p-2 shadow-lg"
+            style={workspaceMenuPosition}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="px-2 pb-2 pt-1">
               <strong className="block text-sm text-neutral-950">
                 Zone de travail
               </strong>
-              <span className="mt-0.5 block text-[11px] leading-relaxed text-neutral-500">
-                Trace librement ta zone ou utilise un cadrage automatique.
-              </span>
             </div>
 
             <button
@@ -527,16 +492,7 @@ export function WorkspaceActions() {
                   <path d="M12 3.5v3M12 17.5v3M2.5 12h3M18.5 12h3" />
                 </svg>
               </span>
-              <span>
-                <strong className="block text-xs text-neutral-900">
-                  {currentMode === "edit"
-                    ? "Tracer ou modifier manuellement"
-                    : "Continuer la sélection manuelle"}
-                </strong>
-                <span className="mt-0.5 block text-[11px] leading-relaxed text-neutral-500">
-                  Ajuste le rectangle avec ses poignées, ou trace une nouvelle zone.
-                </span>
-              </span>
+              <strong className="self-center text-xs text-neutral-900">Tracer ou modifier manuellement</strong>
             </button>
 
             <button
@@ -557,138 +513,93 @@ export function WorkspaceActions() {
                   <path d="M3 12h18M12 3c-3 2.5-4.5 5.5-4.5 9s1.5 6.5 4.5 9M12 3c3 2.5 4.5 5.5 4.5 9S15 18.5 12 21" />
                 </svg>
               </span>
-              <span>
-                <strong className="block text-xs text-neutral-900">
-                  Sélectionner le monde
-                </strong>
-                <span className="mt-0.5 block text-[11px] leading-relaxed text-neutral-500">
-                  {canSelectFullWorld
-                    ? "Crée et valide automatiquement une zone propre couvrant le monde entier."
-                    : "Disponible uniquement avec un fond de carte classique."}
-                </span>
-              </span>
+              <strong className="self-center text-xs text-neutral-900">Sélectionner le monde</strong>
             </button>
           </div>,
           document.body,
         )
       : null;
 
-  if (currentMode === "workspace-select") {
-    return (
-      <>
-        <div className="relative flex justify-center gap-1">
+  return (
+    <>
+      {selecting && workspaceBounds && !validation.isValid ? (
+        <p role="status" className="mb-1 max-w-64 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+          {validation.message}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {canCancelDraft ? (
           <button
             type="button"
-            onClick={canValidateWorkspace ? handleValidateWorkspace : undefined}
-            title="Valider la zone"
-            aria-label="Valider la zone"
-            aria-disabled={!canValidateWorkspace}
-            className={[
-              "flex h-11 w-11 items-center justify-center rounded-xl border text-lg font-bold shadow-sm transition",
-              canValidateWorkspace
-                ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500"
-                : "cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-400",
-            ].join(" ")}
+            onClick={handleCancelWorkspace}
+            aria-label="Annuler la modification de la zone"
+            className="h-11 w-28 rounded-xl border border-orange-300 bg-orange-50 px-2 text-xs font-bold text-orange-900 transition hover:bg-orange-100"
           >
-            ✓
+            Annuler
           </button>
-
+        ) : (
           <button
             ref={workspaceMenuTriggerRef}
             type="button"
             onClick={toggleWorkspaceMenu}
-            title="Options de la zone de travail"
-            aria-label="Options de la zone de travail"
             aria-haspopup="menu"
             aria-expanded={workspaceMenuOpen}
-            className="flex h-11 w-7 items-center justify-center rounded-xl border border-blue-300 bg-blue-50 text-sm font-bold text-blue-700 shadow-sm transition hover:border-blue-400 hover:bg-blue-100"
+            className="relative flex h-11 w-28 items-center justify-center rounded-xl bg-orange-500 px-2 text-xs font-bold text-white shadow-sm transition hover:bg-orange-400"
           >
-            ▾
-          </button>
-
-          {workspaceBounds && !validation.isValid ? (
-            <div className="absolute left-full top-0 z-[1100] ml-3 w-64 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 shadow-lg">
-              {validation.message}
-            </div>
-          ) : null}
-        </div>
-
-        {workspaceMenu}
-        {zoneLockedModal}
-        {decisionModal}
-      </>
-    );
-  }
-
-  if (currentMode === "edit" && workspaceBounds) {
-    return (
-      <>
-        <div className="flex items-stretch justify-center gap-2">
-          <button
-            ref={workspaceMenuTriggerRef}
-            type="button"
-            onClick={toggleWorkspaceMenu}
-            title="Zone de travail"
-            aria-label="Zone de travail"
-            aria-haspopup="menu"
-            aria-expanded={workspaceMenuOpen}
-            className="relative flex h-10 min-w-[6.5rem] items-center justify-center whitespace-nowrap rounded-xl border border-orange-500 bg-orange-500 px-3 text-[10px] font-bold text-white shadow-sm transition hover:bg-orange-400"
-          >
-            <span className={workspaceZoneEditLocked ? "pr-5" : ""}>Zone de travail</span>
+            <span className={workspaceZoneEditLocked ? "pr-4" : ""}>Zone de travail</span>
             {workspaceZoneEditLocked ? (
-              <span className="absolute right-1.5 top-1/2 -translate-y-1/2">
-                <YellowLockBadge className="h-5 w-5" />
-              </span>
+              <YellowLockBadge className="absolute right-1 top-1/2 h-4 w-4 -translate-y-1/2" />
             ) : null}
           </button>
+        )}
 
-          <button
-            type="button"
+        {selecting ? (
+          <>
+            <button
+              type="button"
+              onClick={handleValidateWorkspace}
+              disabled={!canValidateWorkspace}
+              aria-label="Valider la zone"
+              className="h-11 rounded-xl bg-emerald-600 px-3 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:bg-neutral-100 disabled:text-neutral-400"
+            >
+              Valider
+            </button>
+            {canCancelDraft ? (
+              <button
+                ref={workspaceMenuTriggerRef}
+                type="button"
+                onClick={toggleWorkspaceMenu}
+                aria-label="Options de la zone de travail"
+                aria-haspopup="menu"
+                aria-expanded={workspaceMenuOpen}
+                className="grid h-11 w-11 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+            ) : null}
+          </>
+        ) : (
+          <MapDockButton
+            icon={(
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                <path d="m9 9-5-5m0 5V4h5m6 5 5-5m-5 0h5v5M9 15l-5 5m0-5v5h5m6-5 5 5m-5 0h5v-5" />
+              </svg>
+            )}
             onClick={toggleWorkspaceNavigationUnlocked}
+            disabled={!workspaceBounds}
+            aria-label="Navigation libre"
             aria-pressed={workspaceNavigationUnlocked}
-            title={
-              workspaceNavigationUnlocked
-                ? "Reverrouiller le zoom et le niveau de détail du fond"
-                : "Débloquer temporairement le zoom et le niveau de détail pour explorer précisément la zone"
-            }
-            aria-label={
-              workspaceNavigationUnlocked
-                ? "Reverrouiller le zoom et le niveau de détail"
-                : "Débloquer le zoom et le niveau de détail"
-            }
-            className={[
-              "flex h-10 min-w-[6.5rem] items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border px-3 text-[10px] font-bold shadow-sm transition",
-              workspaceNavigationUnlocked
-                ? "border-sky-600 bg-sky-600 text-white hover:bg-sky-500"
-                : "border-sky-300 bg-white text-sky-800 hover:border-sky-500 hover:bg-sky-50",
-            ].join(" ")}
+            className="border-sky-300 text-sky-800 hover:border-sky-500 hover:bg-sky-50 aria-pressed:border-sky-600 aria-pressed:bg-sky-600 aria-pressed:text-white"
           >
-            <span aria-hidden="true" className="text-sm leading-none">
-              ⌕
-            </span>
-            {workspaceNavigationUnlocked ? "Zoom contraint" : "Zoom précis"}
-          </button>
-        </div>
-
-        {workspaceMenu}
-        {zoneLockedModal}
-        {decisionModal}
-      </>
-    );
-  }
-
-  return (
-    <div className="flex justify-center">
-      <button
-        type="button"
-        title="Zone"
-        aria-label="Zone"
-        aria-disabled="true"
-        tabIndex={-1}
-        className="flex h-11 w-11 cursor-not-allowed items-center justify-center rounded-xl border border-neutral-200 bg-neutral-100 text-lg font-bold text-neutral-400 shadow-sm"
-      >
-        ✓
-      </button>
-    </div>
+            Navigation libre
+          </MapDockButton>
+        )}
+      </div>
+      {workspaceMenu}
+      {zoneLockedModal}
+      {decisionModal}
+    </>
   );
 }

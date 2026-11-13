@@ -11,7 +11,8 @@ import { useEditorModeStore } from "@/stores/editor-mode";
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
 import type { EditorActiveTool } from "@/stores/editor-tool";
 import { useEditorToolStore } from "@/stores/editor-tool";
-import { getMarkerSymbolHtml } from "./marker-symbol";
+import { getMarkerSymbolHtml, markerSymbolNeedsCatalog } from "./marker-symbol";
+import { useMarkerSymbolCatalog } from "./use-marker-symbol-catalog";
 import { createTextDivIconRender } from "./text-rendering";
 import {
   createHatchDotsForRing,
@@ -458,6 +459,8 @@ function MarkerPlacementPreview({ visualScale }: { visualScale: number }) {
     (state) => state.markerSymbol,
   );
 
+  const markerCatalog = useMarkerSymbolCatalog(markerSymbolNeedsCatalog(markerSymbol));
+
   const html = useMemo(() => {
     const feature: MarkerPreviewFeature = {
       properties: {
@@ -472,7 +475,7 @@ function MarkerPlacementPreview({ visualScale }: { visualScale: number }) {
     );
 
     return getMarkerSymbolHtml(feature, { size: scaledSize });
-  }, [markerStyle, markerSymbol, visualScale]);
+  }, [markerStyle, markerSymbol, visualScale, markerCatalog]);
 
   return (
     <div

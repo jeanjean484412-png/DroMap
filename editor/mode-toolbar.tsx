@@ -37,15 +37,16 @@ import {
   getMarkerSizeLimitsForSymbol,
 } from "./feature-style";
 import {
-  DROMAP_BUILTIN_MARKER_SYMBOLS,
   DROMAP_MARKER_SYMBOL_CATEGORIES,
+  loadMarkerSymbolCatalog,
+  markerSymbolNeedsCatalog,
+  type DroMapMarkerSymbolOption,
   getMarkerSymbolHtml,
   getMarkerSymbolLabel,
   markerSymbolSupportsFill,
   markerSymbolSupportsStrokeWeight,
 } from "./marker-symbol";
 import { MAX_TEXT_BORDER_WIDTH, MIN_TEXT_BORDER_WIDTH } from "./text-rendering";
-import { WorkspaceActions } from "./workspace-actions";
 import { UndoRedoControls } from "./undo-redo-controls";
 import { SaveLoadControls } from "./save-load-controls";
 import {
@@ -66,6 +67,7 @@ import {
 } from "./floating-panel-z-index";
 import { getEffectiveGeoJsonFeatureStyle } from "./geojson-layer-style";
 import { ColorPicker } from "./color-picker";
+import { useMarkerSymbolCatalog } from "./use-marker-symbol-catalog";
 import { CustomMarkerLibrary } from "./custom-marker-library";
 import {
   DROMAP_OPEN_BUILDINGS_IMPORT_EVENT,
@@ -541,7 +543,8 @@ function normalizeMarkerSearchText(value: string) {
     .trim();
 }
 
-type MarkerSymbolOption = (typeof DROMAP_BUILTIN_MARKER_SYMBOLS)[number];
+type MarkerSymbolOption = DroMapMarkerSymbolOption;
+const EMPTY_MARKER_OPTIONS: MarkerSymbolOption[] = [];
 
 type MarkerSymbolSearchGroup = {
   category: (typeof DROMAP_MARKER_SYMBOL_CATEGORIES)[number];
@@ -1004,7 +1007,7 @@ function markerSymbolSearchScore(
   };
 }
 
-function getMarkerSymbolSearchGroups(normalizedQuery: string): {
+function getMarkerSymbolSearchGroups(options: MarkerSymbolOption[], normalizedQuery: string): {
   groups: MarkerSymbolSearchGroup[];
   count: number;
   fallback: boolean;
@@ -1013,7 +1016,7 @@ function getMarkerSymbolSearchGroups(normalizedQuery: string): {
     ? getMarkerSearchWords(normalizedQuery).length
     : 0;
 
-  const scored = DROMAP_BUILTIN_MARKER_SYMBOLS.map((option, index) => {
+  const scored = options.map((option, index) => {
     const category =
       DROMAP_MARKER_SYMBOL_CATEGORIES.find(
         (candidate) => candidate.id === option.categoryId,
@@ -1063,7 +1066,7 @@ function getMarkerSymbolSearchGroups(normalizedQuery: string): {
 
   const fallback = normalizedQuery.length > 0 && relevantScored.length === 0;
   const rows = fallback
-    ? DROMAP_BUILTIN_MARKER_SYMBOLS.map((option, index) => {
+    ? options.map((option, index) => {
         const category =
           DROMAP_MARKER_SYMBOL_CATEGORIES.find(
             (candidate) => candidate.id === option.categoryId,
@@ -1384,6 +1387,7 @@ function MarkerSymbolPreview({
   weight,
   markerFilled = false,
 }: MarkerSymbolPreviewProps) {
+  const markerCatalog = useMarkerSymbolCatalog(markerSymbolNeedsCatalog(symbol));
   const html = useMemo(
     () =>
       getMarkerSymbolHtml(
@@ -1401,7 +1405,7 @@ function MarkerSymbolPreview({
         },
         { size },
       ),
-    [color, markerFilled, opacity, size, symbol, weight],
+    [color, markerFilled, opacity, size, symbol, weight, markerCatalog],
   );
 
   return (
@@ -1579,9 +1583,14 @@ export default function ModeToolbar({
   const zoneStrokeEnabled = zoneStyle.zoneStrokeEnabled !== false;
   const zoneFillEnabled = zoneStyle.zoneFillEnabled === true;
 
+  const markerLibraryOpen = openSettingsTool === "marker" && markerSettingsStep === "symbols";
+  const markerCatalog = useMarkerSymbolCatalog(markerLibraryOpen);
   const markerSearchResult = useMemo(
-    () => getMarkerSymbolSearchGroups(normalizeMarkerSearchText(markerSymbolSearch)),
-    [markerSymbolSearch],
+    () => getMarkerSymbolSearchGroups(
+      markerLibraryOpen ? markerCatalog?.DROMAP_BUILTIN_MARKER_SYMBOLS ?? EMPTY_MARKER_OPTIONS : EMPTY_MARKER_OPTIONS,
+      normalizeMarkerSearchText(markerSymbolSearch),
+    ),
+    [markerCatalog, markerLibraryOpen, markerSymbolSearch],
   );
   const markerSymbolGroups = markerSearchResult.groups;
   const markerSymbolCount = markerSearchResult.count;
@@ -1757,6 +1766,7 @@ export default function ModeToolbar({
   }
 
   function openMarkerSymbolLibrary() {
+    void loadMarkerSymbolCatalog().catch(() => undefined);
     setActiveTool("marker");
     bringSettingsPanelToFront();
     setOpenSettingsTool((current) => {
@@ -2134,7 +2144,6 @@ export default function ModeToolbar({
                   : "Zone"}
               </div>
 
-              <WorkspaceActions />
             </div>
 
             <div className="border-t border-neutral-200 pt-2">
@@ -2359,7 +2368,9 @@ export default function ModeToolbar({
                 </div>
 
                 <div className="text-[11px] text-neutral-500">
-                  {markerSearchResult.fallback ? (
+                  {!markerCatalog ? (
+                    <span role="status">Chargement des symboles…</span>
+                  ) : markerSearchResult.fallback ? (
                     <>
                       Aucun résultat exact : {markerSymbolCount} suggestion{markerSymbolCount > 1 ? "s" : ""} proche{markerSymbolCount > 1 ? "s" : ""}
                     </>
@@ -3062,9 +3073,9 @@ export default function ModeToolbar({
                     <input
                       className="w-full"
                       type="range"
-                      min="1"
+                      min="0.25"
                       max="12"
-                      step="0.5"
+                      step="0.25"
                       value={zoneStyle.weight}
                       onChange={(event) =>
                         updateZoneStyle({ weight: Number(event.target.value) })

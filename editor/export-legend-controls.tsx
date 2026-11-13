@@ -342,11 +342,23 @@ export function ExportLegendControls() {
                 <div className="h-px flex-1 bg-slate-300" />
                 <input
                   type="text"
-                  value={section}
+                  defaultValue={section}
                   disabled={isDefaultSection}
-                  onChange={(event) =>
-                    renameLegendSection(section, event.target.value)
-                  }
+                  onBlur={(event) => {
+                    const nextSection = event.currentTarget.value.trim();
+                    if (!nextSection || sectionKey(nextSection) === sectionKey(DEFAULT_LEGEND_SECTION)) {
+                      event.currentTarget.value = section;
+                      return;
+                    }
+                    renameLegendSection(section, nextSection);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") event.currentTarget.value = section;
+                    if (event.key === "Escape" || event.key === "Enter") {
+                      event.preventDefault();
+                      event.currentTarget.blur();
+                    }
+                  }}
                   className="min-w-0 max-w-[170px] rounded-md border border-transparent bg-transparent px-2 py-1 text-center text-[11px] font-bold uppercase tracking-[0.14em] text-slate-700 outline-none disabled:cursor-default hover:border-slate-200 hover:bg-white focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100"
                   title={
                     isDefaultSection
@@ -360,10 +372,13 @@ export function ExportLegendControls() {
                   <button
                     type="button"
                     onClick={() => removeLegendSection(section)}
-                    className="rounded-md px-1.5 py-1 text-[10px] text-slate-400 hover:bg-white hover:text-rose-600"
+                    className="grid size-6 shrink-0 place-items-center rounded-full border border-rose-300 bg-white text-rose-600 hover:bg-rose-50"
                     title="Supprimer cette sous-légende"
+                    aria-label="Supprimer cette sous-légende"
                   >
-                    ×
+                    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+                      <path d="M4 4l8 8m0-8-8 8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    </svg>
                   </button>
                 ) : null}
               </div>

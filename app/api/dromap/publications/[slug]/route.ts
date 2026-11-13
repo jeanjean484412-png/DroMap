@@ -1,10 +1,12 @@
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 
 import { getAuthenticatedRequestUser, parseJsonResponse } from "@/lib/dromap/server/supabase-rest";
 import { getDromapBillingAccessForSession } from "@/lib/dromap/server/billing";
 import {
   dromapPublicationsConfigured,
+  DROMAP_PUBLICATION_LIST_CACHE_TAG,
   getPublicationViewerAccess,
   publicationRowToPublicWithImageRoutes,
   publicationsAdminFetch,
@@ -69,6 +71,10 @@ async function handleDELETE(
     if (!response.ok) {
       return NextResponse.json({ error: "La carte n’a pas pu être retirée de la publication." }, { status: 502 });
     }
+    revalidatePath(`/library/${encodeURIComponent(slug)}`);
+    revalidateTag(DROMAP_PUBLICATION_LIST_CACHE_TAG, { expire: 0 });
+    revalidatePath("/library");
+    revalidatePath("/sitemap.xml");
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "La publication est momentanément indisponible." }, { status: 503 });

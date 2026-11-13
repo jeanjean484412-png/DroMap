@@ -205,9 +205,14 @@ test("geoBoundaries : téléchargement et filtrage conservés ; redirection hors
     assert.equal(options.redirect, "manual");
     assert.ok(options.signal instanceof AbortSignal);
     if (url.endsWith("/FRA/")) return new Response("ADM0");
-    if (url.endsWith("/FRA/ADM0/")) return Response.json({ boundaryName: "France", boundaryType: "ADM0", gjDownloadURL: "https://raw.githubusercontent.com/map.geojson" });
-    assert.equal(url, "https://raw.githubusercontent.com/map.geojson");
-    if (forbidden) return new Response(null, { status: 302, headers: { location: "https://evil.invalid/private" } });
+    if (url.endsWith("/FRA/ADM0/")) return Response.json({ boundaryName: "France", boundaryType: "ADM0", gjDownloadURL: "https://github.com/wmgeolab/geoBoundaries/raw/revision/map.geojson" });
+    if (url.startsWith("https://github.com/")) {
+      return new Response(null, {
+        status: 302,
+        headers: { location: forbidden ? "https://evil.invalid/private" : "https://media.githubusercontent.com/media/wmgeolab/geoBoundaries/revision/map.geojson" },
+      });
+    }
+    assert.equal(url, "https://media.githubusercontent.com/media/wmgeolab/geoBoundaries/revision/map.geojson");
     return Response.json({ type: "FeatureCollection", features: [] });
   };
   const route = loadSource("app/api/dromap/geojson-library/geoboundaries/route.ts");

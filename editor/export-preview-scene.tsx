@@ -64,7 +64,7 @@ import {
 } from "./export-legend-layout";
 import { getLegendEntries, type LegendEntry } from "./legend-entry";
 import { mergeLegendEntriesWithCustomEntries } from "./export-custom-legend";
-import { AdvancedLegendEditor } from "./advanced-legend-editor";
+
 import { createExportScaleBarModel } from "./export-scale";
 import { createExportNorthArrowPlacement } from "./export-north-arrow";
 import { mergeLegendEntriesWithGeoJsonLayers } from "./geojson-layer-legend";
@@ -90,7 +90,8 @@ import { useDromapProductRuntime } from "@/components/dromap-product/product-run
 import { useDromapProductStore } from "@/stores/dromap-product";
 import { resolveDromapPreferences } from "@/lib/dromap/preferences";
 
-import { getMarkerSymbolHtml } from "./marker-symbol";
+import { getFeatureMarkerSymbol, getMarkerSymbolHtml, loadMarkerSymbolCatalog, markerSymbolNeedsCatalog } from "./marker-symbol";
+import { useMarkerSymbolCatalog } from "./use-marker-symbol-catalog";
 import {
   featureHasArrowEnd,
   featureHasArrowStart,
@@ -105,6 +106,11 @@ import {
   getTextBorderWidth,
   hexToRgba,
 } from "./text-rendering";
+
+const AdvancedLegendEditor = dynamic(async () => {
+  const [module] = await Promise.all([import("./advanced-legend-editor"), loadMarkerSymbolCatalog()]);
+  return module.AdvancedLegendEditor;
+}, { ssr: false });
 
 const ExportLeafletPreview = dynamic(
   () =>
@@ -697,6 +703,7 @@ function LegendSymbol({
   symbolStyle?: ExportLegendSymbolStyle;
   renderSize?: number;
 }) {
+  useMarkerSymbolCatalog(markerSymbolNeedsCatalog(getFeatureMarkerSymbol(feature)));
   const type = feature.properties?.type;
   const color = getFeatureColor(feature);
   const opacity = getFeatureOpacity(feature);
@@ -979,6 +986,14 @@ function LegendSymbol({
   );
 }
 
+function LegendRemoveIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M4 4l8 8m0-8-8 8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function EditableLegendText({
   value,
   displayValue,
@@ -1002,6 +1017,7 @@ function EditableLegendText({
   const [isEditing, setIsEditing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editingStartValueRef = useRef(value);
+  const cancellingRef = useRef(false);
 
   useEffect(() => {
     if (!isEditing) {
@@ -1022,6 +1038,10 @@ function EditableLegendText({
 
   function commit() {
     setIsEditing(false);
+    if (cancellingRef.current) {
+      cancellingRef.current = false;
+      return;
+    }
     onCommit(draftValue);
   }
 
@@ -1032,6 +1052,7 @@ function EditableLegendText({
       onCommit(initialValue);
     }
     setIsEditing(false);
+    cancellingRef.current = true;
     target.blur();
   }
 
@@ -1647,9 +1668,10 @@ function ExportLegendPreview({
             <EditableLegendText
               value={safeTitle}
               displayValue={legendLayout.titleLines.join("\n")}
-              onCommit={onTitleChange}
+              onCommit={(nextTitle) => {
+                if (getSafeLegendTitle(nextTitle)) onTitleChange(nextTitle);
+              }}
               multiline
-              liveCommit
               placeholder="Titre de légende"
               className="relative block w-full resize-none overflow-hidden rounded border border-transparent bg-transparent p-0 font-bold outline-none hover:border-slate-300 hover:bg-white/70 focus:border-teal-400 focus:bg-white/90 focus:ring-2 focus:ring-teal-200"
               style={{
@@ -1685,7 +1707,7 @@ function ExportLegendPreview({
                 title="Supprimer le titre de la légende"
                 aria-label="Supprimer le titre de la légende"
               >
-                ×
+                <LegendRemoveIcon />
               </button>
             ) : null}
           </div>
@@ -1756,12 +1778,11 @@ function ExportLegendPreview({
                       )}
                       onCommit={(nextValue) => {
                         const trimmedValue = nextValue.trim();
-                        if (trimmedValue.length === 0) return;
+                        if (!trimmedValue || isDefaultLegendSection(trimmedValue)) return;
                         onRenameSection(displayItem.section, trimmedValue);
                       }}
                       placeholder="Sous-titre"
                       multiline
-                      liveCommit
                       className="absolute left-0 top-0 min-w-0 resize-none overflow-hidden whitespace-pre-wrap rounded border border-transparent bg-transparent p-0 pr-8 font-bold uppercase tracking-[0.12em] outline-none hover:border-slate-300 hover:bg-white/70 focus:border-teal-400 focus:bg-white/95 focus:ring-2 focus:ring-teal-200"
                       style={{
                         color: colors.titleColor,
@@ -1811,7 +1832,7 @@ function ExportLegendPreview({
                       title="Supprimer ce sous-titre"
                       aria-label="Supprimer ce sous-titre"
                     >
-                      ×
+                      <LegendRemoveIcon />
                     </button>
                   </li>
                 );

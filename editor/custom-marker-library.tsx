@@ -1,5 +1,7 @@
 "use client";
 
+import dynamic from "next/dynamic";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { DroMapMarkerSymbol } from "@/lib/dromap/feature";
@@ -8,10 +10,15 @@ import {
   useEditorCustomMarkersStore,
   type DroMapCustomMarkerDefinition,
 } from "@/stores/editor-custom-markers";
-import { CustomMarkerDesignerModal } from "./custom-marker-designer-modal";
+
 import { normalizeImportedMarkerImage } from "./custom-marker-rendering";
-import { getMarkerSymbolHtml } from "./marker-symbol";
+import { loadMarkerSymbolCatalog, getMarkerSymbolHtml } from "./marker-symbol";
 import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
+
+const CustomMarkerDesignerModal = dynamic(async () => {
+  const [module] = await Promise.all([import("./custom-marker-designer-modal"), loadMarkerSymbolCatalog()]);
+  return module.CustomMarkerDesignerModal;
+}, { ssr: false });
 
 type CustomMarkerLibraryProps = {
   selectedSymbol?: DroMapMarkerSymbol | null;

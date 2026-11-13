@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 
+import { parsePlaceSearchCoordinates } from "@/lib/dromap/place-search-coordinates";
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
-import { useEditorModeStore } from "@/stores/editor-mode";
-import { useEditorSelectionStore } from "@/stores/editor-selection";
-import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
-import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
+import { FloatingPanelPortal } from "./floating-panel-portal";
+import { MapDockButton } from "./map-dock-button";
+import { PlaceSearchNavigationContext } from "./place-search-navigation";
 import {
   bringFloatingPanelToFront,
   getInitialFloatingPanelZIndex,
@@ -43,6 +43,10 @@ type SearchStatus =
 
 const DEFAULT_ATTRIBUTION =
   "Données © contributeurs OpenStreetMap · recherche Nominatim";
+const IDLE_STATUS: SearchStatus = {
+  kind: "idle",
+  message: "Saisis un lieu ou des coordonnées MGRS, DMS ou décimales.",
+};
 
 function SearchIcon({ size = 18 }: { size?: number }) {
   return (
@@ -131,52 +135,33 @@ function resultToWorkspaceBounds(result: PlaceSearchResult): WorkspaceBounds {
   };
 }
 
-type PlaceSearchControlProps = {
-  docked?: boolean;
-};
-
-export function PlaceSearchControl({ docked = false }: PlaceSearchControlProps = {}) {
+export function PlaceSearchControl({ product = false }: { product?: boolean } = {}) {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PlaceSearchResult[]>([]);
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
   const [attribution, setAttribution] = useState(DEFAULT_ATTRIBUTION);
-  const [status, setStatus] = useState<SearchStatus>({
-    kind: "idle",
-    message: "Saisis une ville, un pays, une adresse ou un lieu.",
-  });
+  const [status, setStatus] = useState<SearchStatus>(IDLE_STATUS);
   const [panelZIndex, setPanelZIndex] = useState(
     getInitialFloatingPanelZIndex(),
   );
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const requestIdRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const panelId = useId();
+  const navigation = useContext(PlaceSearchNavigationContext);
 
-  const { enabled: productRuntimeEnabled } = useDromapProductRuntime();
-  const currentMode = useEditorModeStore((state) => state.currentMode);
-  const workspaceBounds = useEditorWorkspaceStore(
-    (state) => state.workspaceBounds,
-  );
-  const clearWorkspaceBounds = useEditorWorkspaceStore(
-    (state) => state.clearWorkspaceBounds,
-  );
-  const requestMapFitToBounds = useEditorSelectionStore(
-    (state) => state.requestMapFitToBounds,
-  );
-  const clearSelectedFeatureId = useEditorSelectionStore(
-    (state) => state.clearSelectedFeatureId,
-  );
+  const closeSearch = useCallback(() => {
+    abortControllerRef.current?.abort();
+    setStatus((current) => current.kind === "loading" ? IDLE_STATUS : current);
+    setIsOpen(false);
+  }, []);
 
   useEffect(() => {
-    const closeWhenAiOpens = () => {
-      setIsOpen(false);
-    };
-
-    window.addEventListener("dromap:open-ai-assistant", closeWhenAiOpens);
+    window.addEventListener("dromap:open-ai-assistant", closeSearch);
     return () => {
-      window.removeEventListener("dromap:open-ai-assistant", closeWhenAiOpens);
+      window.removeEventListener("dromap:open-ai-assistant", closeSearch);
     };
-  }, []);
+  }, [closeSearch]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -190,7 +175,7 @@ export function PlaceSearchControl({ docked = false }: PlaceSearchControlProps =
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setIsOpen(false);
+        closeSearch();
       }
     };
 
@@ -200,7 +185,7 @@ export function PlaceSearchControl({ docked = false }: PlaceSearchControlProps =
       window.cancelAnimationFrame(focusFrame);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen]);
+  }, [closeSearch, isOpen]);
 
   useEffect(() => {
     return () => {
@@ -229,43 +214,32 @@ export function PlaceSearchControl({ docked = false }: PlaceSearchControlProps =
   }
 
   function goToResult(result: PlaceSearchResult) {
-    const targetBounds = resultToWorkspaceBounds(result);
-    const hadWorkspace = currentMode === "edit" && workspaceBounds !== null;
-
-    // La recherche de lieu est une action de navigation globale. Si une zone
-    // était validée, elle est retirée (et historisée) avant le déplacement afin
-    // que ses contraintes de pan/zoom ne bloquent jamais le résultat recherché.
-    if (workspaceBounds) {
-      clearWorkspaceBounds();
-      clearSelectedFeatureId();
-    }
-
-    const navigate = () => {
-      requestMapFitToBounds(targetBounds, {
-        maxZoom: 17,
-        animate: true,
-      });
-    };
-
-    // Laisser React-Leaflet retirer les maxBounds de l'ancienne zone avant le
-    // fit. Un double requestAnimationFrame évite les sauts sur les fonds
-    // MapLibre et sur les zones très resserrées.
-    if (hadWorkspace) {
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(navigate);
-      });
-    } else {
-      navigate();
+    const outcome = navigation?.current?.({
+      lat: result.lat,
+      lng: result.lng,
+      bounds: resultToWorkspaceBounds(result),
+    });
+    if (!outcome) {
+      setStatus({ kind: "warning", message: "La carte est en cours de chargement. Réessaie dans un instant." });
+      return;
     }
 
     setSelectedResultId(result.id);
-    setStatus({
-      kind: "success",
-      message: hadWorkspace
-        ? `Zone de travail retirée. Carte centrée sur ${getResultParts(result.displayName).title}.`
-        : `Carte centrée sur ${getResultParts(result.displayName).title}.`,
-    });
-    return true;
+    const title = getResultParts(result.displayName).title;
+    switch (outcome) {
+      case "outside-visible":
+        setStatus({ kind: "warning", message: `${title} est hors de la zone de travail. Un repère indique sa position.` });
+        break;
+      case "outside-hidden":
+        setStatus({ kind: "warning", message: `${title} est hors de la zone de travail et hors de l’écran.` });
+        break;
+      case "marked":
+        setStatus({ kind: "success", message: `Repère placé sur ${title}.` });
+        break;
+      case "centered":
+        setStatus({ kind: "success", message: `Carte centrée sur ${title}.` });
+        break;
+    }
   }
 
   async function searchPlaces() {
@@ -280,13 +254,34 @@ export function PlaceSearchControl({ docked = false }: PlaceSearchControlProps =
     }
 
     abortControllerRef.current?.abort();
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-
     setResults([]);
     setSelectedResultId(null);
+    const coordinates = parsePlaceSearchCoordinates(normalizedQuery);
+
+    if (coordinates.kind === "invalid") {
+      setStatus({ kind: "error", message: coordinates.message });
+      return;
+    }
+
+    if (coordinates.kind === "coordinates") {
+      const result: PlaceSearchResult = {
+        ...coordinates.point,
+        id: `coordinates:${coordinates.point.lat}:${coordinates.point.lng}`,
+        displayName: `Coordonnées ${coordinates.format}, ${coordinates.point.lat.toFixed(6)}° / ${coordinates.point.lng.toFixed(6)}°`,
+        bounds: null,
+        category: "coordinates",
+        type: coordinates.format,
+        importance: null,
+      };
+      setResults([result]);
+      setAttribution("");
+      goToResult(result);
+      return;
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    setAttribution(DEFAULT_ATTRIBUTION);
     setStatus({ kind: "loading", message: "Recherche du lieu…" });
 
     try {
@@ -302,7 +297,7 @@ export function PlaceSearchControl({ docked = false }: PlaceSearchControlProps =
       );
       const payload = (await response.json()) as PlaceSearchResponse;
 
-      if (requestId !== requestIdRef.current) {
+      if (controller.signal.aborted) {
         return;
       }
 
@@ -324,18 +319,9 @@ export function PlaceSearchControl({ docked = false }: PlaceSearchControlProps =
         return;
       }
 
-      const bestResult = nextResults[0];
-      const didNavigate = goToResult(bestResult);
-
-      if (didNavigate && nextResults.length > 1) {
-        setStatus({
-          kind: "success",
-          message:
-            "La carte a été centrée sur le meilleur résultat. Les autres propositions restent disponibles ci-dessous.",
-        });
-      }
+      goToResult(nextResults[0]);
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
+      if (controller.signal.aborted) {
         return;
       }
 
@@ -359,144 +345,137 @@ export function PlaceSearchControl({ docked = false }: PlaceSearchControlProps =
   }
 
   return (
-    <section
-      data-dromap-place-search={isOpen ? "open" : "closed"}
-      className={[
-        "pointer-events-none",
-        productRuntimeEnabled && docked
-          ? isOpen
-            ? "fixed left-1/2 top-[4.5rem] -translate-x-1/2"
-            : "relative"
-          : productRuntimeEnabled
-            ? isOpen
-              ? "absolute left-1/2 top-4 -translate-x-1/2 lg:left-[33rem] lg:-translate-x-48"
-              : "absolute left-1/2 top-4 -translate-x-1/2 lg:left-[33rem] lg:translate-x-0"
-            : "absolute left-1/2 top-4 -translate-x-1/2 lg:left-[53rem] lg:translate-x-0",
-      ].join(" ")}
-      style={{ zIndex: isOpen ? Math.min(panelZIndex, 1800) : 1050 }}
-      onMouseDownCapture={isOpen ? bringToFront : undefined}
-      onFocusCapture={isOpen ? bringToFront : undefined}
-    >
-      {!isOpen ? (
-        <button
-          type="button"
-          onClick={() => {
-            window.dispatchEvent(new Event("dromap:open-place-search"));
-            setIsOpen(true);
-            bringToFront();
-          }}
-          className="pointer-events-auto flex items-center gap-2 rounded-xl border border-slate-200 bg-white/95 px-3 py-2 text-sm font-bold text-slate-800 shadow-lg backdrop-blur transition hover:border-teal-300 hover:bg-white hover:text-teal-700"
-          title="Rechercher un lieu et centrer la carte"
-        >
-          <SearchIcon />
-          <span className="hidden sm:inline">Rechercher un lieu</span>
-        </button>
-      ) : (
-        <div
-          className="pointer-events-auto w-[440px] max-w-[calc(100vw-2rem)] rounded-2xl border border-slate-200 bg-white/95 p-3 text-sm shadow-lg backdrop-blur"
-          onClick={(event) => event.stopPropagation()}
-          onDoubleClick={(event) => event.stopPropagation()}
-          onPointerDown={(event) => event.stopPropagation()}
-          onWheel={(event) => event.stopPropagation()}
-        >
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div>
-              <h2 className="flex items-center gap-2 font-black text-slate-950">
-                <SearchIcon size={19} />
-                Rechercher un lieu
-              </h2>
-              <p className="mt-1 text-xs leading-snug text-slate-500">
-                La carte se centre automatiquement sur le meilleur résultat.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsOpen(false)}
-              className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-600 transition hover:bg-slate-50"
-            >
-              Fermer
-            </button>
-          </div>
-
-          <form onSubmit={handleSubmit} className="flex gap-2">
-            <label className="relative min-w-0 flex-1">
-              <span className="sr-only">Lieu à rechercher</span>
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-                <SearchIcon size={17} />
-              </span>
-              <input
-                ref={inputRef}
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Ex. Lyon, Mont Fuji, 10 Downing Street…"
-                autoComplete="off"
-                className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={status.kind === "loading"}
-              className="h-11 shrink-0 rounded-xl bg-teal-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-teal-500 disabled:cursor-wait disabled:bg-teal-300"
-            >
-              {status.kind === "loading" ? "Recherche…" : "Aller"}
-            </button>
-          </form>
-
-          <div
-            className={`mt-3 rounded-xl border px-3 py-2 text-xs leading-snug ${statusClassName}`}
-            role="status"
-            aria-live="polite"
+    <>
+      <MapDockButton
+        icon={<SearchIcon />}
+        aria-label="Rechercher un lieu"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? panelId : undefined}
+        onClick={() => {
+          if (isOpen) {
+            closeSearch();
+            return;
+          }
+          window.dispatchEvent(new Event("dromap:open-place-search"));
+          setIsOpen(true);
+          bringToFront();
+        }}
+        className="border-slate-200 text-slate-800 hover:border-teal-300 hover:text-teal-700"
+      >
+        Rechercher un lieu
+      </MapDockButton>
+      <FloatingPanelPortal active={isOpen}>
+        {isOpen ? (
+          <section
+            id={panelId}
+            aria-labelledby={`${panelId}-title`}
+            data-dromap-place-search="open"
+            className={`pointer-events-auto fixed left-1/2 w-[440px] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-y-auto overscroll-contain rounded-2xl border border-slate-200 bg-white p-3 text-sm shadow-xl ${product ? "top-[4.5rem] max-h-[calc(100dvh-5.5rem)]" : "top-4 max-h-[calc(100dvh-2rem)]"}`}
+            style={{ zIndex: panelZIndex }}
+            onPointerDownCapture={bringToFront}
+            onFocusCapture={bringToFront}
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onWheel={(event) => event.stopPropagation()}
           >
-            {status.message}
-          </div>
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <h2 id={`${panelId}-title`} className="flex items-center gap-2 font-black text-slate-950">
+                  <SearchIcon size={19} />
+                  Rechercher un lieu
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={closeSearch}
+                className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-600 transition hover:bg-slate-50"
+              >
+                Fermer
+              </button>
+            </div>
 
-          {results.length > 0 ? (
-            <div className="mt-3 max-h-72 space-y-1.5 overflow-y-auto overscroll-contain pr-1">
-              {results.map((result, index) => {
-                const parts = getResultParts(result.displayName);
-                const isSelected = selectedResultId === result.id;
+            <form onSubmit={handleSubmit} className="flex gap-2">
+              <label className="relative min-w-0 flex-1">
+                <span className="sr-only">Lieu à rechercher</span>
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                  <SearchIcon size={17} />
+                </span>
+                <input
+                  ref={inputRef}
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Ex. Lyon ou 31U DQ 48252 11954"
+                  autoComplete="off"
+                  className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={status.kind === "loading"}
+                className="h-11 shrink-0 rounded-xl bg-teal-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-teal-500 disabled:cursor-wait disabled:bg-teal-300"
+              >
+                {status.kind === "loading" ? "Recherche…" : "Aller"}
+              </button>
+            </form>
 
-                return (
-                  <button
-                    key={`${result.id}-${index}`}
-                    type="button"
-                    onClick={() => goToResult(result)}
-                    className={`flex w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition ${
-                      isSelected
-                        ? "border-teal-300 bg-teal-50 text-teal-950"
-                        : "border-slate-200 bg-white text-slate-800 hover:border-teal-200 hover:bg-slate-50"
-                    }`}
-                  >
-                    <span
-                      className={`mt-0.5 shrink-0 ${
-                        isSelected ? "text-teal-600" : "text-slate-400"
+            <div
+              className={`mt-3 rounded-xl border px-3 py-2 text-xs leading-snug ${statusClassName}`}
+              role="status"
+              aria-live="polite"
+            >
+              {status.message}
+            </div>
+
+            {results.length > 0 ? (
+              <div className="mt-3 max-h-72 space-y-1.5 overflow-y-auto overscroll-contain pr-1">
+                {results.map((result, index) => {
+                  const parts = getResultParts(result.displayName);
+                  const isSelected = selectedResultId === result.id;
+
+                  return (
+                    <button
+                      key={`${result.id}-${index}`}
+                      type="button"
+                      onClick={() => goToResult(result)}
+                      className={`flex w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition ${
+                        isSelected
+                          ? "border-teal-300 bg-teal-50 text-teal-950"
+                          : "border-slate-200 bg-white text-slate-800 hover:border-teal-200 hover:bg-slate-50"
                       }`}
                     >
-                      <PinIcon />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate font-bold">
-                        {parts.title}
+                      <span
+                        className={`mt-0.5 shrink-0 ${
+                          isSelected ? "text-teal-600" : "text-slate-400"
+                        }`}
+                      >
+                        <PinIcon />
                       </span>
-                      {parts.subtitle ? (
-                        <span className="mt-0.5 block line-clamp-2 text-xs leading-snug text-slate-500">
-                          {parts.subtitle}
+                      <span className="min-w-0">
+                        <span className="block truncate font-bold">
+                          {parts.title}
                         </span>
-                      ) : null}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
+                        {parts.subtitle ? (
+                          <span className="mt-0.5 block line-clamp-2 text-xs leading-snug text-slate-500">
+                            {parts.subtitle}
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
 
-          <p className="mt-3 border-t border-slate-200 pt-2 text-[10px] leading-snug text-slate-400">
-            {attribution}. Recherche déclenchée uniquement avec le bouton Aller
-            ou la touche Entrée.
-          </p>
-        </div>
-      )}
-    </section>
+            {attribution ? (
+              <p className="mt-3 border-t border-slate-200 pt-2 text-[10px] leading-snug text-slate-500">
+                {attribution}
+              </p>
+            ) : null}
+          </section>
+        ) : null}
+      </FloatingPanelPortal>
+    </>
   );
 }

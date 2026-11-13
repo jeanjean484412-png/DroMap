@@ -212,7 +212,7 @@ export function SelectedFeatureMapInteractions() {
       .join("|"),
   );
   const multiSelectionEnabled = useEditorSelectionStore(
-    (state) => state.multiSelectionEnabled,
+    (state) => state.multiSelectionEnabled || state.multiSelectionHeld,
   );
   const areaSelectionEnabled = useEditorSelectionStore(
     (state) => state.areaSelectionEnabled,
@@ -275,7 +275,8 @@ export function SelectedFeatureMapInteractions() {
         return;
       }
 
-      if (!useEditorSelectionStore.getState().multiSelectionEnabled) {
+      const selectionState = useEditorSelectionStore.getState();
+      if (!selectionState.multiSelectionEnabled && !selectionState.multiSelectionHeld) {
         clearSelectedFeatureId();
       }
     };
@@ -344,7 +345,7 @@ export function SelectedFeatureMapInteractions() {
         }
 
         const selectionState = useEditorSelectionStore.getState();
-        if (selectionState.multiSelectionEnabled) {
+        if (selectionState.multiSelectionEnabled || selectionState.multiSelectionHeld) {
           selectionState.toggleFeatureSelection(featureId);
           return;
         }

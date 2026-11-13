@@ -85,19 +85,11 @@ function createHistorySnapshot(
   includeParticipants = false,
 ): EditorHistorySnapshot {
   return {
-    features: cloneFeatures(features),
+    // Editor updates replace arrays and changed features. History can retain
+    // the previous version, including its unchanged geometries.
+    features,
     workspace: captureWorkspaceHistorySnapshot(),
     participants: includeParticipants ? captureEditorHistoryParticipants() : null,
-  };
-}
-
-function cloneHistorySnapshot(
-  snapshot: EditorHistorySnapshot,
-): EditorHistorySnapshot {
-  return {
-    features: cloneFeatures(snapshot.features),
-    workspace: snapshot.workspace ? structuredClone(snapshot.workspace) : null,
-    participants: snapshot.participants ? structuredClone(snapshot.participants) : null,
   };
 }
 
@@ -281,8 +273,7 @@ export const useEditorFeaturesStore = create<EditorFeaturesState>(
           features: previousFeatures,
           past: newPast,
           future: [currentSnapshot, ...state.future]
-            .slice(0, MAX_FEATURE_HISTORY_ENTRIES)
-            .map(cloneHistorySnapshot),
+            .slice(0, MAX_FEATURE_HISTORY_ENTRIES),
         };
       }),
 
@@ -308,8 +299,7 @@ export const useEditorFeaturesStore = create<EditorFeaturesState>(
         return {
           features: nextFeatures,
           past: [...state.past, currentSnapshot]
-            .slice(-MAX_FEATURE_HISTORY_ENTRIES)
-            .map(cloneHistorySnapshot),
+            .slice(-MAX_FEATURE_HISTORY_ENTRIES),
           future: newFuture,
         };
       }),

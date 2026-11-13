@@ -360,14 +360,14 @@ export async function ensureMapLibreGl() {
   }
 
   if (window.maplibregl?.Map) {
+    // A concurrent call may observe the script before its stylesheet is ready.
+    await mapLibreCssPromise;
     return window.maplibregl;
   }
 
   mapLibreCssPromise ??= ensureStylesheet(MAPLIBRE_GL_CSS_URLS, MAPLIBRE_GL_CSS_ID);
-  await mapLibreCssPromise;
-
   mapLibreGlPromise ??= ensureScript(MAPLIBRE_GL_JS_URLS, MAPLIBRE_GL_JS_ID);
-  await mapLibreGlPromise;
+  await Promise.all([mapLibreCssPromise, mapLibreGlPromise]);
 
   if (!window.maplibregl?.Map) {
     throw new Error("MapLibre GL n’est pas disponible après chargement.");
@@ -381,14 +381,12 @@ export async function ensureMapLibreLeaflet() {
     throw new Error("MapLibre Leaflet ne peut être chargé que côté navigateur.");
   }
 
-  await ensureMapLibreGl();
-
   // Ne surtout pas importer Leaflet au niveau module ici : ce fichier est aussi
   // importé par export-download.ts, qui peut être évalué pendant le rendu serveur
   // Next/Turbopack. Un import statique de leaflet déclenche `window is not defined`.
   // On charge donc Leaflet seulement au moment où le pont MapLibre/Leaflet est
   // réellement demandé côté navigateur.
-  const leafletModule = await import("leaflet");
+  const [, leafletModule] = await Promise.all([ensureMapLibreGl(), import("leaflet")]);
   const leaflet = (leafletModule.default ??
     leafletModule) as typeof import("leaflet");
   window.L = leaflet;

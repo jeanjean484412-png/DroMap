@@ -15,6 +15,7 @@
     "@vercel/analytics": "^2.0.1",
     "dompurify": "3.4.17",
     "fabric": "7.4.0",
+    "geographiclib-mgrs": "1.0.5",
     "html-to-image": "^1.11.13",
     "ipaddr.js": "^2.5.0",
     "leaflet": "^1.9.4",

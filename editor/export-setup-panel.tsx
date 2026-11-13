@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { parseDromapProjectJson, type ImportedDromapProject } from "./project-file-import";
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -39,8 +40,6 @@ import {
   downloadFeaturesAsCsv,
   downloadFeaturesAsGeoJson,
   downloadProjectAsJson,
-  parseDromapProjectJson,
-  type ImportedDromapProject,
 } from "./export-download";
 import { ExportPreviewScene } from "./export-preview-scene";
 import {
@@ -63,7 +62,7 @@ import { resolveDromapPreferences } from "@/lib/dromap/preferences";
 import { useDromapProjectSave } from "@/components/dromap-product/project-autosave";
 import { DromapDialog } from "@/components/dromap-ui/dialog";
 import { DromapButton } from "@/components/dromap-ui/button";
-import { DashboardProjectPublicationDialog } from "@/components/dromap-product/dashboard-project-publication-dialog";
+
 import { markDromapSingleMapDownloaded } from "@/lib/dromap/billing";
 import {
   MAX_LEGEND_ITEM_FONT_SIZE,
@@ -84,6 +83,11 @@ import {
   type GeoJsonFileImportSummary,
 } from "./geojson-file-import";
 
+const DashboardProjectPublicationDialog = dynamic(() =>
+  import("@/components/dromap-product/dashboard-project-publication-dialog").then((module) => module.DashboardProjectPublicationDialog),
+  { ssr: false },
+);
+
 const GeoJsonLibraryBrowser = dynamic(
   () =>
     import("./geojson-library-browser").then(
@@ -98,6 +102,8 @@ const GeoJsonLibraryBrowser = dynamic(
     ),
   },
 );
+
+const CLOSED_PANEL_ITEMS: never[] = [];
 
 const LEGEND_POSITION_OPTIONS: Array<{
   value: ExportLegendPosition;
@@ -386,6 +392,7 @@ export function ExportSetupPanel() {
   const isImportPanelOpen = useEditorExportStore(
     (state) => state.isImportPanelOpen,
   );
+  const isPanelOpen = isExportPanelOpen || isImportPanelOpen;
 
   const legendTitle = useEditorExportStore((state) => state.legendTitle);
 
@@ -595,7 +602,7 @@ export function ExportSetupPanel() {
     (state) => state.resetExportLegendConfig,
   );
 
-  const features = useEditorFeaturesStore((state) => state.features);
+  const features = useEditorFeaturesStore((state) => isPanelOpen ? state.features : CLOSED_PANEL_ITEMS);
   const addFeaturesWithHistory = useEditorFeaturesStore(
     (state) => state.addFeaturesWithHistory,
   );
@@ -603,20 +610,20 @@ export function ExportSetupPanel() {
   const mergeCustomMarkers = useEditorCustomMarkersStore(
     (state) => state.mergeCustomMarkers,
   );
-  const layers = useEditorLayersStore((state) => state.layers);
+  const layers = useEditorLayersStore((state) => isPanelOpen ? state.layers : CLOSED_PANEL_ITEMS);
   const activeLayerId = useEditorLayersStore((state) => state.activeLayerId);
   const setLayers = useEditorLayersStore((state) => state.setLayers);
   const createLayer = useEditorLayersStore((state) => state.createLayer);
   const deleteLayer = useEditorLayersStore((state) => state.deleteLayer);
   const workspaceBounds = useEditorWorkspaceStore(
-    (state) => state.workspaceBounds,
+    (state) => isPanelOpen ? state.workspaceBounds : null,
   );
   const renderableFeatures = useMemo(
-    () => getRenderableFeaturesForLayers(features, layers, { workspaceBounds }),
-    [features, layers, workspaceBounds],
+    () => isPanelOpen ? getRenderableFeaturesForLayers(features, layers, { workspaceBounds }) : CLOSED_PANEL_ITEMS,
+    [features, isPanelOpen, layers, workspaceBounds],
   );
   const geoJsonLayers = useEditorGeoJsonLayersStore(
-    (state) => state.geoJsonLayers,
+    (state) => isPanelOpen ? state.geoJsonLayers : CLOSED_PANEL_ITEMS,
   );
   const addGeoJsonLayer = useEditorGeoJsonLayersStore(
     (state) => state.addGeoJsonLayer,
@@ -626,11 +633,11 @@ export function ExportSetupPanel() {
   );
   const renderableGeoJsonLayers = useMemo(
     () =>
-      getRenderableGeoJsonLayers(geoJsonLayers).filter(
+      isPanelOpen ? getRenderableGeoJsonLayers(geoJsonLayers).filter(
         (layer) =>
           getGeoJsonLayerLoadedFeatureCount(layer, workspaceBounds) > 0,
-      ),
-    [geoJsonLayers, workspaceBounds],
+      ) : CLOSED_PANEL_ITEMS,
+    [geoJsonLayers, isPanelOpen, workspaceBounds],
   );
   const clearSelectedFeatureId = useEditorSelectionStore(
     (state) => state.clearSelectedFeatureId,
@@ -719,7 +726,7 @@ export function ExportSetupPanel() {
     isDownloadingPdf ||
     isDownloadingSvg;
 
-  if (!isExportPanelOpen && !isImportPanelOpen) {
+  if (!isPanelOpen) {
     return null;
   }
 
@@ -2635,7 +2642,7 @@ export function ExportSetupPanel() {
           </div>
         ) : null}
 
-        {productRuntimeEnabled && productProjectId ? (
+        {publicationDialogOpen && productRuntimeEnabled && productProjectId ? (
           <DashboardProjectPublicationDialog
             open={publicationDialogOpen}
             projectId={productProjectId}

@@ -34,6 +34,7 @@ import {
   FEATURE_MAP_LABEL_MAX_WIDTH_PX,
   clampFeatureMapLabelRenderScale,
   createFeatureMapLabelScreenLayouts,
+  getFeatureMapLabelScale,
   getFeatureMapLabelAnchor,
   getFeatureMapLabelManualOffsetAtZoom,
   getFeatureMapLabelText,
@@ -50,7 +51,8 @@ import {
   createLineArrowLeafletLayer,
   featureHasLineArrow,
 } from "./line-arrow";
-import { createMarkerLeafletIcon } from "./marker-symbol";
+import { createMarkerLeafletIcon, getFeatureMarkerSymbol, markerSymbolNeedsCatalog } from "./marker-symbol";
+import { useMarkerSymbolCatalog } from "./use-marker-symbol-catalog";
 import {
   createTextDivIconRender,
   getTextMapZoomScale,
@@ -532,6 +534,10 @@ function ExportFeatureLayers({
 }) {
   const map = useMap();
 
+  const markerCatalog = useMarkerSymbolCatalog(features.some((feature) =>
+    feature.geometry.type === "Point" && markerSymbolNeedsCatalog(getFeatureMarkerSymbol(feature)),
+  ));
+
   useEffect(() => {
     const group = L.layerGroup().addTo(map);
 
@@ -608,7 +614,7 @@ function ExportFeatureLayers({
           }
 
           const point = map.latLngToContainerPoint([anchor.lat, anchor.lng]);
-          const labelScale = labelVisualScale;
+          const labelScale = labelVisualScale * getFeatureMapLabelScale(previewFeature);
           const editorResolvedOffset =
             editorFeatureMapLabelOffsets[previewFeature.id];
           const manualOffset = editorResolvedOffset
@@ -750,13 +756,23 @@ function ExportFeatureLayers({
 
     renderFeatures();
 
-    map.on("moveend zoomend resize", renderFeatures);
+    let frame: number | null = null;
+    const scheduleRender = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        renderFeatures();
+      });
+    };
+    map.on("moveend zoomend resize", scheduleRender);
 
     return () => {
-      map.off("moveend zoomend resize", renderFeatures);
+      map.off("moveend zoomend resize", scheduleRender);
+      if (frame !== null) window.cancelAnimationFrame(frame);
       group.removeFrom(map);
     };
   }, [
+    markerCatalog,
     features,
     map,
     showAllGeoJsonFeatureLabels,

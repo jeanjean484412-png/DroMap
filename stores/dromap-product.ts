@@ -504,18 +504,33 @@ async function readProjectCache(projectId: string): Promise<ProjectCacheRecord |
   }
 }
 
+// Keep the latest write per project and owner. Unchanged projects can share
+// an in-flight or completed write, and failed writes can be retried on flush.
+const projectCacheWrites = new WeakMap<DromapProject, { scope: string; write: Promise<void> }>();
+
 async function writeProjectCache(project: DromapProject) {
   if (typeof window === "undefined" || typeof indexedDB === "undefined" || project.contentLoaded === false) return;
-  try {
-    const record: ProjectCacheRecord = {
-      project: cloneValue({ ...project, contentLoaded: true }),
-      remoteRevision: project.remoteRevision ?? null,
-      cachedAt: nowIso(),
-    };
-    await projectContentCache.write(project.id, record);
-  } catch (error) {
+  const scope = projectCacheScope();
+  const previous = projectCacheWrites.get(project);
+  if (previous?.scope === scope) return previous.write;
+
+  const record: ProjectCacheRecord = {
+    project: { ...project, contentLoaded: true },
+    remoteRevision: project.remoteRevision ?? null,
+    cachedAt: nowIso(),
+  };
+  // IndexedDB copies the record as part of put(). Project data is replaced by
+  // the store on edit, so a second structuredClone here is unnecessary.
+  const write = projectContentCache.write(project.id, record).then((written) => {
+    if (!written && projectCacheWrites.get(project)?.write === write) {
+      projectCacheWrites.delete(project);
+    }
+  }).catch((error) => {
+    if (projectCacheWrites.get(project)?.write === write) projectCacheWrites.delete(project);
     console.warn("DroMap: cache projet IndexedDB impossible", error);
-  }
+  });
+  projectCacheWrites.set(project, { scope, write });
+  return write;
 }
 
 async function deleteProjectCache(projectId: string) {
@@ -571,10 +586,11 @@ async function persistIndexedDatabase(payload: ProductStoragePayload) {
   }
 }
 
-function persistState(state: DromapProductState) {
+function persistState(state: DromapProductState, includeProjectContent = true) {
   const payload = createStoragePayload(state);
   persistLocalStorage(payload);
   void persistIndexedDatabase(payload);
+  if (!includeProjectContent) return;
   for (const project of state.projects) {
     if (project.contentLoaded !== false) void writeProjectCache(project);
   }
@@ -600,9 +616,20 @@ async function persistStateDurably(
   ]);
 }
 
-function schedulePersist(get: () => DromapProductState) {
+let persistenceScheduled = false;
+let scheduledProjectContent = false;
+
+function schedulePersist(get: () => DromapProductState, includeProjectContent = true) {
   if (typeof window === "undefined") return;
-  window.queueMicrotask(() => persistState(get()));
+  scheduledProjectContent ||= includeProjectContent;
+  if (persistenceScheduled) return;
+  persistenceScheduled = true;
+  window.queueMicrotask(() => {
+    const writeProjectContent = scheduledProjectContent;
+    persistenceScheduled = false;
+    scheduledProjectContent = false;
+    persistState(get(), writeProjectContent);
+  });
 }
 
 function updateProject(
@@ -1954,7 +1981,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
         };
       }),
     }));
-    schedulePersist(get);
+    schedulePersist(get, false);
     return nextCount;
   },
 
@@ -1965,7 +1992,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
         status: "saving",
       })),
     }));
-    schedulePersist(get);
+    schedulePersist(get, false);
   },
 
   checkpointProjectSnapshot: async (projectId, snapshot) => {
@@ -1974,7 +2001,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
     set((state) => ({
       projects: updateProject(state.projects, projectId, (project) => ({
         ...project,
-        editorSnapshot: cloneValue(snapshot),
+        editorSnapshot: snapshot,
         // Un checkpoint protège le travail sur l'appareil sans forcer un envoi
         // réseau à chaque geste. pendingChanges reste donc inchangé.
         status:
@@ -2004,7 +2031,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
     set((state) => ({
       projects: updateProject(state.projects, projectId, (project) => ({
         ...project,
-        editorSnapshot: cloneValue(snapshot),
+        editorSnapshot: snapshot,
         pendingChanges: 0,
         // Le travail est sécurisé localement avant que la copie en ligne parte
         // en arrière-plan. Une navigation n'attend donc jamais Supabase.

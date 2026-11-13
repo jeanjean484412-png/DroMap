@@ -2909,8 +2909,8 @@ export function stageDroMapAiWorkspaceProposalForReview(
     workspaceStore = useEditorWorkspaceStore.getState();
   }
 
-  workspaceStore.setWorkspaceBounds(normalized);
   workspaceStore.modifyWorkspaceZone();
+  workspaceStore.setWorkspaceBounds(normalized);
   fitDroMapAiMapBounds(proposal.bounds, {
     paddingPx: 44,
     maxZoom: 16,

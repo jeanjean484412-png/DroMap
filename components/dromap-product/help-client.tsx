@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useMemo, useState } from "react";
 
 import { DromapProductBootstrap } from "./product-bootstrap";
 import { DromapProductShell } from "./product-shell";
@@ -165,7 +166,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     id: "zoom-precise",
     category: "Comprendre DroMap",
-    title: "Zoom précis et zoom contraint",
+    title: "Navigation libre",
     summary:
       "Débloquer temporairement un zoom continu à l’intérieur de la zone puis revenir au cadrage contraint du projet.",
     keywords: [
@@ -180,9 +181,9 @@ const HELP_ARTICLES: HelpArticle[] = [
       "fluide",
     ],
     steps: [
-      "Activer Zoom précis pour explorer l’intérieur de la zone avec un zoom continu et fluide.",
+      "Activer Navigation libre avec le bouton aux quatre flèches pour explorer l’intérieur de la zone avec un zoom continu.",
       "Ce mode sert à rechercher ou placer un élément avec davantage de précision sans remplacer le cadrage du rendu final.",
-      "Revenir à Zoom contraint pour retrouver le comportement normal lié à la zone de travail.",
+      "Appuyer de nouveau sur Navigation libre pour retrouver le zoom contraint de la zone de travail.",
       "Le niveau de détail enregistré pour l’aperçu et l’export reste indépendant de ce zoom temporaire.",
     ],
   },
@@ -446,7 +447,7 @@ const HELP_ARTICLES: HelpArticle[] = [
     category: "Outils de carte",
     title: "Rechercher un lieu",
     summary:
-      "Rechercher une ville, une adresse, un pays ou un lieu nommé et recentrer la carte.",
+      "Repérer un lieu ou des coordonnées sur la carte en conservant la zone de travail.",
     keywords: [
       "rechercher lieu",
       "recherche",
@@ -454,14 +455,18 @@ const HELP_ARTICLES: HelpArticle[] = [
       "ville",
       "pays",
       "geocodage",
+      "coordonnees",
+      "mgrs",
+      "dms",
       "aller a",
       "trouver",
     ],
     steps: [
       "Ouvrir Rechercher un lieu dans l’éditeur.",
-      "Saisir une ville, une adresse, un pays ou un lieu connu puis lancer la recherche.",
+      "Saisir un lieu ou des coordonnées MGRS, DMS ou décimales puis lancer la recherche.",
       "Sélectionner le résultat souhaité lorsqu’il existe plusieurs propositions.",
-      "La carte est recentrée sur le lieu choisi sans remplacer silencieusement une zone de travail existante.",
+      "Sans zone de travail, la carte se centre sur le résultat. Si le résultat est dans la zone de travail, la carte garde le même zoom et se recentre seulement si le résultat est hors écran.",
+      "Si le résultat est hors zone, un avertissement s’affiche et le repère apparaît uniquement si le lieu est déjà visible. Le repère disparaît au prochain déplacement ou changement de zoom.",
     ],
   },
   {
@@ -1471,6 +1476,22 @@ function HelpArticleCard({
   );
 }
 
+function HelpBackLink({ projectId }: { projectId?: string }) {
+  return (
+    <Link
+      href={projectId ? `/projects/${encodeURIComponent(projectId)}/editor` : "/dashboard"}
+      className="inline-flex h-10 items-center rounded-xl bg-teal-600 px-4 text-sm font-black text-white transition hover:bg-teal-500"
+    >
+      {projectId ? "Retour au projet" : "Retour aux projets"}
+    </Link>
+  );
+}
+
+function HelpBackToProject() {
+  const projectId = useSearchParams().get("projectId");
+  return <HelpBackLink projectId={projectId && /^[a-zA-Z0-9_-]{1,160}$/.test(projectId) ? projectId : undefined} />;
+}
+
 function HelpContent() {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("Toutes");
@@ -1507,12 +1528,9 @@ function HelpContent() {
       title="Centre d’aide"
       description="Apprenez à créer une carte en ligne avec légende, marqueurs ou données GeoJSON, puis à préparer son export pour un cours ou une présentation."
       actions={
-        <Link
-          href="/dashboard"
-          className="inline-flex h-10 items-center rounded-xl bg-teal-600 px-4 text-sm font-black text-white transition hover:bg-teal-500"
-        >
-          Retour aux projets
-        </Link>
+        <Suspense fallback={<HelpBackLink />}>
+          <HelpBackToProject />
+        </Suspense>
       }
     >
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 
 import { DromapPublicMapClient } from "@/components/dromap-product/public-map-client";
 import {
@@ -14,6 +15,20 @@ import {
 } from "@/lib/dromap/server/publications";
 
 const PUBLIC_MAP_FALLBACK_DESCRIPTION = "Consultez une carte publiée avec DroMap.";
+
+async function readPublicPublication(slug: string) {
+  if (!slug) return null;
+  if (!dromapPublicationsConfigured()) throw new Error("PUBLICATIONS_NOT_CONFIGURED");
+
+  const response = await publicationsAdminFetch(
+    `/dromap_publications?slug=eq.${encodeURIComponent(slug)}&published_at=not.is.null&select=slug,title,description,author_name,tags,access_mode,allow_creator_credit_removal,creator_credit_name,published_at,updated_at&limit=1`,
+    { method: "GET" },
+  );
+  if (!response.ok) throw new Error(`PUBLICATION_READ_FAILED_${response.status}`);
+
+  const rows = await parseJsonResponse<DromapPublicationRow[]>(response);
+  return publicationRowToPublicWithImageRoutes(rows?.[0]);
+}
 
 export async function generateMetadata({
   params,
@@ -31,12 +46,7 @@ export async function generateMetadata({
   }
 
   try {
-    const response = await publicationsAdminFetch(
-      `/dromap_publications?slug=eq.${encodeURIComponent(slug)}&select=slug,title,description,author_name,tags,access_mode,allow_creator_credit_removal,creator_credit_name,published_at,updated_at&limit=1`,
-      { method: "GET" },
-    );
-    const rows = response.ok ? await parseJsonResponse<DromapPublicationRow[]>(response) : [];
-    const publication = publicationRowToPublicWithImageRoutes(rows?.[0]);
+    const publication = await readPublicPublication(slug);
     if (!publication) {
       return {
         title: "Carte publique",
@@ -108,5 +118,7 @@ export default async function PublicMapPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  const publication = await readPublicPublication(slug);
+  if (!publication) notFound();
   return <DromapPublicMapClient slug={slug} />;
 }

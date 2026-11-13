@@ -1,9 +1,6 @@
 "use client";
 
 import {
-  createCanvasExportPreviewDataUrl,
-} from "@/editor/export-download";
-import {
   createDromapEditorProjectSnapshot,
   normalizeDromapEditorExportSettings,
 } from "@/lib/dromap/editor-project-persistence";
@@ -61,8 +58,9 @@ async function resizePreviewDataUrl(dataUrl: string) {
   return encodeBestThumbnail(canvas);
 }
 
-export async function createDromapProjectThumbnailDataUrl() {
-  const snapshot = createDromapEditorProjectSnapshot();
+export async function createDromapProjectThumbnailDataUrl(
+  snapshot = createDromapEditorProjectSnapshot(),
+) {
   const workspaceBounds = snapshot.workspaceBounds;
 
   if (!workspaceBounds) {
@@ -88,6 +86,7 @@ export async function createDromapProjectThumbnailDataUrl() {
       getGeoJsonLayerLoadedFeatureCount(layer, workspaceBounds) > 0,
   );
 
+  const { createCanvasExportPreviewDataUrl } = await import("@/editor/export-download");
   const previewDataUrl = await createCanvasExportPreviewDataUrl({
     features: renderableFeatures,
     layers,

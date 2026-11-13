@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import L from "leaflet";
 import { useMap } from "react-leaflet";
 
@@ -8,7 +8,8 @@ import type { DroMapFeature } from "@/lib/dromap/feature";
 import { scaleFeatureForVisualZoom } from "@/lib/dromap/feature-visual-scale";
 import { getLeafletDashArray } from "./feature-style";
 import { shouldUseAlignedZoneOutline } from "./zone-outline";
-import { createMarkerLeafletIcon } from "./marker-symbol";
+import { createMarkerLeafletIcon, getFeatureMarkerSymbol, markerSymbolNeedsCatalog } from "./marker-symbol";
+import { useMarkerSymbolCatalog } from "./use-marker-symbol-catalog";
 import { featureHasLineArrow, getLineArrowStyle } from "./line-arrow";
 import {
   createTextDivIconRender,
@@ -24,6 +25,12 @@ import {
 import { useEditorFeaturesStore } from "@/stores/editor-features";
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
 import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
+
+const layersWithSyncedStyle = new WeakSet<L.Layer>();
+
+export function consumeSyncedFeatureStyle(layer: L.Layer) {
+  return layersWithSyncedStyle.delete(layer);
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -126,8 +133,13 @@ function applyFeatureStyleToLayer(
 
 export function FeaturesStyleSync() {
   const map = useMap();
+  const appliedStylesRef = useRef(new WeakMap<L.Layer, DroMapFeature>());
+  const previousStyleContextRef = useRef<readonly unknown[]>([]);
 
   const features = useEditorFeaturesStore((state) => state.features);
+  const markerCatalog = useMarkerSymbolCatalog(features.some((feature) =>
+    feature.geometry.type === "Point" && markerSymbolNeedsCatalog(getFeatureMarkerSymbol(feature)),
+  ));
   const customMarkers = useEditorCustomMarkersStore(
     (state) => state.customMarkers,
   );
@@ -136,6 +148,15 @@ export function FeaturesStyleSync() {
   );
 
   useEffect(() => {
+    const currentZoom = map.getZoom();
+    const fallbackReferenceZoom =
+      typeof workspaceBasemapZoom === "number" && Number.isFinite(workspaceBasemapZoom)
+        ? workspaceBasemapZoom
+        : currentZoom;
+    const styleContext = [currentZoom, fallbackReferenceZoom, markerCatalog, customMarkers];
+    const styleContextChanged = styleContext.some((value, index) => value !== previousStyleContextRef.current[index]);
+    previousStyleContextRef.current = styleContext;
+    const appliedStyles = appliedStylesRef.current;
     const featuresById = new Map(
       features.map((feature) => [feature.id, feature]),
     );
@@ -148,13 +169,7 @@ export function FeaturesStyleSync() {
 
       const feature = featuresById.get(featureId);
       if (!feature) return;
-
-      const currentZoom = map.getZoom();
-      const fallbackReferenceZoom =
-        typeof workspaceBasemapZoom === "number" &&
-        Number.isFinite(workspaceBasemapZoom)
-          ? workspaceBasemapZoom
-          : currentZoom;
+      if (!styleContextChanged && appliedStyles.get(layer)?.properties === feature.properties) return;
       const displayFeature = scaleFeatureForVisualZoom(
         feature,
         currentZoom,
@@ -163,8 +178,10 @@ export function FeaturesStyleSync() {
       );
 
       applyFeatureStyleToLayer(layer, displayFeature, currentZoom);
+      appliedStyles.set(layer, feature);
+      layersWithSyncedStyle.add(layer);
     });
-  }, [map, features, customMarkers, workspaceBasemapZoom]);
+  }, [map, features, customMarkers, workspaceBasemapZoom, markerCatalog]);
 
   return null;
 }

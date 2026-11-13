@@ -17,6 +17,22 @@ const TABS: Array<{ id: InspectorTab; label: string; compact: string }> = [
   { id: "labels", label: "Étiquettes", compact: "Étiquettes" },
 ];
 
+const INSPECTOR_ICONS = {
+  selected: <path d="M9 4H5a1 1 0 0 0-1 1v4m11-5h4a1 1 0 0 1 1 1v4M4 15v4a1 1 0 0 0 1 1h4m3-8 3.5 8 1.3-3.2 3.2-1.3Z" />,
+  all: <><rect x="4" y="5" width="4" height="4" rx="1" /><circle cx="6" cy="16" r="2" /><path d="M12 7h8m-8 9h8" /></>,
+  labels: <><path d="M20 12.4 12.4 20a1.5 1.5 0 0 1-2.1 0l-6.9-6.9A1.5 1.5 0 0 1 3 12V5a2 2 0 0 1 2-2h7c.4 0 .8.2 1.1.5l6.9 6.8a1.5 1.5 0 0 1 0 2.1Z" /><circle cx="8" cy="8" r="1.3" /></>,
+  expand: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16m-4-11-3 3 3 3" /></>,
+  collapse: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16m-7-11 3 3-3 3" /></>,
+};
+
+function InspectorIcon({ name }: { name: keyof typeof INSPECTOR_ICONS }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {INSPECTOR_ICONS[name]}
+    </svg>
+  );
+}
+
 type DromapEditorInspectorProps = {
   onCollapsedChange?: (collapsed: boolean) => void;
 };
@@ -104,7 +120,7 @@ export function DromapEditorInspector({
           title="Déployer l’inspecteur"
           aria-label="Déployer l’inspecteur"
         >
-          ‹
+          <InspectorIcon name="expand" />
         </button>
         <div className="mt-2 flex flex-1 flex-col items-center gap-2">
           {TABS.map((tab) => (
@@ -115,15 +131,11 @@ export function DromapEditorInspector({
                 setActiveTab(tab.id);
                 setCollapsed(false);
               }}
-              className="flex h-10 w-10 items-center justify-center rounded-xl text-[10px] font-black text-slate-600 transition hover:bg-slate-100"
+              className={`flex h-10 w-10 items-center justify-center rounded-xl transition ${activeTab === tab.id ? "bg-teal-50 text-teal-700 hover:bg-teal-100" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}
               title={tab.label}
               aria-label={tab.label}
             >
-              {tab.id === "selected"
-                ? "◉"
-                : tab.id === "all"
-                  ? "◆"
-                  : "Aa"}
+              <InspectorIcon name={tab.id} />
             </button>
           ))}
         </div>
@@ -193,7 +205,7 @@ export function DromapEditorInspector({
           title="Replier l’inspecteur"
           aria-label="Replier l’inspecteur"
         >
-          ›
+          <InspectorIcon name="collapse" />
         </button>
       </div>
 

@@ -67,6 +67,15 @@ export default function WorkspaceBoundsLayer() {
   const workspaceZoneEditLocked = useEditorWorkspaceStore((s) => s.workspaceZoneEditLocked);
 
   useEffect(() => {
+    if (currentMode !== "workspace-select") return;
+    const tooltipPane = map.getPane("tooltipPane");
+    if (!tooltipPane) return;
+    const previousZIndex = tooltipPane.style.zIndex;
+    tooltipPane.style.zIndex = "23000";
+    return () => { tooltipPane.style.zIndex = previousZIndex; };
+  }, [map, currentMode]);
+
+  useEffect(() => {
     if (currentMode === "workspace-select" && workspaceBounds) {
       ensureWorkspaceRectangleOnMap(map, workspaceBounds);
       return;
@@ -86,6 +95,8 @@ export default function WorkspaceBoundsLayer() {
       getBasemapWorkspaceBounds(basemap, viewportBounds),
     );
     const group = L.layerGroup();
+    const handlePane = map.getPane("dromapWorkspaceHandlePane") ?? map.createPane("dromapWorkspaceHandlePane");
+    handlePane.style.zIndex = "22500";
     const markers = new Map<WorkspaceResizeHandle, L.Marker>();
 
     function positionHandles(bounds: WorkspaceBounds, activeHandle?: WorkspaceResizeHandle) {
@@ -108,6 +119,7 @@ export default function WorkspaceBoundsLayer() {
           iconAnchor: [9, 9],
         }),
         pmIgnore: true,
+        pane: "dromapWorkspaceHandlePane",
       });
       let dragStartBounds = workspaceBounds;
 

@@ -16,12 +16,10 @@ function formatDate(value: string) {
   }
 }
 
-function PublicLibraryContent() {
+function usePublicLibraryPublications() {
   const [publications, setPublications] = useState<DromapPublicPublication[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<"recent" | "title">("recent");
 
   useEffect(() => {
     let cancelled = false;
@@ -47,6 +45,17 @@ function PublicLibraryContent() {
       });
     return () => { cancelled = true; };
   }, []);
+
+  return { publications, loading, error };
+}
+
+function PublicLibraryContent({
+  publications,
+  loading,
+  error,
+}: ReturnType<typeof usePublicLibraryPublications>) {
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<"recent" | "title">("recent");
 
   const visible = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("fr");
@@ -176,9 +185,10 @@ function PublicLibraryContent() {
 }
 
 export function DromapPublicLibraryClient() {
+  const library = usePublicLibraryPublications();
   return (
     <DromapProductBootstrap>
-      <PublicLibraryContent />
+      <PublicLibraryContent {...library} />
     </DromapProductBootstrap>
   );
 }

@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  parseGeoJsonTextToDromapGeoJsonLayer,
+  parseGeoJsonValueToDromapGeoJsonLayer,
   useEditorGeoJsonLayersStore,
 } from "@/stores/editor-geojson-layers";
 import { useEditorExportStore } from "@/stores/editor-export";
@@ -1092,8 +1092,8 @@ export function ExportControls({
       catalogDatasetId?: string;
     },
   ) => {
-    const layer = parseGeoJsonTextToDromapGeoJsonLayer(
-      JSON.stringify({ type: "FeatureCollection", features }),
+    const layer = parseGeoJsonValueToDromapGeoJsonLayer(
+      { type: "FeatureCollection", features },
       {
         sourceName: options.source.sourceName,
         layerName: options.layerName,

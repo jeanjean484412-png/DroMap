@@ -234,10 +234,11 @@ function ResizeHandleButton({
         background: "#2563eb",
         boxShadow: "0 3px 9px rgba(15,23,42,0.34)",
         cursor,
+        "--dromap-resize-cursor": cursor,
         pointerEvents: "auto",
         touchAction: "none",
         userSelect: "none",
-      }}
+      } as React.CSSProperties}
     />
   );
 }
@@ -425,7 +426,7 @@ export function SelectedZoneShapeRotationHandle({
     // l'ensemble sélectionné. Ne jamais repasser par setSelectedFeatureId ici :
     // cette action réduirait la sélection au seul objet manipulé.
     if (
-      selectionState.multiSelectionEnabled &&
+      (selectionState.multiSelectionEnabled || selectionState.multiSelectionHeld) &&
       selectionState.selectedFeatureIds.includes(draggedFeatureId)
     ) {
       return;
@@ -576,7 +577,7 @@ export function SelectedZoneShapeRotationHandle({
           id={handle.id}
           x={handle.x}
           y={handle.y}
-          cursor={dragMode === "resize" ? "grabbing" : handle.cursor}
+          cursor={handle.cursor}
           overlayCenter={overlayCenter}
           onPointerDown={startResizeDrag}
         />

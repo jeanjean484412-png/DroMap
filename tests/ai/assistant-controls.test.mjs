@@ -216,7 +216,7 @@ test("l’édition manuelle affiche les paramètres, permet de changer d’actio
   const { createRoot } = require("react-dom/client");
   const { DroMapAiCommandEditor } = loadTs("editor/dromap-ai-command-editor.tsx", {
     "./dromap-ai-capabilities": capabilities, "./dromap-ai-schema": schemas,
-    "./geojson-data-catalog": { DROMAP_GEOJSON_CATALOG: [] }, "./marker-symbol": { DROMAP_BUILTIN_MARKER_SYMBOLS: [] },
+    "./geojson-data-catalog": { DROMAP_GEOJSON_CATALOG: [] }, "./marker-symbol-catalog": { DROMAP_BUILTIN_MARKER_SYMBOLS: [] },
   });
   const command = { id: "france", type: "fill_boundary", explanation: "Colorier la France", place: "France", coordinate: null, label: "France", legendLabel: "Pays", layerRef: "layer-1", style: { fillColor: "#ff0000", fillOpacity: 0.6, weight: 2 }, selector: { featureIds: [], all: false } };
   let saved;

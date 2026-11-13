@@ -14,9 +14,9 @@ import {
 } from "./custom-marker-fabric-canvas";
 import { createDrawnMarkerDataUrl } from "./custom-marker-rendering";
 import {
-  DROMAP_BUILTIN_MARKER_SYMBOLS,
   getBuiltinMarkerCompositionSvg,
 } from "./marker-symbol";
+import { DROMAP_BUILTIN_MARKER_SYMBOLS } from "./marker-symbol-catalog";
 import {
   alignMarkerElements,
   markerElementLabel,

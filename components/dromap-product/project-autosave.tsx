@@ -23,6 +23,9 @@ import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
 import { useEditorExportStore } from "@/stores/editor-export";
 
 type SaveReason = "manual" | "automatic" | "navigation" | "unload";
+type ThumbnailSnapshot = Parameters<typeof createDromapProjectThumbnailDataUrl>[0];
+
+const latestThumbnailJobs = new Map<string, object>();
 
 type ProjectSaveContextValue = {
   saveNow: (reason?: SaveReason) => Promise<void>;
@@ -90,6 +93,24 @@ export function DromapProjectAutosaveProvider({
   const countedGenerationRef = useRef(0);
   const checkpointedGenerationRef = useRef(0);
 
+  const generateThumbnail = useCallback((
+    snapshot?: ThumbnailSnapshot,
+    canPublish: () => boolean = () => true,
+  ) => {
+    const job = {};
+    latestThumbnailJobs.set(projectId, job);
+    void createDromapProjectThumbnailDataUrl(snapshot)
+      .then((dataUrl) => {
+        if (dataUrl && canPublish() && latestThumbnailJobs.get(projectId) === job) {
+          setProjectThumbnail(projectId, dataUrl);
+        }
+      })
+      .catch((error) => console.warn("DroMap : génération de la miniature impossible.", error))
+      .finally(() => {
+        if (latestThumbnailJobs.get(projectId) === job) latestThumbnailJobs.delete(projectId);
+      });
+  }, [projectId, setProjectThumbnail]);
+
   useEffect(() => {
     if (mountedAtRef.current === 0) mountedAtRef.current = Date.now();
   }, []);
@@ -130,7 +151,7 @@ export function DromapProjectAutosaveProvider({
       if (isTourSimulationActive()) return;
 
       markProjectSaving(projectId);
-      if (reason !== "unload") {
+      if (reason === "manual" || reason === "navigation") {
         await new Promise<void>((resolve) => window.setTimeout(resolve, 40));
       }
 
@@ -145,21 +166,10 @@ export function DromapProjectAutosaveProvider({
       if (reason === "manual" || reason === "navigation") {
         // La miniature est utile au dashboard mais ne doit jamais bloquer une
         // sauvegarde locale ni le retour vers une autre page.
-        void createDromapProjectThumbnailDataUrl()
-          .then((thumbnailDataUrl) => {
-            if (thumbnailDataUrl) {
-              setProjectThumbnail(projectId, thumbnailDataUrl);
-            }
-          })
-          .catch((thumbnailError) => {
-            console.warn(
-              "DroMap : génération de la miniature impossible.",
-              thumbnailError,
-            );
-          });
+        generateThumbnail(snapshot);
       }
     },
-    [markProjectSaving, projectId, saveProjectSnapshot, setProjectThumbnail],
+    [generateThumbnail, markProjectSaving, projectId, saveProjectSnapshot],
   );
 
   const saveNow = useCallback(
@@ -184,42 +194,39 @@ export function DromapProjectAutosaveProvider({
   );
 
   useEffect(() => {
-    const project = useDromapProductStore
+    const hasThumbnail = () => Boolean(useDromapProductStore
       .getState()
-      .projects.find((item) => item.id === projectId);
+      .projects.find((item) => item.id === projectId)?.thumbnailDataUrl);
 
-    if (project?.thumbnailDataUrl) return;
+    if (hasThumbnail()) return;
 
     let cancelled = false;
     let timerId: number | null = null;
+    let idleId: number | null = null;
 
     const generateWhenStable = () => {
-      if (cancelled) return;
-      if (isTourSimulationActive()) {
+      if (cancelled || hasThumbnail()) return;
+      if (isTourSimulationActive() || latestThumbnailJobs.has(projectId)) {
         timerId = window.setTimeout(generateWhenStable, 700);
         return;
       }
 
-      void createDromapProjectThumbnailDataUrl()
-        .then((thumbnailDataUrl) => {
-          if (!cancelled && thumbnailDataUrl) {
-            setProjectThumbnail(projectId, thumbnailDataUrl);
-          }
-        })
-        .catch((thumbnailError) => {
-          console.warn(
-            "DroMap : première miniature impossible.",
-            thumbnailError,
-          );
-        });
+      generateThumbnail(undefined, () => !cancelled);
     };
 
-    timerId = window.setTimeout(generateWhenStable, 1400);
+    timerId = window.setTimeout(() => {
+      if (typeof window.requestIdleCallback === "function") {
+        idleId = window.requestIdleCallback(generateWhenStable, { timeout: 1000 });
+      } else {
+        generateWhenStable();
+      }
+    }, 1400);
     return () => {
       cancelled = true;
       if (timerId !== null) window.clearTimeout(timerId);
+      if (idleId !== null) window.cancelIdleCallback(idleId);
     };
-  }, [projectId, setProjectThumbnail]);
+  }, [generateThumbnail, projectId]);
 
   useEffect(() => {
     const checkpointCurrentEditor = (
@@ -230,17 +237,16 @@ export function DromapProjectAutosaveProvider({
       const snapshot = createDromapEditorProjectSnapshot();
 
       void enqueuePersistence(async () => {
-        await checkpointProjectSnapshot(projectId, snapshot);
-        checkpointedGenerationRef.current = Math.max(
-          checkpointedGenerationRef.current,
-          generation,
-        );
-
+        if (generation <= checkpointedGenerationRef.current) return;
         const project = useDromapProductStore
           .getState()
           .projects.find((item) => item.id === projectId);
-        if (triggerAutomaticSave && (project?.pendingChanges ?? 0) >= 5) {
+        if (triggerAutomaticSave && (project?.pendingChanges ?? 0) >= 5 && project?.status !== "trashed") {
           await performSave("automatic", snapshot, generation);
+        }
+        if (generation > checkpointedGenerationRef.current) {
+          await checkpointProjectSnapshot(projectId, snapshot);
+          checkpointedGenerationRef.current = generation;
         }
       });
     };
@@ -291,7 +297,8 @@ export function DromapProjectAutosaveProvider({
         if (
           state.workspaceBounds !== previous.workspaceBounds ||
           state.workspaceBasemapZoom !== previous.workspaceBasemapZoom ||
-          state.workspaceBasemapBaseZoom !== previous.workspaceBasemapBaseZoom
+          state.workspaceBasemapBaseZoom !== previous.workspaceBasemapBaseZoom ||
+          (state.pendingFitToWorkspace && !previous.pendingFitToWorkspace)
         ) {
           scheduleSignificantChange();
         }
@@ -352,6 +359,7 @@ export function DromapProjectAutosaveProvider({
       if (generation > checkpointedGenerationRef.current) {
         const snapshot = createDromapEditorProjectSnapshot();
         void enqueuePersistence(async () => {
+          if (generation <= checkpointedGenerationRef.current) return;
           await checkpointProjectSnapshot(projectId, snapshot);
           checkpointedGenerationRef.current = Math.max(
             checkpointedGenerationRef.current,
@@ -380,12 +388,16 @@ export function DromapProjectAutosaveProvider({
     };
 
     const handlePageHide = () => checkpointBeforeLeaving();
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) useEditorWorkspaceStore.getState().cancelWorkspaceZoneModification();
+    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") checkpointBeforeLeaving();
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("pageshow", handlePageShow);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
@@ -399,6 +411,7 @@ export function DromapProjectAutosaveProvider({
       unsubscribeExport();
       window.removeEventListener("beforeunload", handleBeforeUnload);
       window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("pageshow", handlePageShow);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
 
       checkpointBeforeLeaving();

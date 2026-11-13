@@ -2,7 +2,7 @@
 
 import { getDromapRuntimeFontFamily } from "@/lib/dromap/font-family";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import L from "leaflet";
 import { useMap } from "react-leaflet";
 
@@ -16,7 +16,9 @@ import {
   featureHasLineArrow,
   getLineArrowStyle,
 } from "./line-arrow";
-import { createMarkerLeafletIcon } from "./marker-symbol";
+import { createMarkerLeafletIcon, getFeatureMarkerSymbol, markerSymbolNeedsCatalog } from "./marker-symbol";
+import { useMarkerSymbolCatalog } from "./use-marker-symbol-catalog";
+import { consumeSyncedFeatureStyle } from "./features-style-sync";
 import {
   createTextDivIconRender,
   getTextFeatureReferenceZoom,
@@ -28,6 +30,8 @@ import {
   shouldUseAlignedZoneOutline,
 } from "./zone-outline";
 import {
+  getZoneDotsEnabled,
+  getZoneHatchingEnabled,
   getZoneStrokeEnabled,
   getZoneVisibleFillOpacity,
   getZoneVisibleStrokeOpacity,
@@ -43,6 +47,7 @@ import {
   type FeatureBodyDragPreviewDetail,
 } from "@/lib/dromap/drag-preview";
 import { useEditorFeaturesStore } from "@/stores/editor-features";
+import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
 import { useEditorToolStore } from "@/stores/editor-tool";
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
 import { useEditorSelectionStore } from "@/stores/editor-selection";
@@ -56,6 +61,7 @@ import {
   FEATURE_MAP_LABEL_MAX_WIDTH_PX,
   clampFeatureMapLabelRenderScale,
   createFeatureMapLabelScreenLayouts,
+  getFeatureMapLabelScale,
   getFeatureMapLabelAnchor,
   getFeatureMapLabelManualOffsetAtZoom,
   getFeatureMapLabelText,
@@ -67,6 +73,7 @@ const LINE_SELECTION_HITBOX_MIN_WEIGHT = 7;
 const DROMAP_FEATURE_PANE_PREFIX = "dromap-feature-pane-";
 const DROMAP_FEATURE_PANE_BASE_Z_INDEX = 430;
 const DROMAP_FEATURE_PANE_STEP = 8;
+const DROMAP_FEATURE_PANE_MAX_Z_INDEX = 19_800;
 const DROMAP_FEATURE_LABEL_PANE = "dromap-feature-label-pane";
 const DROMAP_FEATURE_LABEL_PANE_Z_INDEX_GAP = 100;
 
@@ -92,7 +99,10 @@ function ensureFeaturePane(
   const pane = map.getPane(paneName) ?? map.createPane(paneName);
 
   pane.style.zIndex = String(
-    DROMAP_FEATURE_PANE_BASE_Z_INDEX + drawIndex * DROMAP_FEATURE_PANE_STEP,
+    Math.min(
+      DROMAP_FEATURE_PANE_BASE_Z_INDEX + drawIndex * DROMAP_FEATURE_PANE_STEP,
+      DROMAP_FEATURE_PANE_MAX_Z_INDEX,
+    ),
   );
   pane.style.pointerEvents = getPanePointerEventsForTool(activeTool);
 
@@ -349,7 +359,8 @@ function syncZoneHatchingLayers(
   removeZoneHatchingLayers(map);
 
   for (const feature of features) {
-    if (feature.properties.type !== "zone") {
+    if (feature.properties.type !== "zone" ||
+      (!getZoneHatchingEnabled(feature) && !getZoneDotsEnabled(feature))) {
       continue;
     }
 
@@ -450,6 +461,7 @@ function syncLineArrowLayers(
   removeLineArrowLayers(map);
 
   for (const feature of features) {
+    if (!featureHasLineArrow(feature)) continue;
     addLineArrowLayersForFeature(
       map,
       feature,
@@ -483,7 +495,10 @@ function applyFeatureLayerDrawOrder(
 
     if (pane) {
       pane.style.zIndex = String(
-        DROMAP_FEATURE_PANE_BASE_Z_INDEX + index * DROMAP_FEATURE_PANE_STEP,
+        Math.min(
+          DROMAP_FEATURE_PANE_BASE_Z_INDEX + index * DROMAP_FEATURE_PANE_STEP,
+          DROMAP_FEATURE_PANE_MAX_Z_INDEX,
+        ),
       );
       pane.style.pointerEvents = getPanePointerEventsForTool(activeTool);
     }
@@ -661,7 +676,10 @@ function ensureFeatureMapLabelPane(map: L.Map, featureCount: number) {
   // quand un calque converti contient des milliers d'entités et donc beaucoup
   // de panes d'ordre distinctes.
   pane.style.zIndex = String(
-    highestFeaturePaneZIndex + DROMAP_FEATURE_LABEL_PANE_Z_INDEX_GAP,
+    Math.min(
+      highestFeaturePaneZIndex + DROMAP_FEATURE_LABEL_PANE_Z_INDEX_GAP,
+      19_900,
+    ),
   );
   // Le pane reste transparent aux événements ; seule l’icône sélectionnée
   // réactive pointer-events pour permettre son glisser-déposer.
@@ -781,7 +799,7 @@ function syncFeatureMapLabelLayers(
         text: label,
         anchorX: point.x,
         anchorY: point.y,
-        labelScale,
+        labelScale: labelScale * getFeatureMapLabelScale(feature),
         markerRadius:
           feature.geometry.type === "Point" &&
           feature.properties.type === "marker"
@@ -797,7 +815,7 @@ function syncFeatureMapLabelLayers(
         maxTextWidth: Math.max(
           24,
           Math.min(
-            FEATURE_MAP_LABEL_MAX_WIDTH_PX * labelScale,
+            FEATURE_MAP_LABEL_MAX_WIDTH_PX * labelScale * getFeatureMapLabelScale(feature),
             mapSize.x * 0.34,
           ),
         ),
@@ -980,6 +998,8 @@ function updateExistingLayerFromFeature(
   feature: DroMapFeature,
   paneName: string | undefined,
   currentZoom: number,
+  updateGeometry: boolean,
+  updateStyle: boolean,
 ): boolean {
   if (!layerUsesExpectedPane(layer, paneName)) {
     return false;
@@ -988,36 +1008,31 @@ function updateExistingLayerFromFeature(
   const geometry = feature.geometry;
 
   if (geometry.type === "Point" && layer instanceof L.Marker) {
-    layer.setLatLng(lngLatToLatLng(geometry.coordinates));
-    layer.setIcon(createPointIcon(feature, currentZoom));
-    refreshGeomanEditHandles(layer);
+    if (updateGeometry) {
+      layer.setLatLng(lngLatToLatLng(geometry.coordinates));
+    }
+    if (updateStyle) layer.setIcon(createPointIcon(feature, currentZoom));
+    if (updateGeometry) refreshGeomanEditHandles(layer);
     return true;
   }
 
   if (geometry.type === "LineString" && layer instanceof L.Polyline) {
-    const latLngs = geometry.coordinates.map((coordinate) =>
-      lngLatToLatLng(coordinate),
-    );
-
-    layer.setLatLngs(latLngs);
-    layer.setStyle(
-      getPathOptions(feature, {
-        interactionOnly: featureHasLineArrow(feature),
-        paneName,
-      }),
-    );
-    refreshGeomanEditHandles(layer);
+    if (updateGeometry) {
+      layer.setLatLngs(geometry.coordinates.map(lngLatToLatLng));
+      refreshGeomanEditHandles(layer);
+    }
+    if (updateStyle) {
+      layer.setStyle(getPathOptions(feature, { interactionOnly: featureHasLineArrow(feature), paneName }));
+    }
     return true;
   }
 
   if (geometry.type === "Polygon" && layer instanceof L.Polygon) {
-    const rings = geometry.coordinates.map((ring) =>
-      ring.map((coordinate) => lngLatToLatLng(coordinate)),
-    );
-
-    layer.setLatLngs(rings);
-    layer.setStyle(getPathOptions(feature, { paneName }));
-    refreshGeomanEditHandles(layer);
+    if (updateGeometry) {
+      layer.setLatLngs(geometry.coordinates.map((ring) => ring.map(lngLatToLatLng)));
+      refreshGeomanEditHandles(layer);
+    }
+    if (updateStyle) layer.setStyle(getPathOptions(feature, { paneName }));
     return true;
   }
 
@@ -1027,12 +1042,19 @@ function updateExistingLayerFromFeature(
 export function FeaturesStoreRenderer() {
   const map = useMap();
   const featureLayersByIdRef = useRef(new Map<string, L.Layer>());
+  const appliedFeaturesRef = useRef(new WeakMap<L.Layer, DroMapFeature>());
+  const previousStyleContextRef = useRef<readonly unknown[]>([]);
+  const derivedContextRef = useRef<readonly unknown[]>([]);
   const derivedLayersByFeatureIdRef = useRef(
     new Map<string, Set<L.Layer>>(),
   );
 
   const features = useEditorFeaturesStore((state) => state.features);
+  const markerCatalog = useMarkerSymbolCatalog(features.some((feature) =>
+    feature.geometry.type === "Point" && markerSymbolNeedsCatalog(getFeatureMarkerSymbol(feature)),
+  ));
   const layers = useEditorLayersStore((state) => state.layers);
+  const customMarkers = useEditorCustomMarkersStore((state) => state.customMarkers);
   const activeTool = useEditorToolStore((state) => state.activeTool);
   const workspaceBounds = useEditorWorkspaceStore(
     (state) => state.workspaceBounds,
@@ -1055,6 +1077,12 @@ export function FeaturesStoreRenderer() {
   const selectedFeatureId = useEditorSelectionStore(
     (state) => state.selectedFeatureId,
   );
+  const sourceFeaturesByDrawOrder = useMemo(() => getFeaturesByDrawOrder(
+    getRenderableFeaturesForLayers(features, layers, { workspaceBounds }),
+  ), [features, layers, workspaceBounds]);
+  const sourceFeaturesById = useMemo(() => new Map(
+    features.map((feature) => [feature.id, feature]),
+  ), [features]);
 
   useEffect(() => {
     const featureLayersById = featureLayersByIdRef.current;
@@ -1154,22 +1182,20 @@ export function FeaturesStoreRenderer() {
       observedLayers.clear();
       featureLayersById.clear();
       derivedLayersByFeatureId.clear();
+      derivedContextRef.current = [];
+      removeFeatureMapLabelLayers(map);
+      removeLineArrowLayers(map);
+      removeLineHitboxLayers(map);
+      removeZoneHatchingLayers(map);
+      removeZoneOutlineLayers(map);
     };
   }, [map]);
 
   useEffect(() => {
     const featureLayersById = featureLayersByIdRef.current;
     const derivedLayersByFeatureId = derivedLayersByFeatureIdRef.current;
-    const renderableFeatures = getRenderableFeaturesForLayers(
-      features,
-      layers,
-      {
-        workspaceBounds,
-      },
-    );
-    const sourceFeaturesByDrawOrder =
-      getFeaturesByDrawOrder(renderableFeatures);
-    const featureIds = new Set(renderableFeatures.map((feature) => feature.id));
+    const appliedFeatures = appliedFeaturesRef.current;
+    const featureIds = new Set(sourceFeaturesByDrawOrder.map((feature) => feature.id));
     const fallbackReferenceZoom =
       typeof workspaceBasemapBaseZoom === "number" &&
       Number.isFinite(workspaceBasemapBaseZoom)
@@ -1182,22 +1208,29 @@ export function FeaturesStoreRenderer() {
           featureMapLabelScale,
       );
 
+    let displayZoom: number | undefined;
+    let displayFeaturesByDrawOrder: DroMapFeature[] = [];
     const renderAtCurrentZoom = () => {
       const currentZoom = map.getZoom();
-      const displayFeaturesByDrawOrder = sourceFeaturesByDrawOrder.map(
-        (feature) =>
-          scaleFeatureForVisualZoom(
-            feature,
-            currentZoom,
-            fallbackReferenceZoom,
-            { scaleText: false },
-          ),
-      );
+      if (displayZoom !== currentZoom) {
+        displayZoom = currentZoom;
+        displayFeaturesByDrawOrder = sourceFeaturesByDrawOrder.map((feature) =>
+          scaleFeatureForVisualZoom(feature, currentZoom, fallbackReferenceZoom, { scaleText: false }),
+        );
+      }
+      const styleContext = [currentZoom, fallbackReferenceZoom, layers, markerCatalog, customMarkers, getDromapRuntimeFontFamily()];
+      const styleContextChanged = styleContext.some((value, index) => value !== previousStyleContextRef.current[index]);
+      previousStyleContextRef.current = styleContext;
       const paneNamesById = getFeaturePaneNamesById(
         map,
         displayFeaturesByDrawOrder,
         activeTool,
       );
+      const pixelOrigin = map.getPixelOrigin();
+      const hitboxesEnabled = shouldUseInteractiveFeatureHitboxes(activeTool);
+      const derivedContext = [sourceFeaturesByDrawOrder, currentZoom, fallbackReferenceZoom, pixelOrigin.x, pixelOrigin.y, hitboxesEnabled];
+      const updateDerivedLayers = derivedContext.some((value, index) => value !== derivedContextRef.current[index]);
+      derivedContextRef.current = derivedContext;
 
       for (const [featureId, layer] of Array.from(featureLayersById)) {
         if (!featureIds.has(featureId)) {
@@ -1205,13 +1238,16 @@ export function FeaturesStoreRenderer() {
         }
       }
 
-      if (shouldUseInteractiveFeatureHitboxes(activeTool)) {
-        syncLineHitboxLayers(map, displayFeaturesByDrawOrder, paneNamesById);
-      } else {
-        removeLineHitboxLayers(map);
+      if (updateDerivedLayers) {
+        if (hitboxesEnabled) {
+          syncLineHitboxLayers(map, displayFeaturesByDrawOrder, paneNamesById);
+        } else {
+          removeLineHitboxLayers(map);
+        }
       }
 
       for (const feature of displayFeaturesByDrawOrder) {
+        const sourceFeature = sourceFeaturesById.get(feature.id) ?? feature;
         const indexedLayer = featureLayersById.get(feature.id);
         const existingLayer =
           indexedLayer && map.hasLayer(indexedLayer) ? indexedLayer : null;
@@ -1221,14 +1257,19 @@ export function FeaturesStoreRenderer() {
         }
 
         if (existingLayer) {
+          const previousFeature = appliedFeatures.get(existingLayer);
+          const styleWasSynced = consumeSyncedFeatureStyle(existingLayer);
           const updated = updateExistingLayerFromFeature(
             existingLayer,
             feature,
             paneNamesById.get(feature.id),
             currentZoom,
+            previousFeature?.geometry !== sourceFeature.geometry,
+            previousFeature?.properties !== sourceFeature.properties || styleContextChanged || styleWasSynced,
           );
 
           if (updated) {
+            appliedFeatures.set(existingLayer, sourceFeature);
             clearLegacyFeatureMapLabel(existingLayer);
             continue;
           }
@@ -1251,6 +1292,7 @@ export function FeaturesStoreRenderer() {
         bindLayerGeomanEvents(layer);
         layer.addTo(map);
         featureLayersById.set(feature.id, layer);
+        appliedFeatures.set(layer, sourceFeature);
       }
 
       const currentFeatureMapLabelRenderScale =
@@ -1275,9 +1317,11 @@ export function FeaturesStoreRenderer() {
           currentZoom,
           resolvedFeatureMapLabelOffsets,
         );
-      syncLineArrowLayers(map, displayFeaturesByDrawOrder, paneNamesById);
-      syncZoneHatchingLayers(map, displayFeaturesByDrawOrder, paneNamesById);
-      syncZoneOutlineLayers(map, displayFeaturesByDrawOrder, paneNamesById);
+      if (updateDerivedLayers) {
+        syncLineArrowLayers(map, displayFeaturesByDrawOrder, paneNamesById);
+        syncZoneHatchingLayers(map, displayFeaturesByDrawOrder, paneNamesById);
+        syncZoneOutlineLayers(map, displayFeaturesByDrawOrder, paneNamesById);
+      }
       applyFeatureLayerDrawOrder(
         map,
         displayFeaturesByDrawOrder,
@@ -1325,6 +1369,7 @@ export function FeaturesStoreRenderer() {
       // Pendant le déplacement d'un sommet, la polyline Geoman invisible se
       // met déjà à jour. On ne remplace ici que les couches visibles dérivées
       // (corps coupé + pointe) afin que la flèche suive la poignée en direct.
+      derivedContextRef.current = [];
       removeLineArrowLayersForFeature(map, featureId);
       addLineArrowLayersForFeature(
         map,
@@ -1356,11 +1401,13 @@ export function FeaturesStoreRenderer() {
         primaryLayer !== detail.sourceLayer &&
         map.hasLayer(primaryLayer)
       ) {
+        appliedFeatures.delete(primaryLayer);
         translateDragPreviewLayer(primaryLayer, latDelta, lngDelta);
       }
 
       const derivedLayers = derivedLayersByFeatureId.get(featureId);
       if (derivedLayers) {
+        derivedContextRef.current = [];
         for (const derivedLayer of derivedLayers) {
           if (
             derivedLayer !== detail.sourceLayer &&
@@ -1378,7 +1425,15 @@ export function FeaturesStoreRenderer() {
 
     renderAtCurrentZoom();
 
-    map.on("moveend zoomend resize", renderAtCurrentZoom);
+    let renderFrame: number | null = null;
+    const scheduleRender = () => {
+      if (renderFrame !== null) return;
+      renderFrame = window.requestAnimationFrame(() => {
+        renderFrame = null;
+        renderAtCurrentZoom();
+      });
+    };
+    map.on("moveend zoomend resize", scheduleRender);
     window.addEventListener(
       "dromap:feature-geometry-preview",
       handleFeatureGeometryPreview,
@@ -1389,7 +1444,8 @@ export function FeaturesStoreRenderer() {
     );
 
     return () => {
-      map.off("moveend zoomend resize", renderAtCurrentZoom);
+      map.off("moveend zoomend resize", scheduleRender);
+      if (renderFrame !== null) window.cancelAnimationFrame(renderFrame);
       window.removeEventListener(
         "dromap:feature-geometry-preview",
         handleFeatureGeometryPreview,
@@ -1398,18 +1454,15 @@ export function FeaturesStoreRenderer() {
         DROMAP_FEATURE_BODY_DRAG_PREVIEW_EVENT,
         handleFeatureBodyDragPreview,
       );
-      removeFeatureMapLabelLayers(map);
-      removeLineArrowLayers(map);
-      removeLineHitboxLayers(map);
-      removeZoneHatchingLayers(map);
-      removeZoneOutlineLayers(map);
     };
   }, [
-    features,
+    sourceFeaturesByDrawOrder,
+    sourceFeaturesById,
     layers,
     activeTool,
+    markerCatalog,
+    customMarkers,
     map,
-    workspaceBounds,
     workspaceBasemapBaseZoom,
     showAllGeoJsonFeatureLabels,
     showAllFeatureLabels,

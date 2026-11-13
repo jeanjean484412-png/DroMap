@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -9,8 +10,6 @@ import { DromapButton } from "@/components/dromap-ui/button";
 import { DromapDialog } from "@/components/dromap-ui/dialog";
 import { DromapEmptyState } from "@/components/dromap-ui/empty-state";
 import { DromapStatusBadge } from "@/components/dromap-ui/status-badge";
-import { DashboardProjectExportDialog } from "./dashboard-project-export-dialog";
-import { DashboardProjectPublicationDialog } from "./dashboard-project-publication-dialog";
 import {
   getProjectStatusLabel,
   type DromapProject,
@@ -19,11 +18,13 @@ import {
   createDromapEditorSnapshotFromImportedProject,
   type DromapEditorProjectSnapshot,
 } from "@/lib/dromap/editor-project-persistence";
-import { parseDromapProjectJson } from "@/editor/export-download";
 import { useDromapProductStore } from "@/stores/dromap-product";
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
 import { resolveDromapPreferences, type DromapDashboardViewPreference } from "@/lib/dromap/preferences";
 import type { DromapPublicPublication } from "@/lib/dromap/publications";
+
+const DashboardProjectExportDialog = dynamic(() => import("./dashboard-project-export-dialog").then((module) => module.DashboardProjectExportDialog), { ssr: false });
+const DashboardProjectPublicationDialog = dynamic(() => import("./dashboard-project-publication-dialog").then((module) => module.DashboardProjectPublicationDialog), { ssr: false });
 
 function formatDate(value: string) {
   try {
@@ -60,7 +61,9 @@ function ProjectCard({
   const [renameOpen, setRenameOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportVisited, setExportVisited] = useState(false);
   const [publicationOpen, setPublicationOpen] = useState(false);
+  const [publicationVisited, setPublicationVisited] = useState(false);
   const [nameDraft, setNameDraft] = useState(project.name);
 
   const basemap = getDromapBasemapConfig(
@@ -220,6 +223,7 @@ function ProjectCard({
               type="button"
               onClick={() => {
                 setMenuOpen(false);
+                setExportVisited(true);
                 setExportOpen(true);
               }}
               className="w-full rounded-lg px-3 py-2 text-left hover:bg-slate-100"
@@ -231,6 +235,7 @@ function ProjectCard({
               type="button"
               onClick={() => {
                 setMenuOpen(false);
+                setPublicationVisited(true);
                 setPublicationOpen(true);
               }}
               className="w-full rounded-lg px-3 py-2 text-left hover:bg-slate-100"
@@ -252,21 +257,25 @@ function ProjectCard({
         ) : null}
       </div>
 
-      <DashboardProjectExportDialog
-        open={exportOpen}
-        projectId={project.id}
-        projectName={project.name}
-        userMode={userMode}
-        onClose={() => setExportOpen(false)}
-      />
+      {exportVisited ? (
+        <DashboardProjectExportDialog
+          open={exportOpen}
+          projectId={project.id}
+          projectName={project.name}
+          userMode={userMode}
+          onClose={() => setExportOpen(false)}
+        />
+      ) : null}
 
-      <DashboardProjectPublicationDialog
-        open={publicationOpen}
-        projectId={project.id}
-        projectName={project.name}
-        onClose={() => setPublicationOpen(false)}
-        onPublicationChanged={onPublicationChanged}
-      />
+      {publicationVisited ? (
+        <DashboardProjectPublicationDialog
+          open={publicationOpen}
+          projectId={project.id}
+          projectName={project.name}
+          onClose={() => setPublicationOpen(false)}
+          onPublicationChanged={onPublicationChanged}
+        />
+      ) : null}
 
       <DromapDialog
         open={infoOpen}
@@ -423,6 +432,7 @@ function DashboardContent() {
     snapshot: DromapEditorProjectSnapshot;
   } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [openingNewProject, setOpeningNewProject] = useState(false);
   const [publicationsByProjectId, setPublicationsByProjectId] = useState<Record<string, DromapPublicPublication>>({});
 
   useEffect(() => {
@@ -465,6 +475,7 @@ function DashboardContent() {
   }, [userMode]);
 
   function startNewProject(replaceGuestProject = false) {
+    if (openingNewProject) return;
     setImportError(null);
     const id = createProject({ replaceGuestProject });
     if (!id && userMode === "guest") {
@@ -473,10 +484,12 @@ function DashboardContent() {
       return;
     }
     if (!id) {
+      setOpeningNewProject(false);
       setImportError(useDromapProductStore.getState().lastSyncError ?? "Le projet n’a pas pu être créé.");
       return;
     }
     if (id) {
+      setOpeningNewProject(true);
       const createdProject = useDromapProductStore.getState().projects.find((project) => project.id === id);
       router.push(createdProject?.setupComplete ? `/projects/${id}/editor` : `/projects/${id}/setup`);
     }
@@ -498,7 +511,11 @@ function DashboardContent() {
 
     try {
       setImportError(null);
-      const imported = parseDromapProjectJson(await file.text());
+      const [{ parseDromapProjectJson }, contents] = await Promise.all([
+        import("@/editor/project-file-import"),
+        file.text(),
+      ]);
+      const imported = parseDromapProjectJson(contents);
       const snapshot = createDromapEditorSnapshotFromImportedProject(imported);
       const baseName = file.name.replace(/\.(json|dromap)$/i, "").trim();
       setPendingImport({
@@ -553,6 +570,14 @@ function DashboardContent() {
         )
       }
     >
+      {openingNewProject ? (
+        <div className="fixed inset-0 z-[10000] grid place-items-center bg-slate-50 p-6" role="status" aria-live="polite" aria-label="Ouverture du nouveau projet">
+          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-6 py-5 text-sm font-semibold text-slate-700 shadow-lg">
+            <span className="h-5 w-5 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" aria-hidden="true" />
+            Ouverture du nouveau projet…
+          </div>
+        </div>
+      ) : null}
       <input
         ref={fileInputRef}
         type="file"

@@ -19,7 +19,7 @@ export async function GET(
 
   try {
     const response = await publicationsAdminFetch(
-      `/dromap_publications?slug=eq.${encodeURIComponent(slug)}&select=preview_data_url&limit=1`,
+      `/dromap_publications?slug=eq.${encodeURIComponent(slug)}&published_at=not.is.null&select=preview_data_url&limit=1`,
       { method: "GET" },
     );
     const rows = response.ok ? await parseJsonResponse<DromapPublicationRow[]>(response) : [];
@@ -30,7 +30,7 @@ export async function GET(
       headers: {
         "Content-Type": image.mimeType,
         "Content-Length": String(image.bytes.byteLength),
-        "Cache-Control": "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
+        "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
       },
     });

@@ -180,7 +180,12 @@ export function dromapPublicationsConfigured() {
   return Boolean(getSupabaseConfig() && getSupabaseAdminKey());
 }
 
-export async function publicationsAdminFetch(path: string, init: RequestInit = {}) {
+export const DROMAP_PUBLICATION_LIST_CACHE_TAG = "dromap-publication-list";
+
+export async function publicationsAdminFetch(
+  path: string,
+  init: RequestInit & { next?: { revalidate: number; tags: string[] } } = {},
+) {
   const setup = adminHeaders(Boolean(init.body));
   if (!setup) throw new Error("PUBLICATIONS_NOT_CONFIGURED");
   const headers = new Headers(setup.headers);
@@ -188,7 +193,7 @@ export async function publicationsAdminFetch(path: string, init: RequestInit = {
   return fetch(`${setup.config.url}/rest/v1${path}`, {
     ...init,
     headers,
-    cache: "no-store",
+    cache: init.next ? "force-cache" : "no-store",
     signal: init.signal ?? AbortSignal.timeout(25_000),
   });
 }

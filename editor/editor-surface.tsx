@@ -2,21 +2,23 @@
 
 import dynamic from "next/dynamic";
 import { DROMAP_BETA } from "@/lib/dromap/release-mode";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
 import { ActiveToolOutsideWorkspaceClickGuard } from "./active-tool-outside-workspace-click-guard";
 import { BasemapControls } from "./basemap-controls";
 import { EditorKeyboardShortcuts } from "./editor-keyboard-shortcuts";
 import { ExportControls } from "./export-controls";
-import { DroMapAiPanel } from "./dromap-ai-panel";
+import { MapDockButton } from "./map-dock-button";
+import { bringFloatingPanelToFront } from "./floating-panel-z-index";
 import { CustomMarkersBootstrap } from "./custom-markers-bootstrap";
-import { ExportSetupPanel } from "./export-setup-panel";
+import { useEditorExportStore } from "@/stores/editor-export";
 import GraphicZoomViewport from "./graphic-zoom-viewport";
 import { LayersPanel } from "./layers-panel";
 import { LegendPanel } from "./legend-panel";
 import ModeToolbar from "./mode-toolbar";
 import { PlaceSearchControl } from "./place-search-control";
+import { PlaceSearchNavigationContext, type PlaceSearchNavigation } from "./place-search-navigation";
 import { RoadImportController } from "./road-import-controller";
 import { WorkspaceActions } from "./workspace-actions";
 import { RestrictedAiTrigger } from "@/components/dromap-product/restricted-ai-trigger";
@@ -36,6 +38,17 @@ const EditorMap = dynamic<{ onPresentationReady?: () => void }>(
   },
 );
 
+const ExportSetupPanel = dynamic(() => import("./export-setup-panel").then((module) => module.ExportSetupPanel), { ssr: false });
+
+function EditorExportPanels() {
+  const open = useEditorExportStore((state) => state.isExportPanelOpen || state.isImportPanelOpen);
+  const [visited, setVisited] = useState(false);
+  useEffect(() => {
+    if (open) setVisited(true);
+  }, [open]);
+  return open || visited ? <ExportSetupPanel /> : null;
+}
+
 type EditorSurfaceProps = {
   variant?: "legacy" | "product";
   onMapPresentationReady?: () => void;
@@ -48,8 +61,6 @@ function EditorMapCore({
   product?: boolean;
   onMapPresentationReady?: () => void;
 } = {}) {
-  const runtime = useDromapProductRuntime();
-
   return (
     <>
       <EditorKeyboardShortcuts />
@@ -62,25 +73,69 @@ function EditorMapCore({
 
       {!product ? (
         <>
-          <PlaceSearchControl />
-          {DROMAP_BETA || (runtime.enabled && !runtime.capabilities.canUseAi) ? (
-            <RestrictedAiTrigger />
-          ) : (
-            <DroMapAiPanel />
-          )}
+          <div className="pointer-events-none absolute left-4 top-[4.5rem] z-[1300] lg:left-[43rem] lg:top-4">
+            <SearchAndAssistantControls />
+          </div>
           <BasemapControls />
           <ExportControls />
         </>
       ) : null}
-      <ExportSetupPanel />
+      <EditorExportPanels />
       <RoadImportController />
     </>
   );
 }
 
-function ProductTopDock() {
+const DroMapAiPanel = dynamic(() => import("./dromap-ai-panel").then((module) => module.DroMapAiPanel), { ssr: false });
+
+function AssistantLauncher() {
+  const [openedAt, setOpenedAt] = useState<number | null>(null);
+  const [startOpen, setStartOpen] = useState(false);
+
+  useEffect(() => {
+    const close = () => setStartOpen(false);
+    window.addEventListener("dromap:open-place-search", close);
+    return () => window.removeEventListener("dromap:open-place-search", close);
+  }, []);
+
+  if (openedAt !== null) {
+    return <DroMapAiPanel docked initiallyOpen={startOpen} initialZIndex={openedAt} />;
+  }
+  return (
+    <div className="pointer-events-none text-sm relative z-[1300]">
+      <MapDockButton
+        icon={<span className="text-lg font-black leading-none">IA</span>}
+        onClick={() => {
+          window.dispatchEvent(new Event("dromap:open-ai-assistant"));
+          setOpenedAt(bringFloatingPanelToFront());
+          setStartOpen(true);
+        }}
+        title="Ouvrir l’assistant IA DroMap"
+        className="border-teal-200 text-teal-800 hover:border-teal-400"
+        aria-label="Ouvrir l’assistant IA DroMap"
+      >
+        Assistant IA
+      </MapDockButton>
+    </div>
+  );
+}
+
+function SearchAndAssistantControls({ product = false }: { product?: boolean } = {}) {
   const runtime = useDromapProductRuntime();
 
+  return (
+    <div className="flex items-start gap-2">
+      <PlaceSearchControl product={product} />
+      {DROMAP_BETA || (runtime.enabled && !runtime.capabilities.canUseAi) ? (
+        <RestrictedAiTrigger docked />
+      ) : (
+        <AssistantLauncher />
+      )}
+    </div>
+  );
+}
+
+function ProductTopDock() {
   return (
     <>
       <ExportControls
@@ -89,12 +144,7 @@ function ProductTopDock() {
         showBuildingsButton={false}
         docked
       />
-      <PlaceSearchControl docked />
-      {DROMAP_BETA || (runtime.enabled && !runtime.capabilities.canUseAi) ? (
-        <div className={DROMAP_BETA ? mobileStyles.desktopOnly : undefined}><RestrictedAiTrigger docked /></div>
-      ) : (
-        <DroMapAiPanel docked />
-      )}
+      <SearchAndAssistantControls product />
     </>
   );
 }
@@ -183,6 +233,35 @@ function SharedEditorStyles() {
         cursor: grabbing !important;
       }
 
+      .leaflet-container.dromap-editor-map .dromap-workspace-handle--north-west,
+      .leaflet-container.dromap-editor-map .dromap-workspace-handle--south-east,
+      .leaflet-container.dromap-editor-map.leaflet-dragging .dromap-workspace-handle--north-west,
+      .leaflet-container.dromap-editor-map.leaflet-dragging .dromap-workspace-handle--south-east {
+        cursor: nwse-resize !important;
+      }
+      .leaflet-container.dromap-editor-map .dromap-workspace-handle--north-east,
+      .leaflet-container.dromap-editor-map .dromap-workspace-handle--south-west,
+      .leaflet-container.dromap-editor-map.leaflet-dragging .dromap-workspace-handle--north-east,
+      .leaflet-container.dromap-editor-map.leaflet-dragging .dromap-workspace-handle--south-west {
+        cursor: nesw-resize !important;
+      }
+      .leaflet-container.dromap-editor-map .dromap-workspace-handle--north,
+      .leaflet-container.dromap-editor-map .dromap-workspace-handle--south,
+      .leaflet-container.dromap-editor-map.leaflet-dragging .dromap-workspace-handle--north,
+      .leaflet-container.dromap-editor-map.leaflet-dragging .dromap-workspace-handle--south {
+        cursor: ns-resize !important;
+      }
+      .leaflet-container.dromap-editor-map .dromap-workspace-handle--east,
+      .leaflet-container.dromap-editor-map .dromap-workspace-handle--west,
+      .leaflet-container.dromap-editor-map.leaflet-dragging .dromap-workspace-handle--east,
+      .leaflet-container.dromap-editor-map.leaflet-dragging .dromap-workspace-handle--west {
+        cursor: ew-resize !important;
+      }
+
+      .leaflet-container.dromap-editor-map [data-dromap-resize-handle] {
+        cursor: var(--dromap-resize-cursor) !important;
+      }
+
       [data-dromap-product-map="true"] .dromap-export-page {
         z-index: 4000 !important;
       }
@@ -213,7 +292,17 @@ function SharedEditorStyles() {
   );
 }
 
-export function EditorSurface({
+export function EditorSurface(props: EditorSurfaceProps = {}) {
+  const navigation = useRef<PlaceSearchNavigation | null>(null);
+
+  return (
+    <PlaceSearchNavigationContext.Provider value={navigation}>
+      <EditorSurfaceContent {...props} />
+    </PlaceSearchNavigationContext.Provider>
+  );
+}
+
+function EditorSurfaceContent({
   variant = "legacy",
   onMapPresentationReady,
 }: EditorSurfaceProps = {}) {
@@ -276,12 +365,13 @@ export function EditorSurface({
             <LayersPanel />
           </div>
 
-          <div className={`${mobileStyles.workspaceActions} absolute bottom-4 left-4 z-[1050] rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur`}>
+          <div className={`${mobileStyles.workspaceActions} absolute bottom-4 left-4 z-[1050] max-w-[calc(100%-2rem)] rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur`}>
             <WorkspaceActions />
           </div>
         </section>
 
         <div
+          data-dromap-inspector-overlay
           data-collapsed={inspectorCollapsed}
           className={`${mobileStyles.inspector} pointer-events-none absolute inset-y-0 right-0 z-[2400]`}
           style={{ width: inspectorWidth }}
@@ -299,6 +389,9 @@ export function EditorSurface({
       <SharedEditorStyles />
       <EditorMapCore onMapPresentationReady={onMapPresentationReady} />
       <ModeToolbar />
+      <div className="absolute bottom-4 left-4 z-[1050] max-w-[calc(100%-2rem)] rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur">
+        <WorkspaceActions />
+      </div>
       <LegendPanel />
       <LayersPanel />
     </div>

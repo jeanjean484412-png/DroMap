@@ -63,10 +63,15 @@ html.dromap-reduce-motion [role="dialog"] {
   border-radius: 5px;
   background: #fff;
   box-shadow: 0 1px 5px #0f172a66;
-  cursor: pointer !important;
+  cursor: nwse-resize !important;
 }
 
-.dromap-workspace-handle.leaflet-drag-target { cursor: grabbing !important; }
+.dromap-workspace-handle--north-east,
+.dromap-workspace-handle--south-west { cursor: nesw-resize !important; }
+.dromap-workspace-handle--north,
+.dromap-workspace-handle--south { cursor: ns-resize !important; }
+.dromap-workspace-handle--east,
+.dromap-workspace-handle--west { cursor: ew-resize !important; }
 
 .dromap-editor-map:has(.dromap-workspace-handle:hover) .leaflet-tooltip-pane .leaflet-tooltip {
   visibility: hidden !important;

@@ -352,10 +352,10 @@ const TOUR_STEPS: TourStep[] = [
         target: { text: "Zone de travail" },
       },
       {
-        label: "Zoom précis / Zoom contraint",
+        label: "Navigation libre",
         explanation:
           "Débloque temporairement un zoom continu et fluide à l’intérieur de la zone pour rechercher un élément avec davantage de précision, sans modifier le cadrage du rendu final.",
-        target: { title: "zoom et le niveau de détail" },
+        target: { ariaLabel: "Navigation libre" },
       },
       {
         label: "Fond de carte",
@@ -378,7 +378,7 @@ const TOUR_STEPS: TourStep[] = [
       {
         label: "Rechercher un lieu",
         explanation:
-          "Recherche une ville, une adresse ou un lieu nommé et recentre la carte.",
+          "Recherche un lieu ou des coordonnées et indique le résultat avec un repère temporaire. La zone de travail est conservée.",
         target: { text: "Rechercher un lieu" },
       },
     ],

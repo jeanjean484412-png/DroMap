@@ -34,8 +34,9 @@ import {
   type DroMapDashStyle,
 } from "./feature-style";
 import {
-  DROMAP_BUILTIN_MARKER_SYMBOLS,
   DROMAP_MARKER_SYMBOL_CATEGORIES,
+  markerSymbolNeedsCatalog,
+  getBuiltinMarkerCategoryId,
   getFeatureMarkerSymbol,
   getMarkerSymbolHtml,
   getMarkerSymbolLabel,
@@ -43,6 +44,7 @@ import {
   markerSymbolSupportsStrokeWeight,
   type DroMapMarkerSymbolCategoryId,
 } from "./marker-symbol";
+import { useMarkerSymbolCatalog } from "./use-marker-symbol-catalog";
 import { featureHasArrowEnd, featureHasArrowStart } from "./line-arrow";
 import {
   getTextBackgroundColor,
@@ -88,6 +90,7 @@ import { ColorPicker } from "./color-picker";
 import { CustomMarkerLibrary } from "./custom-marker-library";
 import {
   getFeatureMapLabelVisibility,
+  getFeatureMapLabelScale,
   shouldShowFeatureMapLabel,
 } from "./feature-map-labels";
 import {
@@ -166,6 +169,7 @@ function MarkerVisualPreview({
   size = 32,
 }: MarkerVisualPreviewProps) {
   const featureStyle = feature.properties?.style;
+  const markerCatalog = useMarkerSymbolCatalog(markerSymbolNeedsCatalog(symbol));
   const html = useMemo(
     () => {
       const style = featureStyle ?? {};
@@ -186,7 +190,7 @@ function MarkerVisualPreview({
         { size },
       );
     },
-    [size, featureStyle, symbol],
+    [size, featureStyle, symbol, markerCatalog],
   );
 
   return (
@@ -719,7 +723,7 @@ export function LegendPanel({
     (state) => state.selectedFeatureIds,
   );
   const multiSelectionEnabled = useEditorSelectionStore(
-    (state) => state.multiSelectionEnabled,
+    (state) => state.multiSelectionEnabled || state.multiSelectionHeld,
   );
   const areaSelectionEnabled = useEditorSelectionStore(
     (state) => state.areaSelectionEnabled,
@@ -788,8 +792,12 @@ export function LegendPanel({
   const normalizedMarkerLibrarySearch = normalizeMarkerLibrarySearch(
     markerLibrarySearch,
   );
+  const markerCatalog = useMarkerSymbolCatalog(openMarkerLibraryFeatureId !== null || rawFeatures.some((feature) =>
+    feature.geometry.type === "Point" && markerSymbolNeedsCatalog(getFeatureMarkerSymbol(feature)),
+  ));
   const markerLibraryOptions = useMemo(() => {
-    return DROMAP_BUILTIN_MARKER_SYMBOLS.filter((option) => {
+    if (!openMarkerLibraryFeatureId || !markerCatalog) return [];
+    return markerCatalog.DROMAP_BUILTIN_MARKER_SYMBOLS.filter((option) => {
       if (!normalizedMarkerLibrarySearch) {
         return option.categoryId === markerLibraryCategoryId;
       }
@@ -804,7 +812,7 @@ export function LegendPanel({
 
       return searchableText.includes(normalizedMarkerLibrarySearch);
     });
-  }, [markerLibraryCategoryId, normalizedMarkerLibrarySearch]);
+  }, [markerCatalog, markerLibraryCategoryId, normalizedMarkerLibrarySearch, openMarkerLibraryFeatureId]);
   const normalizedSearchQuery = searchQuery.trim().toLocaleLowerCase("fr");
   const filteredFeatures = useMemo(() => {
     if (!normalizedSearchQuery) {
@@ -1588,6 +1596,33 @@ export function LegendPanel({
                   ) : null}
 
                   {selectedZones.length > 0 ? (
+                    <label className="col-span-2 flex items-center justify-between gap-2 rounded-lg border border-teal-200 bg-white px-2 py-2">
+                      <span className="font-semibold text-slate-700">Contour des zones sélectionnées</span>
+                      <input
+                        type="checkbox"
+                        checked={selectedZones.every(getZoneStrokeEnabled)}
+                        onChange={(event) => {
+                          const zoneStrokeEnabled = event.target.checked;
+                          updateSelectedFeaturesWithHistory(
+                            selectedZones,
+                            (currentFeature) => ({
+                              ...currentFeature,
+                              properties: {
+                                ...currentFeature.properties,
+                                style: {
+                                  ...(currentFeature.properties.style ?? {}),
+                                  zoneStrokeEnabled,
+                                },
+                              },
+                            }),
+                          );
+                        }}
+                        className="h-4 w-4 cursor-pointer accent-teal-600"
+                      />
+                    </label>
+                  ) : null}
+
+                  {selectedZones.length > 0 ? (
                     <label className="col-span-2 rounded-lg border border-teal-200 bg-white px-2 py-2">
                       <div className="mb-1 flex items-center justify-between gap-2">
                         <span className="font-semibold text-slate-700">Opacité du fond</span>
@@ -1871,9 +1906,9 @@ export function LegendPanel({
                       </div>
                       <input
                         type="range"
-                        min="1"
+                        min={selectedLines.length > 0 ? "1" : "0.25"}
                         max="18"
-                        step="0.5"
+                        step={selectedLines.length > 0 ? "0.5" : "0.25"}
                         value={getFeatureWeight((selectedLines[0] ?? selectedZones[0]) as LegendFeature)}
                         onPointerDown={() => commitFeaturesHistory()}
                         onChange={(event) => {
@@ -2785,15 +2820,10 @@ export function LegendPanel({
                           setMarkerLibrarySearch("");
 
                           const currentSymbol = getFeatureMarkerSymbol(feature);
-                          const selectedOption =
-                            currentSymbol.type === "builtin"
-                              ? DROMAP_BUILTIN_MARKER_SYMBOLS.find(
-                                  (option) => option.id === currentSymbol.id,
-                                )
-                              : undefined;
-
                           setMarkerLibraryCategoryId(
-                            selectedOption?.categoryId ?? "basic",
+                            currentSymbol.type === "builtin"
+                              ? getBuiltinMarkerCategoryId(currentSymbol.id) ?? "basic"
+                              : "basic",
                           );
                         }}
                         className={[
@@ -2887,8 +2917,9 @@ export function LegendPanel({
 
                           <div className="flex items-center justify-between text-[10px] text-slate-500">
                             <span>
-                              {markerLibraryOptions.length} résultat
-                              {markerLibraryOptions.length > 1 ? "s" : ""}
+                              {markerCatalog
+                                ? markerLibraryOptions.length + " résultat" + (markerLibraryOptions.length > 1 ? "s" : "")
+                                : "Chargement des symboles…"}
                             </span>
                             <span className="font-medium text-slate-600">
                               {normalizedMarkerLibrarySearch
@@ -3556,9 +3587,9 @@ export function LegendPanel({
                       </div>
                       <input
                         type="range"
-                        min="1"
+                        min={isZone(feature) ? "0.25" : "1"}
                         max="12"
-                        step="0.5"
+                        step={isZone(feature) ? "0.25" : "0.5"}
                         value={getFeatureWeight(feature)}
                         onPointerDown={() => {
                           commitFeaturesHistory();
@@ -3717,6 +3748,32 @@ export function LegendPanel({
                         <option value="show">Toujours afficher</option>
                         <option value="hide">Toujours masquer</option>
                       </select>
+                    </label>
+                  ) : null}
+
+                  {!isText(feature) ? (
+                    <label className="col-span-2 rounded-md border border-sky-200 bg-white px-2 py-2 text-[11px] text-sky-900">
+                      <span className="mb-1 flex items-center justify-between gap-2">
+                        <span className="font-semibold">Taille de cette étiquette</span>
+                        <span>{Math.round(getFeatureMapLabelScale(feature) * 100)} %</span>
+                      </span>
+                      <input
+                        type="range"
+                        min={MIN_FEATURE_MAP_LABEL_SCALE}
+                        max={MAX_FEATURE_MAP_LABEL_SCALE}
+                        step="0.05"
+                        value={getFeatureMapLabelScale(feature)}
+                        onPointerDown={() => commitFeaturesHistory()}
+                        onChange={(event) => {
+                          const mapLabelScale = Number(event.currentTarget.value);
+                          updateFeature(feature.id, {
+                            ...feature,
+                            properties: { ...feature.properties, mapLabelScale },
+                          });
+                        }}
+                        className="w-full"
+                        aria-label="Taille de cette étiquette"
+                      />
                     </label>
                   ) : null}
 

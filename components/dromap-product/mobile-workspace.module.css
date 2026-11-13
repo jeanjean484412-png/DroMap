@@ -215,21 +215,6 @@
     padding: 0;
   }
 
-  .editor :global([data-dromap-place-search="closed"]) button {
-    min-width: 44px;
-    min-height: 44px;
-    padding: 0.5rem;
-  }
-
-  .editor :global([data-dromap-place-search="closed"]) button > span {
-    display: none;
-  }
-
-  .editor :global([data-dromap-place-search="open"]) > div {
-    max-height: calc(100dvh - 90px);
-    overflow-y: auto;
-  }
-
   .editor :global([data-dromap-basemap-control="true"]) {
     top: 0.5rem;
     right: 0.5rem;
@@ -326,11 +311,6 @@
     margin: 0;
     font-size: 0;
     box-shadow: 0 2px 8px #0f172a1a;
-  }
-
-  .inspector[data-collapsed="true"] aside > button::after {
-    content: "◉";
-    font-size: 20px;
   }
 
   .inspector[data-collapsed="true"] aside > div {

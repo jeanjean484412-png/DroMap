@@ -23,6 +23,7 @@ const WORKSPACE_RECT_STYLE: L.PathOptions = {
   interactive: false,
   bubblingMouseEvents: false,
   className: "dromap-workspace-rectangle",
+  pane: "dromapWorkspacePane",
 };
 
 type DroMapWorkspaceRectangle = L.Rectangle & {
@@ -63,16 +64,13 @@ export function replaceWorkspaceRectangle(
   layer: L.Rectangle,
   clampBounds?: WorkspaceClampBounds | null,
 ): WorkspaceBounds {
+  const bounds = boundsFromRectangle(layer, clampBounds);
   if (workspaceRectangleLayer && map.hasLayer(workspaceRectangleLayer)) {
     map.removeLayer(workspaceRectangleLayer);
   }
-
-  const configuredLayer = configureWorkspaceLayer(layer);
-  workspaceRectangleLayer = configuredLayer;
-
-  const bounds = boundsFromRectangle(configuredLayer, clampBounds);
-  configuredLayer.setBounds(toLatLngBounds(bounds));
-
+  if (map.hasLayer(layer)) map.removeLayer(layer);
+  workspaceRectangleLayer = null;
+  ensureWorkspaceRectangleOnMap(map, bounds);
   return bounds;
 }
 
@@ -87,6 +85,9 @@ export function ensureWorkspaceRectangleOnMap(
   map: L.Map,
   bounds: WorkspaceBounds,
 ): void {
+  const pane = map.getPane("dromapWorkspacePane") ?? map.createPane("dromapWorkspacePane");
+  pane.style.zIndex = "22000";
+  pane.style.pointerEvents = "none";
   const latLngBounds = toLatLngBounds(bounds);
 
   if (workspaceRectangleLayer && map.hasLayer(workspaceRectangleLayer)) {

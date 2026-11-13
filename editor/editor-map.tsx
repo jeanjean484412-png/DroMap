@@ -58,7 +58,7 @@ function SelectedFeatureEditHandles() {
     (state) => state.selectedFeatureIds,
   );
   const multiSelectionEnabled = useEditorSelectionStore(
-    (state) => state.multiSelectionEnabled,
+    (state) => state.multiSelectionEnabled || state.multiSelectionHeld,
   );
   const effectiveSelectedFeatureIds =
     multiSelectionEnabled && selectedFeatureIds.length > 0

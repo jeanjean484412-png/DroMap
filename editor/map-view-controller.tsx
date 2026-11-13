@@ -11,6 +11,7 @@ import { useEditorModeStore } from "@/stores/editor-mode";
 import { useEditorToolStore } from "@/stores/editor-tool";
 import { useEditorSelectionStore } from "@/stores/editor-selection";
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
+import { usePlaceSearchMapNavigation } from "./use-place-search-map-navigation";
 import {
   DROMAP_WORLD_BOUNDS,
   getBasemapViewportBounds,
@@ -505,6 +506,7 @@ function constrainViewToWorkspaceAndWorld(
 
 export default function MapViewController() {
   const map = useMap();
+  usePlaceSearchMapNavigation(map, PANNABLE_WORLD_BOUNDS, suspendWorkspaceConstraint);
   const currentMode = useEditorModeStore((state) => state.currentMode);
   const basemapId = useEditorBasemapStore((state) => state.basemapId);
   const basemapFitRequestId = useEditorBasemapStore(

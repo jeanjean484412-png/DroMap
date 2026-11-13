@@ -6,6 +6,7 @@ import { useMap } from "react-leaflet";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
 import { getFeatureVisualScale } from "@/lib/dromap/feature-visual-scale";
+import { DROMAP_FEATURE_BODY_DRAG_PREVIEW_EVENT, type FeatureBodyDragPreviewDetail } from "@/lib/dromap/drag-preview";
 import { useEditorExportStore } from "@/stores/editor-export";
 import { useEditorFeaturesStore } from "@/stores/editor-features";
 import {
@@ -65,7 +66,9 @@ export function SelectedMarkerRotationHandle({
   const map = useMap();
   const [, setViewportVersion] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [previewOffset, setPreviewOffset] = useState({ lat: 0, lng: 0 });
   const cleanupDragRef = useRef<(() => void) | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
   const wasMapDraggingEnabledRef = useRef(false);
 
   const isExportPanelOpen = useEditorExportStore(
@@ -100,6 +103,51 @@ export function SelectedMarkerRotationHandle({
   }, [map]);
 
   useEffect(() => {
+    const handlePreview = (event: Event) => {
+      const detail = (event as CustomEvent<FeatureBodyDragPreviewDetail>).detail;
+      if (detail?.featureId !== effectiveFeatureId) return;
+
+      setPreviewOffset((offset) => ({
+        lat: offset.lat + detail.latDelta,
+        lng: offset.lng + detail.lngDelta,
+      }));
+
+      const overlay = overlayRef.current;
+      if (!overlay) return;
+      const { containerDeltaX, containerDeltaY } = detail;
+      if (Number.isFinite(containerDeltaX) && Number.isFinite(containerDeltaY)) {
+        overlay.style.left = `${Number.parseFloat(overlay.style.left) + containerDeltaX!}px`;
+        overlay.style.top = `${Number.parseFloat(overlay.style.top) + containerDeltaY!}px`;
+        return;
+      }
+
+      const sourceLayer = detail.sourceLayer as { getLatLng?: () => L.LatLng };
+      const sourceLatLng = sourceLayer?.getLatLng?.();
+      if (sourceLatLng) {
+        const point = map.latLngToContainerPoint(sourceLatLng);
+        overlay.style.left = `${point.x}px`;
+        overlay.style.top = `${point.y}px`;
+      }
+    };
+
+    const finishPreview = (event: Event) => {
+      const detail = (event as CustomEvent<{ featureId?: string | null }>).detail;
+      if (detail?.featureId !== effectiveFeatureId) return;
+      setPreviewOffset({ lat: 0, lng: 0 });
+      setViewportVersion((value) => value + 1);
+    };
+
+    window.addEventListener(DROMAP_FEATURE_BODY_DRAG_PREVIEW_EVENT, handlePreview);
+    window.addEventListener("dromap:feature-drag-start", finishPreview);
+    window.addEventListener("dromap:feature-drag-end", finishPreview);
+    return () => {
+      window.removeEventListener(DROMAP_FEATURE_BODY_DRAG_PREVIEW_EVENT, handlePreview);
+      window.removeEventListener("dromap:feature-drag-start", finishPreview);
+      window.removeEventListener("dromap:feature-drag-end", finishPreview);
+    };
+  }, [effectiveFeatureId, map]);
+
+  useEffect(() => {
     return () => {
       cleanupDragRef.current?.();
       if (wasMapDraggingEnabledRef.current && !map.dragging.enabled()) {
@@ -121,7 +169,10 @@ export function SelectedMarkerRotationHandle({
   }
 
   const [lng, lat] = selectedFeature.geometry.coordinates;
-  const center = map.latLngToContainerPoint([lat, lng]);
+  const center = map.latLngToContainerPoint([
+    lat + previewOffset.lat,
+    lng + previewOffset.lng,
+  ]);
   const fallbackReferenceZoom =
     typeof workspaceBasemapZoom === "number" &&
     Number.isFinite(workspaceBasemapZoom)
@@ -225,6 +276,7 @@ export function SelectedMarkerRotationHandle({
 
   return createPortal(
     <div
+      ref={overlayRef}
       style={{
         position: "absolute",
         left: `${center.x}px`,

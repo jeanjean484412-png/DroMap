@@ -1100,14 +1100,17 @@ const STATIC_BASEMAPS: DromapBasemapConfig[] = [
 
 function createContinentBasemap(
   continent: ContinentBasemapDefinition,
+  lightweight = false,
 ): DromapBasemapConfig {
   const unwrapRussiaInEurope = continent.id === "europe";
 
   return {
-    id: `continent-${continent.id}`,
+    id: `continent-${continent.id}${lightweight ? "-basic" : ""}`,
     kind: "solid",
-    label: continent.wholeLabel,
-    description: `Fond blanc avec uniquement ${continent.label.toLowerCase()} et les frontières des pays.`,
+    label: lightweight ? "Europe · Frontières légères" : continent.wholeLabel,
+    description: lightweight
+      ? "Fond blanc de l’Europe avec côtes et frontières nationales simplifiées."
+      : `Fond blanc avec uniquement ${continent.label.toLowerCase()} et les frontières des pays.`,
     background: "#ffffff",
     exportBackground: "#ffffff",
     worldBackgroundBounds: unwrapRussiaInEurope
@@ -1118,13 +1121,16 @@ function createContinentBasemap(
       layers: [
         {
           kind: "admin0-countries",
-          dataUrl: NATURAL_EARTH_50M_ADMIN0_COUNTRIES_URL,
+          dataUrl: lightweight
+            ? NATURAL_EARTH_110M_ADMIN0_COUNTRIES_URL
+            : NATURAL_EARTH_50M_ADMIN0_COUNTRIES_URL,
           continent: continent.naturalEarthContinent,
           strokeColor: "#111827",
           strokeOpacity: 0.98,
           strokeWeight: 1.05,
           boundaryRenderMode: "unique",
           hideDisputed: true,
+          ...(lightweight ? { suppressInteriorRings: true, minimumPolygonPartSpan: 0.08 } : {}),
           antimeridianMode: unwrapRussiaInEurope ? "unwrap-east" : undefined,
           antimeridianWestThreshold: -120,
           hideAntimeridianSeam: unwrapRussiaInEurope,
@@ -1258,7 +1264,11 @@ function getGeneratedCountryBasemaps() {
 }
 
 function getGeneratedContinentBasemaps() {
-  return CONTINENTS.map(createContinentBasemap);
+  return CONTINENTS.flatMap((continent) =>
+    continent.id === "europe"
+      ? [createContinentBasemap(continent), createContinentBasemap(continent, true)]
+      : [createContinentBasemap(continent)],
+  );
 }
 
 function getCountryMenuItem(
@@ -1324,6 +1334,10 @@ function getContinentMenuItems(
       label: continent.wholeLabel,
     },
   ];
+
+  if (continent.id === "europe") {
+    items.push({ type: "basemap", basemapId: "continent-europe-basic" });
+  }
 
   if (continent.countries.length > 0) {
     items.push({
