@@ -2307,11 +2307,19 @@ export default function ModeToolbar({
                   </span>
                 </label>
 
-                <div className="space-y-1 rounded-xl border border-neutral-200 bg-white p-2">
-                  <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                    Thèmes
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
+                <details className="group rounded-xl border border-neutral-200 bg-white">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-600 marker:content-none">
+                    <span>Thèmes</span>
+                    <span className="flex items-center gap-2">
+                      <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] tabular-nums text-neutral-500">
+                        {DROMAP_MARKER_SYMBOL_CATEGORIES.length}
+                      </span>
+                      <svg className="h-3.5 w-3.5 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                        <path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                  </summary>
+                  <div className="flex flex-wrap gap-1.5 border-t border-neutral-100 p-2">
                     {DROMAP_MARKER_SYMBOL_CATEGORIES.map((category) => (
                       <button
                         key={category.id}
@@ -2323,7 +2331,7 @@ export default function ModeToolbar({
                       </button>
                     ))}
                   </div>
-                </div>
+                </details>
 
                 <div className="text-[11px] text-neutral-500">
                   {!markerCatalog ? (

@@ -23,10 +23,10 @@ type NavigationIconKind = (typeof LINKS)[number]["icon"] | "contact";
 function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
   if (kind === "public") {
     return (
-      <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <svg className={styles.globe} aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="9" />
         <path d="M3.5 9h17M3.5 15h17" />
-        <path className={styles.meridian} d="M12 3c2.2 2.4 3.4 5.4 3.4 9S14.2 18.6 12 21c-2.2-2.4-3.4-5.4-3.4-9S9.8 5.4 12 3Z" />
+        <path d="M12 3c2.2 2.4 3.4 5.4 3.4 9S14.2 18.6 12 21c-2.2-2.4-3.4-5.4-3.4-9S9.8 5.4 12 3Z" />
       </svg>
     );
   }
@@ -63,8 +63,10 @@ function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
   if (kind === "contact") {
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4 5h16v14H4z" />
-        <path className={styles.flap} d="m4 7 8 6 8-6" />
+        <path className={styles.letter} d="M7 12V8h10v4M9 10h6" />
+        <path d="M3 8h18v12H3z" />
+        <path d="m3 20 7-6m11 6-7-6" />
+        <path className={styles.flap} d="M3 8 12 15 21 8Z" fill="currentColor" fillOpacity=".18" />
       </svg>
     );
   }
@@ -94,9 +96,9 @@ function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
 
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect className={styles.tile} x="3" y="3" width="7" height="7" rx="1" />
+      <rect className={styles.tilePrimary} x="3" y="3" width="7" height="7" rx="1" />
       <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect className={styles.tileSecondary} x="3" y="14" width="7" height="7" rx="1" />
       <rect x="14" y="14" width="7" height="7" rx="1" />
     </svg>
   );

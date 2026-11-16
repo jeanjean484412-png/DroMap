@@ -2893,27 +2893,40 @@ export function LegendPanel({
                             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                           />
 
-                          <div className="flex gap-1.5 overflow-x-auto pb-1">
-                            {DROMAP_MARKER_SYMBOL_CATEGORIES.map((category) => (
-                              <button
-                                key={category.id}
-                                type="button"
-                                onClick={() => {
-                                  setMarkerLibraryCategoryId(category.id);
-                                  setMarkerLibrarySearch("");
-                                }}
-                                className={[
-                                  "shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold transition",
-                                  markerLibraryCategoryId === category.id &&
-                                  !normalizedMarkerLibrarySearch
-                                    ? "border-blue-500 bg-blue-600 text-white"
-                                    : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700",
-                                ].join(" ")}
-                              >
-                                {category.label}
-                              </button>
-                            ))}
-                          </div>
+                          <details className="group rounded-lg border border-slate-200 bg-white">
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-600 marker:content-none">
+                              <span>Thèmes</span>
+                              <span className="flex items-center gap-2">
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 tabular-nums text-slate-500">
+                                  {DROMAP_MARKER_SYMBOL_CATEGORIES.length}
+                                </span>
+                                <svg className="h-3.5 w-3.5 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                                  <path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </span>
+                            </summary>
+                            <div className="flex flex-wrap gap-1.5 border-t border-slate-100 p-2">
+                              {DROMAP_MARKER_SYMBOL_CATEGORIES.map((category) => (
+                                <button
+                                  key={category.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setMarkerLibraryCategoryId(category.id);
+                                    setMarkerLibrarySearch("");
+                                  }}
+                                  className={[
+                                    "rounded-full border px-2 py-1 text-[10px] font-semibold transition",
+                                    markerLibraryCategoryId === category.id &&
+                                    !normalizedMarkerLibrarySearch
+                                      ? "border-blue-500 bg-blue-600 text-white"
+                                      : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700",
+                                  ].join(" ")}
+                                >
+                                  {category.label}
+                                </button>
+                              ))}
+                            </div>
+                          </details>
 
                           <div className="flex items-center justify-between text-[10px] text-slate-500">
                             <span>
