@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useDromapProductStore } from "@/stores/dromap-product";
 import { DromapContactDialog } from "./contact-dialog";
 import { DromapLogoMark } from "./dromap-brand";
+import styles from "./product-navigation.module.css";
 
 const LINKS = [
   { href: "/dashboard", label: "Mes projets", icon: "projects" },
@@ -25,7 +26,7 @@ function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
       <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="9" />
         <path d="M3.5 9h17M3.5 15h17" />
-        <path d="M12 3c2.2 2.4 3.4 5.4 3.4 9S14.2 18.6 12 21c-2.2-2.4-3.4-5.4-3.4-9S9.8 5.4 12 3Z" />
+        <path className={styles.meridian} d="M12 3c2.2 2.4 3.4 5.4 3.4 9S14.2 18.6 12 21c-2.2-2.4-3.4-5.4-3.4-9S9.8 5.4 12 3Z" />
       </svg>
     );
   }
@@ -33,8 +34,7 @@ function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
   if (kind === "trash") {
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4 7h16" />
-        <path d="M9 7V4h6v3" />
+        <path className={styles.lid} d="M4 7h16M9 7V4h6v3" />
         <path d="m6 7 1 13h10l1-13" />
         <path d="M10 11v5M14 11v5" />
       </svg>
@@ -44,7 +44,7 @@ function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
   if (kind === "account") {
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="8" r="4" />
+        <circle className={styles.head} cx="12" cy="8" r="4" />
         <path d="M4.5 21a7.5 7.5 0 0 1 15 0" />
       </svg>
     );
@@ -53,10 +53,9 @@ function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
   if (kind === "settings") {
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4 7h10M18 7h2M4 17h2M10 17h10" />
-        <path d="M14 4v6M8 14v6" />
-        <circle cx="14" cy="7" r="2" />
-        <circle cx="8" cy="17" r="2" />
+        <path d="M4 7h16M4 17h16" />
+        <circle className={styles.sliderTop} cx="14" cy="7" r="2" fill="currentColor" />
+        <circle className={styles.sliderBottom} cx="8" cy="17" r="2" fill="currentColor" />
       </svg>
     );
   }
@@ -65,7 +64,7 @@ function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 5h16v14H4z" />
-        <path d="m4 7 8 6 8-6" />
+        <path className={styles.flap} d="m4 7 8 6 8-6" />
       </svg>
     );
   }
@@ -73,9 +72,10 @@ function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
   if (kind === "pricing") {
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="5" width="18" height="14" rx="2" />
-        <path d="M3 9h18" />
-        <path d="M7 15h4" />
+        <g className={styles.card}>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <path d="M3 9h18M7 15h4" />
+        </g>
       </svg>
     );
   }
@@ -84,15 +84,17 @@ function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="9" />
-        <path d="M9.8 9a2.3 2.3 0 1 1 3.8 1.75c-.9.7-1.6 1.15-1.6 2.25" />
-        <path d="M12 17h.01" />
+        <g className={styles.question}>
+          <path d="M9.8 9a2.3 2.3 0 1 1 3.8 1.75c-.9.7-1.6 1.15-1.6 2.25" />
+          <path d="M12 17h.01" />
+        </g>
       </svg>
     );
   }
 
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect className={styles.tile} x="3" y="3" width="7" height="7" rx="1" />
       <rect x="14" y="3" width="7" height="7" rx="1" />
       <rect x="3" y="14" width="7" height="7" rx="1" />
       <rect x="14" y="14" width="7" height="7" rx="1" />
@@ -118,7 +120,7 @@ function NavigationLink({
     <Link
       href={href}
       onClick={onNavigate}
-      className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${active ? "bg-white text-slate-950" : "text-slate-300 hover:bg-white/10 hover:text-white"}`}
+      className={`${styles.item} flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${active ? "bg-white text-slate-950" : "text-slate-300 hover:bg-white/10 hover:text-white"}`}
     >
       <span className="grid h-7 w-7 place-items-center rounded-lg bg-white/10" aria-hidden="true">
         <NavigationIcon kind={icon} />
@@ -217,7 +219,7 @@ export function DromapProductNavigation() {
               setMobileOpen(false);
               setContactOpen(true);
             }}
-            className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition ${contactOpen ? "bg-white text-slate-950" : "text-slate-300 hover:bg-white/10 hover:text-white"}`}
+            className={`${styles.item} flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition ${contactOpen ? "bg-white text-slate-950" : "text-slate-300 hover:bg-white/10 hover:text-white"}`}
           >
             <span className="grid h-7 w-7 place-items-center rounded-lg bg-white/10" aria-hidden="true">
               <NavigationIcon kind="contact" />

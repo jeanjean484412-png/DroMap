@@ -198,7 +198,10 @@ function enableConstrainedEditNavigation(
   map.doubleClickZoom.disable();
   map.boxZoom.disable();
   map.keyboard.disable();
-  map.touchZoom.disable();
+  // Leaflet intercepte alors le pincement sur la carte au lieu de laisser le
+  // navigateur agrandir toute la page. Les bornes de zoom restent appliquées
+  // par refreshZoomConstraints et le gestionnaire de zoomend.
+  map.touchZoom.enable();
 }
 
 function getLockedMinZoom(

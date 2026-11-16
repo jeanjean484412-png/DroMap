@@ -222,45 +222,27 @@
 
   .editor :global([data-dromap-basemap-control="true"]) > button,
   .editor :global([data-dromap-layers-trigger="true"]) {
-    min-width: 0;
-    width: 108px;
-    height: 44px;
+    min-width: 108px;
+    justify-content: flex-start;
     padding: 0.375rem 0.5rem;
-    border-width: 1px;
-    border-radius: 0.75rem;
   }
 
-  .editor :global([data-dromap-layers-trigger="true"]) {
+  .editor :global([data-dromap-layers-trigger="true"]),
+  .editor :global([data-dromap-layers-panel="floating"]) {
     top: 3.75rem;
     right: 0.5rem;
   }
 
-  .editor :global([data-dromap-basemap-control="true"]) > button > span:first-child,
-  .editor :global([data-dromap-layers-trigger="true"]) > span:first-child {
-    gap: 0.25rem;
+  .editor :global([data-dromap-basemap-control="true"]) > button > span:first-child > span,
+  .editor :global([data-dromap-layers-trigger="true"]) > span:first-child > span {
+    width: 1.5rem;
+    height: 1.5rem;
   }
 
-  .editor :global([data-dromap-basemap-control="true"]) > button > span:first-child > span:first-child,
-  .editor :global([data-dromap-layers-trigger="true"]) > span:first-child > span:first-child {
-    width: 24px;
-    height: 28px;
-    background: transparent;
-    color: #0f766e;
-    box-shadow: none;
-  }
-
-  .editor :global([data-dromap-basemap-control="true"]) > button > span:first-child > span:first-child > span,
-  .editor :global([data-dromap-basemap-control="true"]) > button > span:last-child,
-  .editor :global([data-dromap-layers-trigger="true"]) > span:last-child,
-  .editor :global([data-dromap-basemap-control="true"]) > button > span:first-child > span:last-child > span:last-child,
-  .editor :global([data-dromap-layers-trigger="true"]) > span:first-child > span:last-child > span:last-child {
-    display: none;
-  }
-
-  .editor :global([data-dromap-basemap-control="true"]) > button > span:first-child > span:last-child > span:first-child,
-  .editor :global([data-dromap-layers-trigger="true"]) > span:first-child > span:last-child > span:first-child {
-    font-size: 10px;
-    letter-spacing: 0;
+  .editor :global([data-dromap-basemap-control="true"]) > button > span:nth-child(2),
+  .editor :global([data-dromap-layers-trigger="true"]) > span:nth-child(2) {
+    margin-left: 0.25rem;
+    font-size: 11px;
   }
 
   .editor :global([data-dromap-basemap-control="true"]) > div,

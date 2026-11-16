@@ -361,13 +361,13 @@ const TOUR_STEPS: TourStep[] = [
         label: "Fond de carte",
         explanation:
           "Ouvre le catalogue des fonds. Le changement de fond conserve la zone, le centre et le zoom lorsque la zone existe déjà.",
-        target: { text: "Fond de carte" },
+        target: { selector: '[data-dromap-basemap-control="true"] > button' },
       },
       {
         label: "Calques",
         explanation:
           "Ouvre la fenêtre des calques pour gérer le calque actif, l’ordre, la visibilité, l’opacité, le verrouillage et les bibliothèques.",
-        target: { text: "Calques" },
+        target: { selector: '[data-dromap-layers-trigger="true"]' },
       },
       {
         label: "Assistant IA",

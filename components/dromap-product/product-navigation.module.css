@@ -1,0 +1,56 @@
+@media (prefers-reduced-motion: no-preference) {
+  .item :is(.tile, .meridian, .lid, .question, .flap, .card, .head, .sliderTop, .sliderBottom) {
+    transform-box: fill-box;
+    transform-origin: center;
+    transition: transform 180ms ease-out;
+  }
+
+  .item .lid {
+    transform-origin: left bottom;
+  }
+
+  .item .flap {
+    transform-origin: center top;
+  }
+
+  .item:is(:hover, :focus-visible) .tile {
+    transform: translate(-1px, -1px) rotate(-10deg);
+  }
+
+  .item:is(:hover, :focus-visible) .meridian {
+    transform: translateX(2px) scaleX(0.55);
+  }
+
+  .item:is(:hover, :focus-visible) .lid {
+    transform: rotate(-16deg);
+  }
+
+  .item:is(:hover, :focus-visible) .question {
+    transform: rotate(-12deg) scale(1.15);
+  }
+
+  .item:is(:hover, :focus-visible) .flap {
+    transform: scaleY(-0.55);
+  }
+
+  .item:is(:hover, :focus-visible) .card {
+    transform: translateY(-1px) rotate(-10deg);
+  }
+
+  .item:is(:hover, :focus-visible) .head {
+    transform: translateY(-1.5px);
+  }
+
+  .item:is(:hover, :focus-visible) .sliderTop {
+    transform: translateX(-4px);
+  }
+
+  .item:is(:hover, :focus-visible) .sliderBottom {
+    transform: translateX(4px);
+  }
+
+  :global(.dromap-reduce-motion) .item:is(:hover, :focus-visible) svg * {
+    transform: none;
+    transition: none;
+  }
+}

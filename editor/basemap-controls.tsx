@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useEditorBasemapStore } from "@/stores/editor-basemap";
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
+import { MapDockButton } from "./map-dock-button";
 import {
   bringFloatingPanelToFront,
   getInitialFloatingPanelZIndex,
@@ -709,49 +710,36 @@ export function BasemapControls() {
       onWheel={(event) => event.stopPropagation()}
     >
       {!isOpen ? (
-        <button
-          type="button"
+        <MapDockButton
           onClick={openBasemapMenu}
-          aria-label="Choisir le fond de carte"
           aria-expanded={isOpen}
-          className="group flex min-w-56 cursor-pointer items-center justify-between gap-3 rounded-2xl border-2 border-emerald-200 bg-white/95 px-3 py-2.5 text-left text-slate-900 shadow-lg backdrop-blur transition hover:border-emerald-400 hover:bg-white focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-100"
-        >
-          <span className="flex min-w-0 items-center gap-2.5">
-            <span className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-emerald-600 text-white shadow-sm transition group-hover:bg-emerald-500">
-              {!selectedBasemapHidesPreview ? (
-                <span className="absolute inset-0 opacity-45">
-                  <BasemapPreviewThumbnail basemapId={basemapId} compact />
-                </span>
-              ) : null}
+          aria-label="Fond de carte"
+          aria-description={selectedBasemap.label}
+          label="Fond de carte"
+          className="border-emerald-200 text-emerald-800 hover:border-emerald-400"
+          icon={
+            <span className="grid size-7 place-items-center rounded-lg bg-emerald-600 text-white">
               <svg
                 aria-hidden="true"
-                width="21"
-                height="21"
+                width="18"
+                height="18"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                className="relative drop-shadow"
               >
                 <path d="m3 6 5-2 8 2 5-2v14l-5 2-8-2-5 2V6Z" />
                 <path d="M8 4v14M16 6v14" />
               </svg>
             </span>
-            <span className="min-w-0">
-              <span className="block text-[11px] font-black uppercase tracking-wide text-emerald-700">
-                Fond de carte
-              </span>
-              <span className="block max-w-36 truncate font-bold text-slate-950">
-                {selectedBasemap.label}
-              </span>
-            </span>
+          }
+        >
+          <span className="inline-block max-w-40 truncate align-middle text-xs text-slate-600">
+            {selectedBasemap.label}
           </span>
-          <span className="shrink-0 rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-black text-emerald-700 transition group-hover:bg-emerald-100">
-            Choisir ▾
-          </span>
-        </button>
+        </MapDockButton>
       ) : (
         <div
           ref={menuScrollRef}

@@ -499,6 +499,7 @@ export default function EditorMap({ onPresentationReady }: EditorMapProps = {}) 
         wheelPxPerZoomLevel={220}
         zoomControl={false}
         scrollWheelZoom={true}
+        touchZoom={true}
         maxBounds={CLASSIC_DOUBLE_WORLD_PANNABLE_BOUNDS}
         maxBoundsViscosity={0.85}
         worldCopyJump={false}

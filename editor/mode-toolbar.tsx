@@ -1595,6 +1595,16 @@ export default function ModeToolbar({
   const markerSymbolGroups = markerSearchResult.groups;
   const markerSymbolCount = markerSearchResult.count;
 
+  const lineToolActive =
+    activeTool === "line" ||
+    activeTool === "curved-line" ||
+    activeTool === "freehand" ||
+    activeTool === "trace-line";
+  const zoneToolActive =
+    activeTool === "zone" ||
+    activeTool === "freehand-zone" ||
+    activeTool === "fill-zone" ||
+    activeTool === "shape";
   const lineSettingsOpen =
     openSettingsTool === "line" ||
     openSettingsTool === "curved-line" ||
@@ -1752,25 +1762,23 @@ export default function ModeToolbar({
     updateZoneStyle({ zoneFillEnabled: nextValue });
   }
 
-  function togglePlacementTool(tool: EditorActiveTool) {
-    setImportsOpen(false);
-
-    if (activeTool === tool) {
+  function togglePlacementTool(isActive: boolean, openSettings: () => void) {
+    if (isActive) {
+      setImportsOpen(false);
       resetActiveTool();
       setOpenSettingsTool(null);
-      return false;
+      return;
     }
 
-    setActiveTool(tool);
-    return true;
+    openSettings();
   }
 
-  function openMarkerSymbolLibrary() {
+  function openMarkerSymbolLibrary(toggle = true) {
     void loadMarkerSymbolCatalog().catch(() => undefined);
     setActiveTool("marker");
     bringSettingsPanelToFront();
     setOpenSettingsTool((current) => {
-      if (current === "marker" && markerSettingsStep === "symbols") {
+      if (toggle && current === "marker" && markerSettingsStep === "symbols") {
         return null;
       }
 
@@ -1804,7 +1812,7 @@ export default function ModeToolbar({
     }, 0);
   }
 
-  function openLineSettings() {
+  function openLineSettings(toggle = true) {
     const nextLineTool =
       lineToolChoice === "trace-line" && !canUseTraceToolOnCurrentBasemap
         ? "line"
@@ -1817,16 +1825,16 @@ export default function ModeToolbar({
     setActiveTool(nextLineTool);
     bringSettingsPanelToFront();
     setOpenSettingsTool((current) =>
-      current === "line" ||
-      current === "curved-line" ||
-    current === "freehand" ||
-      current === "trace-line"
+      toggle && (current === "line" ||
+        current === "curved-line" ||
+        current === "freehand" ||
+        current === "trace-line")
         ? null
         : nextLineTool,
     );
   }
 
-  function openZoneSettings() {
+  function openZoneSettings(toggle = true) {
     const nextZoneTool =
       zoneToolChoice === "fill-zone" && !canUseFillToolOnCurrentBasemap
         ? "zone"
@@ -1839,13 +1847,19 @@ export default function ModeToolbar({
     setActiveTool(nextZoneTool);
     bringSettingsPanelToFront();
     setOpenSettingsTool((current) =>
-      current === "zone" ||
-      current === "freehand-zone" ||
-      current === "fill-zone" ||
-      current === "shape"
+      toggle && (current === "zone" ||
+        current === "freehand-zone" ||
+        current === "fill-zone" ||
+        current === "shape")
         ? null
         : nextZoneTool,
     );
+  }
+
+  function openTextSettings(toggle = true) {
+    setActiveTool("text");
+    bringSettingsPanelToFront();
+    setOpenSettingsTool((current) => toggle && current === "text" ? null : "text");
   }
 
   function chooseLineTool(tool: LineToolChoice) {
@@ -2016,79 +2030,35 @@ export default function ModeToolbar({
                   markerFilled={markerFilledEnabled}
                 />
               }
-              onClick={() => {
-                const activated = togglePlacementTool("marker");
-
-                if (activated && openSettingsTool !== "marker") {
-                  setOpenSettingsTool(null);
-                }
-              }}
-              onSymbolsClick={openMarkerSymbolLibrary}
+              onClick={() =>
+                togglePlacementTool(activeTool === "marker", () => openMarkerSymbolLibrary(false))
+              }
+              onSymbolsClick={() => openMarkerSymbolLibrary()}
               onStyleClick={openMarkerStyleSettings}
             />
 
             <ToolButtonRow
               label={getActiveLineToolLabel(lineToolChoice)}
               displayLabel="Traits"
-              active={
-                activeTool === "line" ||
-                activeTool === "curved-line" ||
-    activeTool === "freehand" ||
-                activeTool === "trace-line"
-              }
+              active={lineToolActive}
               settingsOpen={lineSettingsOpen}
               hasSettings
               icon={getLineToolIcon(lineToolChoice)}
               settingsLabel="Choisir le type de trait et régler son style"
-              onClick={() => {
-                const toolToActivate =
-                  lineToolChoice === "trace-line" && !canUseTraceToolOnCurrentBasemap
-                    ? "line"
-                    : lineToolChoice;
-
-                if (toolToActivate !== lineToolChoice) {
-                  setLineToolChoice(toolToActivate);
-                }
-
-                const activated = togglePlacementTool(toolToActivate);
-
-                if (activated && !lineSettingsOpen) {
-                  setOpenSettingsTool(null);
-                }
-              }}
-              onSettingsClick={openLineSettings}
+              onClick={() => togglePlacementTool(lineToolActive, () => openLineSettings(false))}
+              onSettingsClick={() => openLineSettings()}
             />
 
             <ToolButtonRow
               label={getActiveToolLabel(zoneToolChoice, zoneStyle.zoneShapeKind)}
               displayLabel="Zones"
-              active={
-                activeTool === "zone" ||
-                activeTool === "freehand-zone" ||
-                activeTool === "fill-zone" ||
-                activeTool === "shape"
-              }
+              active={zoneToolActive}
               settingsOpen={zoneSettingsOpen}
               hasSettings
               icon={getZoneToolIcon(zoneToolChoice, zoneStyle.zoneShapeKind)}
               settingsLabel="Choisir le type de zone et régler son style"
-              onClick={() => {
-                const toolToActivate =
-                  zoneToolChoice === "fill-zone" && !canUseFillToolOnCurrentBasemap
-                    ? "zone"
-                    : zoneToolChoice;
-
-                if (toolToActivate !== zoneToolChoice) {
-                  setZoneToolChoice(toolToActivate);
-                }
-
-                const activated = togglePlacementTool(toolToActivate);
-
-                if (activated && !zoneSettingsOpen) {
-                  setOpenSettingsTool(null);
-                }
-              }}
-              onSettingsClick={openZoneSettings}
+              onClick={() => togglePlacementTool(zoneToolActive, () => openZoneSettings(false))}
+              onSettingsClick={() => openZoneSettings()}
             />
 
             <ToolButtonRow
@@ -2099,20 +2069,8 @@ export default function ModeToolbar({
               hasSettings
               icon="T"
               settingsLabel="Paramètres Texte"
-              onClick={() => {
-                const activated = togglePlacementTool("text");
-
-                if (activated && openSettingsTool !== "text") {
-                  setOpenSettingsTool(null);
-                }
-              }}
-              onSettingsClick={() => {
-                setActiveTool("text");
-                bringSettingsPanelToFront();
-                setOpenSettingsTool((current) =>
-                  current === "text" ? null : "text",
-                );
-              }}
+              onClick={() => togglePlacementTool(activeTool === "text", () => openTextSettings(false))}
+              onSettingsClick={() => openTextSettings()}
             />
 
             {embedded ? (

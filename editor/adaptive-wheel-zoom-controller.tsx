@@ -489,6 +489,12 @@ export function AdaptiveWheelZoomController() {
       const gestureEvent = event as SafariGestureEvent;
 
       event.preventDefault();
+      // Sur iPhone/iPad, Leaflet reçoit déjà les deux contacts tactiles.
+      // Ne pas appliquer en plus le zoom des gestes Safari.
+      if (navigator.maxTouchPoints > 0 && map.touchZoom.enabled()) {
+        safariGestureActive = false;
+        return;
+      }
       safariGestureActive = true;
       safariGesturePreviousScale = normalizeGestureScale(gestureEvent.scale);
     };
