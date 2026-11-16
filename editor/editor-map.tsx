@@ -48,6 +48,7 @@ import { EditorGeoJsonLayersRenderer } from "./editor-only/editor-geojson-layers
 import { MapLibreBasemapLayer } from "./maplibre-basemap-layer";
 import { BasemapAttributionControl } from "./basemap-attribution-control";
 import { WorldBasemapSnapshotLayer } from "./world-basemap-snapshot-layer";
+import { CachedSatelliteTileLayer } from "./cached-satellite-tile-layer";
 
 
 function SelectedFeatureEditHandles() {
@@ -401,6 +402,9 @@ export default function EditorMap({ onPresentationReady }: EditorMapProps = {}) 
     worldSnapshotStatus === "error";
   const shouldRenderLiveBasemap =
     !shouldUseWorldSnapshot || worldSnapshotFailedForActiveBasemap;
+  const useCachedSatellite =
+    shouldRenderLiveBasemap && basemap.id === "ign-satellite" &&
+    currentMode === "edit" && workspaceBounds !== null;
 
   /**
    * « Sélectionner le monde » ne crée pas un mode d’affichage distinct : après
@@ -506,7 +510,14 @@ export default function EditorMap({ onPresentationReady }: EditorMapProps = {}) 
         className="dromap-editor-map h-full w-full"
         style={{ background: "#e5e7eb" }}
       >
-        {shouldRenderLiveBasemap && basemap.kind === "tile" ? (
+        {useCachedSatellite && basemap.kind === "tile" ? (
+          <CachedSatelliteTileLayer
+            url={screenTileUrl}
+            attribution={basemap.attribution}
+            maxZoom={basemap.maxZoom}
+            maxNativeZoom={basemap.maxNativeZoom}
+          />
+        ) : shouldRenderLiveBasemap && basemap.kind === "tile" ? (
           <TileLayer
             key={`${basemap.id}-${lockedTileNativeZoom ?? "auto"}-${screenTileUrl}-${isFullWorldWorkspace ? "single-world" : "wrapped"}`}
             attribution={basemap.attribution}

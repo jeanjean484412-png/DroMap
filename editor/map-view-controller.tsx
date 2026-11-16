@@ -228,6 +228,10 @@ function getLockedMaxZoom(
   );
   const lockedNativeZoom = Math.floor(lockedBasemapZoom);
 
+  if (basemap.id === "ign-satellite" && basemap.kind === "tile") {
+    return basemap.maxNativeZoom ?? basemap.maxZoom;
+  }
+
   if (basemap.kind === "tile" || basemap.kind === "maplibre") {
     return Math.min(
       basemap.maxZoom,
