@@ -1,6 +1,6 @@
 import { withRequestSecurity } from "@/lib/dromap/server/request-security";
 import { NextRequest, NextResponse } from "next/server";
-import { queryOverpass } from "@/lib/dromap/server/overpass";
+import { OverpassUnavailableError, queryOverpass } from "@/lib/dromap/server/overpass";
 
 import {
   getDromapRoadCategoryForHighway,
@@ -16,6 +16,7 @@ export const maxDuration = 60;
 
 const MAX_RAW_WAYS = 60_000;
 const MAX_SELECTION_FEATURES = 25_000;
+const EUROPE_OVERPASS_ENDPOINT = "https://ovp.dresel.systems/api/interpreter";
 const PARALLEL_ROAD_DISTANCE_M = {
   motorways: 90,
   main: 70,
@@ -134,17 +135,23 @@ function getAreaKm2(bounds: Bounds) {
 }
 
 function buildQuery(bounds: Bounds, highwayValues: string[]) {
-  const escapedValues = highwayValues.map((value) => value.replace(/[^a-z_]/g, ""));
-  const pattern = `^(${escapedValues.join("|")})$`;
   const bbox = [bounds.south, bounds.west, bounds.north, bounds.east].join(",");
+  const ways = highwayValues.map((value) =>
+    `way["highway"="${value}"](${bbox});`,
+  );
 
   // `body geom` conserve les identifiants de nœuds : ils permettent de distinguer
   // une vraie liaison entre deux autoroutes d'une simple bretelle de sortie.
-  return `[out:json][timeout:20];\nway["highway"~"${pattern}"](${bbox});\nout body geom qt;`;
+  return `[out:json][timeout:20];\n(\n${ways.join("\n")}\n);\nout body geom qt;`;
 }
 
-async function fetchOverpass(query: string) {
-  return await queryOverpass(query) as OverpassResponse;
+function getPreferredRoadEndpoint({ south, west, north, east }: Bounds) {
+  // Limite volontairement conservatrice. Un serveur régional pourrait
+  // répondre sans erreur avec une couverture incomplète au-delà de ses données.
+  if (south >= 41 && west >= -6 && north <= 52 && east <= 10) {
+    return EUROPE_OVERPASS_ENDPOINT;
+  }
+  return undefined;
 }
 
 function parseTags(value: unknown) {
@@ -837,7 +844,9 @@ async function handleGET(request: NextRequest) {
     // sont filtrées ensuite grâce au graphe de nœuds OSM.
     if (categories.includes("motorways")) highwayValues.push("motorway_link");
 
-    const payload = await fetchOverpass(buildQuery(bounds, [...new Set(highwayValues)]));
+    const payload = await queryOverpass(buildQuery(bounds, highwayValues), {
+      preferredEndpoint: getPreferredRoadEndpoint(bounds),
+    });
     const ways = parseWays(payload);
     const parts = buildRoadParts(ways, bounds);
     const features = buildGroupedRoads(parts);
@@ -881,6 +890,15 @@ async function handleGET(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof OverpassUnavailableError) {
+      return NextResponse.json(
+        {
+          error: "Les serveurs OpenStreetMap n’ont pas terminé la recherche. Réessaie dans un instant. Si la zone est étendue, réduis-la ou choisis moins de catégories.",
+          code: "ROAD_SOURCE_UNAVAILABLE",
+        },
+        { status: 503 },
+      );
+    }
     const isAbort = error instanceof DOMException && error.name === "AbortError";
     return NextResponse.json(
       {

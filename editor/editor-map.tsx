@@ -516,6 +516,7 @@ export default function EditorMap({ onPresentationReady }: EditorMapProps = {}) 
             attribution={basemap.attribution}
             maxZoom={basemap.maxZoom}
             maxNativeZoom={basemap.maxNativeZoom}
+            workspaceBounds={workspaceLatLngBounds}
           />
         ) : shouldRenderLiveBasemap && basemap.kind === "tile" ? (
           <TileLayer
