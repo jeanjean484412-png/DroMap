@@ -267,9 +267,20 @@ export const LIGHT_PREVIEW_EXPORT_PIXEL_RATIO = 0.45;
 export const HIGH_QUALITY_PREVIEW_EXPORT_PIXEL_RATIO = 1;
 const HIGH_EXPORT_PIXEL_RATIO = 1.8;
 const MAX_EXPORT_PIXEL_RATIO = 4;
+const MAX_SATELLITE_EXPORT_PIXEL_RATIO = 8;
+const MAX_SATELLITE_EXPORT_SIDE = 12_288;
+const MAX_SATELLITE_EXPORT_PIXELS = 72_000_000;
+const MAX_SATELLITE_EXPORT_TILES = 1200;
 const EXPORT_TILE_DETAIL_RATIO = 1;
 
 export type ExportVisualQuality = "standard" | "high" | "very-high";
+export type VisualExportProgress = { percent: number; label: string };
+type VisualExportProgressCallback = (progress: VisualExportProgress) => void;
+type VisualExportOptions = {
+  quality?: ExportVisualQuality;
+  showDromapGuestWatermark?: boolean;
+  onProgress?: VisualExportProgressCallback;
+};
 
 function getExportPixelRatioForQuality(quality: ExportVisualQuality) {
   switch (quality) {
@@ -295,7 +306,9 @@ function getEffectiveExportPixelRatio(
     return STANDARD_EXPORT_PIXEL_RATIO;
   }
 
-  return getExportPixelRatioForQuality(quality);
+  return basemap.id === "ign-satellite" && quality === "very-high"
+    ? MAX_SATELLITE_EXPORT_PIXEL_RATIO
+    : getExportPixelRatioForQuality(quality);
 }
 const MAX_TILE_ZOOM = 22;
 const MAX_TILE_COUNT = 420;
@@ -528,9 +541,10 @@ function getBasemapMaxNativeExportZoom(basemap: DromapBasemapConfig) {
 function findAllowedTileZoom(
   points: WorkspaceBoundsPoints,
   preferredZoom: number,
+  maxTileCount = MAX_TILE_COUNT,
 ) {
   for (let zoom = preferredZoom; zoom >= 0; zoom -= 1) {
-    if (getTileCoverage(points, zoom).tileCount <= MAX_TILE_COUNT) {
+    if (getTileCoverage(points, zoom).tileCount <= maxTileCount) {
       return zoom;
     }
   }
@@ -586,6 +600,9 @@ function chooseTileZoom(
   quality: ExportVisualQuality,
 ) {
   const maxNativeZoom = getBasemapMaxNativeExportZoom(basemap);
+  if (basemap.id === "ign-satellite" && quality === "very-high") {
+    return findAllowedTileZoom(points, maxNativeZoom, MAX_SATELLITE_EXPORT_TILES);
+  }
   const baseZoom = chooseBaseTileZoom(
     points,
     logicalMapSize,
@@ -648,15 +665,22 @@ function loadImageFromBlob(blob: Blob) {
   });
 }
 
-async function loadImageFromUrl(url: string) {
+class TileHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Tuile non récupérable : ${status}`);
+  }
+}
+
+async function loadImageFromUrl(url: string, signal?: AbortSignal) {
   const response = await fetch(url, {
     mode: "cors",
     credentials: "omit",
     cache: "force-cache",
+    signal,
   });
 
   if (!response.ok) {
-    throw new Error(`Tuile non récupérable : ${response.status}`);
+    throw new TileHttpError(response.status);
   }
 
   const blob = await response.blob();
@@ -674,15 +698,17 @@ function waitForTileRetry(delayMs: number) {
   });
 }
 
-async function loadImageFromUrlWithRetry(url: string) {
+async function loadImageFromUrlWithRetry(url: string, satellite = false) {
   let lastError: unknown = new Error("Impossible de charger une tuile.");
 
   for (const delayMs of TILE_FETCH_RETRY_DELAYS_MS) {
     await waitForTileRetry(delayMs);
 
     try {
-      return await loadImageFromUrl(url);
+      return await loadImageFromUrl(url, satellite ? AbortSignal.timeout(12_000) : undefined);
     } catch (error) {
+      if (satellite && error instanceof TileHttpError &&
+          [400, 404, 410].includes(error.status)) throw error;
       lastError = error;
     }
   }
@@ -703,7 +729,7 @@ async function loadTileImage(
   }
 
   try {
-    return await loadImageFromUrlWithRetry(tileUrl);
+    return await loadImageFromUrlWithRetry(tileUrl, basemap.id === "ign-satellite");
   } catch (error) {
     // Sur le satellite, ne jamais remplacer ponctuellement une orthophoto par
     // un fond routier. Si une tuile HD reste indisponible après les tentatives,
@@ -754,15 +780,14 @@ async function loadTilesAtZoom(
   points: WorkspaceBoundsPoints,
   basemap: DromapBasemapConfig,
   zoom: number,
+  onTile: (tile: LoadedTile, coverage: ReturnType<typeof getTileCoverage>) => void,
+  onProgress?: (completed: number, total: number) => void,
 ) {
   const coverage = getTileCoverage(points, zoom);
-  const loadedTiles: LoadedTile[] = [];
+  const missingTiles: Array<Pick<LoadedTile, "tileX" | "tileY">> = [];
 
   if (basemap.kind !== "tile") {
-    return {
-      coverage,
-      loadedTiles,
-    };
+    return missingTiles;
   }
 
   const coordinates: Array<{ tileX: number; tileY: number }> = [];
@@ -783,6 +808,7 @@ async function loadTilesAtZoom(
       : DEFAULT_TILE_FETCH_CONCURRENCY;
   const workerCount = Math.min(requestedConcurrency, coordinates.length);
   let nextCoordinateIndex = 0;
+  let completed = 0;
 
   await Promise.all(
     Array.from({ length: workerCount }, async () => {
@@ -798,92 +824,47 @@ async function loadTilesAtZoom(
 
         try {
           const image = await loadTileImage(basemap, zoom, tileX, tileY);
-          loadedTiles.push({
-            image,
-            tileX,
-            tileY,
-          });
+          onTile({ image, tileX, tileY }, coverage);
         } catch (error) {
+          missingTiles.push({ tileX, tileY });
           console.warn(
             "Tuile ignorée pendant l’export :",
             { zoom, tileX, tileY },
             error,
           );
+        } finally {
+          onProgress?.(++completed, coordinates.length);
         }
       }
     }),
   );
 
-  return {
-    coverage,
-    loadedTiles,
-  };
+  return missingTiles;
 }
 
-async function loadTiles(
-  points: WorkspaceBoundsPoints,
-  logicalMapSize: { width: number; height: number },
-  workspaceBasemapZoom: number | null,
-  basemap: DromapBasemapConfig,
-  quality: ExportVisualQuality,
-) {
-  const zoom = chooseTileZoom(
-    points,
-    logicalMapSize,
-    workspaceBasemapZoom,
-    basemap,
-    quality,
-  );
-  const { coverage, loadedTiles } = await loadTilesAtZoom(
-    points,
-    basemap,
-    zoom,
-  );
-
-  return {
-    zoom,
-    coverage,
-    loadedTiles,
-  };
-}
-
-function drawLoadedTileLayer(
+function drawLoadedTile(
   ctx: CanvasRenderingContext2D,
   mapRect: ExportCanvasRect,
   coverage: ReturnType<typeof getTileCoverage>,
-  loadedTiles: LoadedTile[],
+  tile: LoadedTile,
   basemap: DromapBasemapConfig,
 ) {
   const scaleX = mapRect.width / coverage.width;
   const scaleY = mapRect.height / coverage.height;
 
-  for (const tile of loadedTiles) {
-    const destX =
-      mapRect.x + (tile.tileX * TILE_SIZE - coverage.northWest.x) * scaleX;
-    const destY =
-      mapRect.y + (tile.tileY * TILE_SIZE - coverage.northWest.y) * scaleY;
+  const destX =
+    mapRect.x + (tile.tileX * TILE_SIZE - coverage.northWest.x) * scaleX;
+  const destY =
+    mapRect.y + (tile.tileY * TILE_SIZE - coverage.northWest.y) * scaleY;
+  const seamOverlap = basemap.id === "ign-satellite" ? 1 / ctx.getTransform().a : 0;
 
-    const destWidth = TILE_SIZE * scaleX;
-    const destHeight = TILE_SIZE * scaleY;
-
-    /*
-     * Les coordonnées projetées peuvent tomber entre deux pixels du canvas.
-     * Sur une orthophotographie, cela peut créer une fine ligne de fond entre
-     * deux images pourtant jointives. Un chevauchement d'un pixel vers la
-     * droite et le bas supprime cette couture sans déplacer l'emprise.
-     */
-    const seamOverlap = basemap.id === "ign-satellite" ? 1 : 0;
-
-    ctx.drawImage(
-      tile.image,
-      destX,
-      destY,
-      destWidth + seamOverlap,
-      destHeight + seamOverlap,
-    );
-  }
-
-  return { scaleX, scaleY };
+  ctx.drawImage(
+    tile.image,
+    destX,
+    destY,
+    TILE_SIZE * scaleX + seamOverlap,
+    TILE_SIZE * scaleY + seamOverlap,
+  );
 }
 
 async function drawTiles(
@@ -894,8 +875,9 @@ async function drawTiles(
   workspaceBasemapZoom: number | null,
   basemap: DromapBasemapConfig,
   quality: ExportVisualQuality,
+  onProgress?: VisualExportProgressCallback,
 ) {
-  const { zoom, coverage, loadedTiles } = await loadTiles(
+  const zoom = chooseTileZoom(
     points,
     logicalMapSize,
     workspaceBasemapZoom,
@@ -903,29 +885,9 @@ async function drawTiles(
     quality,
   );
 
-  const missingTileCount = Math.max(0, coverage.tileCount - loadedTiles.length);
-  let satelliteFallbackLayer:
-    | Awaited<ReturnType<typeof loadTilesAtZoom>>
-    | null = null;
-
-  if (
-    basemap.id === "ign-satellite" &&
-    quality === "very-high" &&
-    missingTileCount > 0 &&
-    zoom > 0
-  ) {
-    // Très haute qualité demande beaucoup plus de tuiles natives (+2 niveaux).
-    // Quelques réponses IGN peuvent alors échouer ponctuellement. On charge une
-    // mosaïque satellite moins détaillée sous la couche HD : les tuiles HD qui
-    // réussissent la recouvrent, et une éventuelle tuile manquante laisse voir
-    // l'orthophoto de secours au lieu du fond #111827 (carré noir).
-    const fallbackZoom = Math.max(0, zoom - 2);
-    satelliteFallbackLayer = await loadTilesAtZoom(
-      points,
-      basemap,
-      fallbackZoom,
-    );
-  }
+  const coverage = getTileCoverage(points, zoom);
+  const scaleX = mapRect.width / coverage.width;
+  const scaleY = mapRect.height / coverage.height;
 
   ctx.save();
   ctx.beginPath();
@@ -935,23 +897,36 @@ async function drawTiles(
   ctx.fillStyle = basemap.exportBackground;
   ctx.fillRect(mapRect.x, mapRect.y, mapRect.width, mapRect.height);
 
-  if (satelliteFallbackLayer) {
-    drawLoadedTileLayer(
-      ctx,
-      mapRect,
-      satelliteFallbackLayer.coverage,
-      satelliteFallbackLayer.loadedTiles,
-      basemap,
-    );
-  }
-
-  const { scaleX, scaleY } = drawLoadedTileLayer(
-    ctx,
-    mapRect,
-    coverage,
-    loadedTiles,
-    basemap,
+  const drawTile = (tile: LoadedTile, tileCoverage: typeof coverage) =>
+    drawLoadedTile(ctx, mapRect, tileCoverage, tile, basemap);
+  const missingTiles = await loadTilesAtZoom(points, basemap, zoom, drawTile,
+    (completed, total) => onProgress?.({
+      percent: 10 + Math.floor(65 * completed / total),
+      label: "Chargement du fond de carte…",
+    }),
   );
+
+  if (basemap.id === "ign-satellite" && quality === "very-high" && missingTiles.length && zoom > 0) {
+    // Les images de secours ne sont visibles que dans les trous de la mosaïque.
+    ctx.save();
+    ctx.beginPath();
+    for (const { tileX, tileY } of missingTiles) {
+      ctx.rect(
+        mapRect.x + (tileX * TILE_SIZE - coverage.northWest.x) * scaleX,
+        mapRect.y + (tileY * TILE_SIZE - coverage.northWest.y) * scaleY,
+        TILE_SIZE * scaleX,
+        TILE_SIZE * scaleY,
+      );
+    }
+    ctx.clip();
+    await loadTilesAtZoom(points, basemap, Math.max(0, zoom - 2), drawTile,
+      (completed, total) => onProgress?.({
+        percent: 75 + Math.floor(8 * completed / total),
+        label: "Complément des images satellite…",
+      }),
+    );
+    ctx.restore();
+  }
 
   ctx.restore();
 
@@ -973,6 +948,7 @@ async function drawMapLibreBasemap(
   pixelRatio: number,
   quality: ExportVisualQuality,
   showBasemapLabels: boolean,
+  onProgress?: VisualExportProgressCallback,
 ) {
   const zoom = chooseMapLibreDetailZoom(
     points,
@@ -1030,6 +1006,7 @@ async function drawMapLibreBasemap(
         workspaceBasemapZoom,
         fallbackBasemap,
         quality,
+        onProgress,
       );
     }
   }
@@ -1054,6 +1031,7 @@ async function drawBasemap(
   pixelRatio: number,
   quality: ExportVisualQuality,
   showBasemapLabels: boolean,
+  onProgress?: VisualExportProgressCallback,
 ) {
   if (basemap.kind === "maplibre") {
     return drawMapLibreBasemap(
@@ -1066,6 +1044,7 @@ async function drawBasemap(
       pixelRatio,
       quality,
       showBasemapLabels,
+      onProgress,
     );
   }
 
@@ -1077,6 +1056,7 @@ async function drawBasemap(
     workspaceBasemapZoom,
     basemap,
     quality,
+    onProgress,
   );
 }
 
@@ -3266,14 +3246,14 @@ async function downloadCanvasAsPng(canvas: HTMLCanvasElement) {
   downloadBlob(blob, getExportFileName("png"));
 }
 
-async function downloadCanvasAsJpeg(canvas: HTMLCanvasElement) {
-  const blob = await canvasToBlob(canvas, "image/jpeg", 0.92);
+async function downloadCanvasAsJpeg(canvas: HTMLCanvasElement, maximumDetail = false) {
+  const blob = await canvasToBlob(canvas, "image/jpeg", maximumDetail ? 1 : 0.92);
 
   downloadBlob(blob, getExportFileName("jpg"));
 }
 
-async function downloadCanvasAsWebp(canvas: HTMLCanvasElement) {
-  const blob = await canvasToBlob(canvas, "image/webp", 0.9);
+async function downloadCanvasAsWebp(canvas: HTMLCanvasElement, maximumDetail = false) {
+  const blob = await canvasToBlob(canvas, "image/webp", maximumDetail ? 1 : 0.9);
 
   downloadBlob(blob, getExportFileName("webp"));
 }
@@ -3321,29 +3301,13 @@ function concatBytes(parts: Uint8Array[]) {
   return output;
 }
 
-function dataUrlToBytes(dataUrl: string) {
-  const base64 = dataUrl.split(",")[1];
-
-  if (!base64) {
-    throw new Error("Image PDF invalide.");
-  }
-
-  const binary = window.atob(base64);
-  const bytes = new Uint8Array(binary.length);
-
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-
-  return bytes;
-}
-
 function padPdfOffset(offset: number) {
   return offset.toString().padStart(10, "0");
 }
 
-function createPdfBlobFromCanvas(canvas: HTMLCanvasElement) {
-  const jpegBytes = dataUrlToBytes(canvas.toDataURL("image/jpeg", 0.95));
+async function createPdfBlobFromCanvas(canvas: HTMLCanvasElement, maximumDetail: boolean) {
+  const image = await canvasToBlob(canvas, "image/jpeg", maximumDetail ? 1 : 0.95);
+  const jpegBytes = new Uint8Array(await image.arrayBuffer());
   const pageWidth = Math.max(1, Math.round(canvas.width));
   const pageHeight = Math.max(1, Math.round(canvas.height));
 
@@ -3397,8 +3361,8 @@ function createPdfBlobFromCanvas(canvas: HTMLCanvasElement) {
   return new Blob([concatBytes(parts)], { type: "application/pdf" });
 }
 
-function downloadCanvasAsPdf(canvas: HTMLCanvasElement) {
-  const blob = createPdfBlobFromCanvas(canvas);
+async function downloadCanvasAsPdf(canvas: HTMLCanvasElement, maximumDetail = false) {
+  const blob = await createPdfBlobFromCanvas(canvas, maximumDetail);
 
   downloadBlob(blob, getExportFileName("pdf"));
 }
@@ -4848,6 +4812,7 @@ async function renderCanvasExportToCanvas(
   pixelRatio: number,
   quality: ExportVisualQuality = "standard",
   showDromapGuestWatermark = false,
+  onProgress?: VisualExportProgressCallback,
 ) {
   validateExportGeometry(input);
   const points = getWorkspaceBoundsPoints(input.workspaceBounds);
@@ -4858,7 +4823,9 @@ async function renderCanvasExportToCanvas(
 
   await preloadCustomMarkerImagesForFeatures(input.features);
 
-  const safePixelRatio = clamp(pixelRatio, 0.25, MAX_EXPORT_PIXEL_RATIO);
+  const basemap = getDromapBasemapConfig(
+    input.basemapId ?? DEFAULT_DROMAP_BASEMAP_ID,
+  );
   const appearance = normalizeLegendAppearance({
     backgroundColor: input.legendBackgroundColor,
     sideWidth: input.legendSideWidth,
@@ -5019,6 +4986,16 @@ async function renderCanvasExportToCanvas(
     throw new Error("Mise en page d’export impossible.");
   }
 
+  const safePixelRatio = basemap.id === "ign-satellite" && quality === "very-high"
+    ? Math.max(
+        MAX_EXPORT_PIXEL_RATIO,
+        Math.min(
+          pixelRatio,
+          MAX_SATELLITE_EXPORT_SIDE / Math.max(layout.canvasWidth, layout.canvasHeight),
+          Math.sqrt(MAX_SATELLITE_EXPORT_PIXELS / (layout.canvasWidth * layout.canvasHeight)),
+        ),
+      )
+    : clamp(pixelRatio, 0.25, MAX_EXPORT_PIXEL_RATIO);
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(layout.canvasWidth * safePixelRatio));
   canvas.height = Math.max(1, Math.round(layout.canvasHeight * safePixelRatio));
@@ -5036,10 +5013,7 @@ async function renderCanvasExportToCanvas(
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, layout.canvasWidth, layout.canvasHeight);
 
-  const basemap = getDromapBasemapConfig(
-    input.basemapId ?? DEFAULT_DROMAP_BASEMAP_ID,
-  );
-
+  onProgress?.({ percent: 10, label: "Chargement du fond de carte…" });
   const projection = await drawBasemap(
     ctx,
     points,
@@ -5050,8 +5024,10 @@ async function renderCanvasExportToCanvas(
     safePixelRatio,
     quality,
     input.showBasemapLabels !== false,
+    onProgress,
   );
 
+  onProgress?.({ percent: 86, label: "Composition de la carte et de la légende…" });
   await drawBasemapBoundaryOverlay(
     ctx,
     basemap,
@@ -5250,77 +5226,75 @@ export async function createCanvasExportPreviewDataUrl(
   return canvas.toDataURL("image/png");
 }
 
-export async function downloadCanvasExportAsPng(
+async function downloadVisualExport(
   input: DownloadCanvasExportInput,
-  options: { quality?: ExportVisualQuality; showDromapGuestWatermark?: boolean } = {},
+  options: VisualExportOptions,
+  encodeAndDownload: (canvas: HTMLCanvasElement, maximumDetail: boolean) => void | Promise<void>,
 ) {
   const quality = options.quality ?? "standard";
+  let previousProgress: VisualExportProgress | undefined;
+  const reportProgress: VisualExportProgressCallback | undefined = options.onProgress
+    ? (progress) => {
+        if (previousProgress?.percent === progress.percent &&
+            previousProgress.label === progress.label) return;
+        previousProgress = progress;
+        options.onProgress?.(progress);
+      }
+    : undefined;
+  reportProgress?.({ percent: 4, label: "Préparation de la carte…" });
   const canvas = await renderCanvasExportToCanvas(
     input,
     getEffectiveExportPixelRatio(input, quality),
     quality,
     options.showDromapGuestWatermark === true,
+    reportProgress,
   );
 
-  await downloadCanvasAsPng(canvas);
+  try {
+    reportProgress?.({ percent: 94, label: "Création du fichier…" });
+    // Laisser la barre s'afficher avant l'encodage.
+    if (reportProgress) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+    }
+    await encodeAndDownload(canvas, input.basemapId === "ign-satellite" && quality === "very-high");
+    reportProgress?.({ percent: 100, label: "Téléchargement lancé." });
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
 }
 
-export async function downloadCanvasExportAsJpeg(
+export function downloadCanvasExportAsPng(
   input: DownloadCanvasExportInput,
-  options: { quality?: ExportVisualQuality; showDromapGuestWatermark?: boolean } = {},
+  options: VisualExportOptions = {},
 ) {
-  const quality = options.quality ?? "standard";
-  const canvas = await renderCanvasExportToCanvas(
-    input,
-    getEffectiveExportPixelRatio(input, quality),
-    quality,
-    options.showDromapGuestWatermark === true,
-  );
-
-  await downloadCanvasAsJpeg(canvas);
+  return downloadVisualExport(input, options, downloadCanvasAsPng);
 }
 
-export async function downloadCanvasExportAsWebp(
+export function downloadCanvasExportAsJpeg(
   input: DownloadCanvasExportInput,
-  options: { quality?: ExportVisualQuality; showDromapGuestWatermark?: boolean } = {},
+  options: VisualExportOptions = {},
 ) {
-  const quality = options.quality ?? "standard";
-  const canvas = await renderCanvasExportToCanvas(
-    input,
-    getEffectiveExportPixelRatio(input, quality),
-    quality,
-    options.showDromapGuestWatermark === true,
-  );
-
-  await downloadCanvasAsWebp(canvas);
+  return downloadVisualExport(input, options, downloadCanvasAsJpeg);
 }
 
-export async function downloadCanvasExportAsSvg(
+export function downloadCanvasExportAsWebp(
   input: DownloadCanvasExportInput,
-  options: { quality?: ExportVisualQuality; showDromapGuestWatermark?: boolean } = {},
+  options: VisualExportOptions = {},
 ) {
-  const quality = options.quality ?? "standard";
-  const canvas = await renderCanvasExportToCanvas(
-    input,
-    getEffectiveExportPixelRatio(input, quality),
-    quality,
-    options.showDromapGuestWatermark === true,
-  );
-
-  downloadCanvasAsSvg(canvas);
+  return downloadVisualExport(input, options, downloadCanvasAsWebp);
 }
 
-export async function downloadCanvasExportAsPdf(
+export function downloadCanvasExportAsSvg(
   input: DownloadCanvasExportInput,
-  options: { quality?: ExportVisualQuality; showDromapGuestWatermark?: boolean } = {},
+  options: VisualExportOptions = {},
 ) {
-  const quality = options.quality ?? "standard";
-  const canvas = await renderCanvasExportToCanvas(
-    input,
-    getEffectiveExportPixelRatio(input, quality),
-    quality,
-    options.showDromapGuestWatermark === true,
-  );
+  return downloadVisualExport(input, options, downloadCanvasAsSvg);
+}
 
-  downloadCanvasAsPdf(canvas);
+export function downloadCanvasExportAsPdf(
+  input: DownloadCanvasExportInput,
+  options: VisualExportOptions = {},
+) {
+  return downloadVisualExport(input, options, downloadCanvasAsPdf);
 }

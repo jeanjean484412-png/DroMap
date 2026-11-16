@@ -32,6 +32,7 @@ import {
   HIGH_QUALITY_PREVIEW_EXPORT_PIXEL_RATIO,
   LIGHT_PREVIEW_EXPORT_PIXEL_RATIO,
   type ExportVisualQuality,
+  type VisualExportProgress,
   downloadCanvasExportAsJpeg,
   downloadCanvasExportAsPdf,
   downloadCanvasExportAsPng,
@@ -42,6 +43,7 @@ import {
   downloadProjectAsJson,
 } from "./export-download";
 import { ExportPreviewScene } from "./export-preview-scene";
+import { ExportProgress } from "@/components/dromap-ui/export-progress";
 import {
   convertGeoJsonLayerToDromapFeatures,
   GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD,
@@ -346,6 +348,7 @@ export function ExportSetupPanel() {
   );
   const { saveNow } = useDromapProjectSave();
   const [isDownloadingPng, setIsDownloadingPng] = useState(false);
+  const [visualExportProgress, setVisualExportProgress] = useState<VisualExportProgress | null>(null);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isDownloadingJpeg, setIsDownloadingJpeg] = useState(false);
   const [isDownloadingWebp, setIsDownloadingWebp] = useState(false);
@@ -944,6 +947,7 @@ export function ExportSetupPanel() {
       await downloadCanvasExportAsPng(exportInput, {
         quality,
         showDromapGuestWatermark,
+        onProgress: setVisualExportProgress,
       });
 
       const zoneLockResult = await lockSingleMapZoneAfterSuccessfulDownload();
@@ -960,6 +964,7 @@ export function ExportSetupPanel() {
         "Export PNG impossible pour l’instant. Le rendu canvas n’a pas pu générer l’image.",
       );
     } finally {
+      setVisualExportProgress(null);
       setIsDownloadingPng(false);
     }
   }
@@ -979,6 +984,7 @@ export function ExportSetupPanel() {
       await downloadCanvasExportAsPdf(exportInput, {
         quality,
         showDromapGuestWatermark,
+        onProgress: setVisualExportProgress,
       });
 
       const zoneLockResult = await lockSingleMapZoneAfterSuccessfulDownload();
@@ -995,6 +1001,7 @@ export function ExportSetupPanel() {
         "Export PDF impossible pour l’instant. Le rendu canvas n’a pas pu générer le document.",
       );
     } finally {
+      setVisualExportProgress(null);
       setIsDownloadingPdf(false);
     }
   }
@@ -1014,6 +1021,7 @@ export function ExportSetupPanel() {
       await downloadCanvasExportAsJpeg(exportInput, {
         quality,
         showDromapGuestWatermark,
+        onProgress: setVisualExportProgress,
       });
 
       const zoneLockResult = await lockSingleMapZoneAfterSuccessfulDownload();
@@ -1030,6 +1038,7 @@ export function ExportSetupPanel() {
         "Export JPEG impossible pour l’instant. Le rendu canvas n’a pas pu générer l’image.",
       );
     } finally {
+      setVisualExportProgress(null);
       setIsDownloadingJpeg(false);
     }
   }
@@ -1049,6 +1058,7 @@ export function ExportSetupPanel() {
       await downloadCanvasExportAsWebp(exportInput, {
         quality,
         showDromapGuestWatermark,
+        onProgress: setVisualExportProgress,
       });
 
       const zoneLockResult = await lockSingleMapZoneAfterSuccessfulDownload();
@@ -1065,6 +1075,7 @@ export function ExportSetupPanel() {
         "Export WebP impossible pour l’instant. Le navigateur n’a pas pu générer l’image.",
       );
     } finally {
+      setVisualExportProgress(null);
       setIsDownloadingWebp(false);
     }
   }
@@ -1084,6 +1095,7 @@ export function ExportSetupPanel() {
       await downloadCanvasExportAsSvg(exportInput, {
         quality,
         showDromapGuestWatermark,
+        onProgress: setVisualExportProgress,
       });
 
       const zoneLockResult = await lockSingleMapZoneAfterSuccessfulDownload();
@@ -1100,6 +1112,7 @@ export function ExportSetupPanel() {
         "Export SVG impossible pour l’instant. Le rendu canvas n’a pas pu générer le fichier SVG.",
       );
     } finally {
+      setVisualExportProgress(null);
       setIsDownloadingSvg(false);
     }
   }
@@ -1972,7 +1985,12 @@ export function ExportSetupPanel() {
       aria-modal="true"
     >
       <RenderKeyboardHistory />
-      <section className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white">
+      {isVisualExportBusy && visualExportProgress ? (
+        <div className="absolute inset-0 z-[2300] grid place-items-center bg-slate-950/45 p-4">
+          <ExportProgress {...visualExportProgress} />
+        </div>
+      ) : null}
+      <section inert={isVisualExportBusy} className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white">
         <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-950">
             Légende &amp; Rendu final

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { DromapButton } from "@/components/dromap-ui/button";
 import { DromapDialog } from "@/components/dromap-ui/dialog";
+import { ExportProgress } from "@/components/dromap-ui/export-progress";
 import {
   getDromapBillingStatus,
   markDromapSingleMapDownloaded,
@@ -20,6 +21,7 @@ import {
   downloadProjectAsJson,
   type DownloadCanvasExportInput,
   type ExportVisualQuality,
+  type VisualExportProgress,
 } from "@/editor/export-download";
 import { getDromapCapabilities, type DromapProject } from "@/lib/dromap/product";
 import {
@@ -185,6 +187,7 @@ export function DashboardProjectExportDialog({
     [accountPreferences],
   );
   const [busyFormat, setBusyFormat] = useState<string | null>(null);
+  const [visualExportProgress, setVisualExportProgress] = useState<VisualExportProgress | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [visualQuality, setVisualQuality] = useState<ExportVisualQuality>("standard");
   const [billingStatus, setBillingStatus] = useState<DromapBillingStatus | null>(null);
@@ -292,6 +295,7 @@ export function DashboardProjectExportDialog({
     if (busyFormat) return;
 
     setBusyFormat(format);
+    setVisualExportProgress({ percent: 0, label: "Chargement du projet…" });
     setStatus("Préparation du téléchargement…");
     try {
       const project = await getLoadedProject();
@@ -306,6 +310,7 @@ export function DashboardProjectExportDialog({
         const options = {
           quality: visualQuality,
           showDromapGuestWatermark: userMode === "guest",
+          onProgress: setVisualExportProgress,
         };
         if (format === "png") await downloadCanvasExportAsPng(input, options);
         if (format === "jpeg") await downloadCanvasExportAsJpeg(input, options);
@@ -329,6 +334,7 @@ export function DashboardProjectExportDialog({
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Téléchargement impossible.");
     } finally {
+      setVisualExportProgress(null);
       setBusyFormat(null);
     }
   }
@@ -410,7 +416,12 @@ export function DashboardProjectExportDialog({
       maxWidthClassName="max-w-xl"
       footer={<DromapButton onClick={onClose} disabled={Boolean(busyFormat)}>Fermer</DromapButton>}
     >
-      <div className="space-y-5">
+      {visualExportProgress ? (
+        <div className="grid place-items-center py-4">
+          <ExportProgress {...visualExportProgress} />
+        </div>
+      ) : null}
+      <div hidden={visualExportProgress !== null} className="space-y-5">
         <section>
           <div className="text-sm font-black text-slate-950">Télécharger la carte</div>
           <div className="mt-3">
