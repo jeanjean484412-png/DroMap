@@ -33,6 +33,7 @@ import {
   LIGHT_PREVIEW_EXPORT_PIXEL_RATIO,
   type ExportVisualQuality,
   type VisualExportProgress,
+  SatelliteCoverageError,
   downloadCanvasExportAsJpeg,
   downloadCanvasExportAsPdf,
   downloadCanvasExportAsPng,
@@ -961,7 +962,9 @@ export function ExportSetupPanel() {
     } catch (error) {
       console.error(error);
       setDownloadStatus(
-        "Export PNG impossible pour l’instant. Le rendu canvas n’a pas pu générer l’image.",
+        error instanceof SatelliteCoverageError
+          ? error.message
+          : "Export PNG impossible pour l’instant. Le rendu canvas n’a pas pu générer l’image.",
       );
     } finally {
       setVisualExportProgress(null);
@@ -998,7 +1001,9 @@ export function ExportSetupPanel() {
     } catch (error) {
       console.error(error);
       setDownloadStatus(
-        "Export PDF impossible pour l’instant. Le rendu canvas n’a pas pu générer le document.",
+        error instanceof SatelliteCoverageError
+          ? error.message
+          : "Export PDF impossible pour l’instant. Le rendu canvas n’a pas pu générer le document.",
       );
     } finally {
       setVisualExportProgress(null);
@@ -1035,7 +1040,9 @@ export function ExportSetupPanel() {
     } catch (error) {
       console.error(error);
       setDownloadStatus(
-        "Export JPEG impossible pour l’instant. Le rendu canvas n’a pas pu générer l’image.",
+        error instanceof SatelliteCoverageError
+          ? error.message
+          : "Export JPEG impossible pour l’instant. Le rendu canvas n’a pas pu générer l’image.",
       );
     } finally {
       setVisualExportProgress(null);
@@ -1072,7 +1079,9 @@ export function ExportSetupPanel() {
     } catch (error) {
       console.error(error);
       setDownloadStatus(
-        "Export WebP impossible pour l’instant. Le navigateur n’a pas pu générer l’image.",
+        error instanceof SatelliteCoverageError
+          ? error.message
+          : "Export WebP impossible pour l’instant. Le navigateur n’a pas pu générer l’image.",
       );
     } finally {
       setVisualExportProgress(null);
@@ -1109,7 +1118,9 @@ export function ExportSetupPanel() {
     } catch (error) {
       console.error(error);
       setDownloadStatus(
-        "Export SVG impossible pour l’instant. Le rendu canvas n’a pas pu générer le fichier SVG.",
+        error instanceof SatelliteCoverageError
+          ? error.message
+          : "Export SVG impossible pour l’instant. Le rendu canvas n’a pas pu générer le fichier SVG.",
       );
     } finally {
       setVisualExportProgress(null);

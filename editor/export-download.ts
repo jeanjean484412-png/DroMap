@@ -255,6 +255,7 @@ type LoadedTile = {
   tileX: number;
   tileY: number;
 };
+type TileCoordinates = Pick<LoadedTile, "tileX" | "tileY">;
 
 type WorkspaceBoundsPoints = {
   southWest: ExportLatLngPoint;
@@ -274,6 +275,11 @@ const MAX_SATELLITE_EXPORT_TILES = 1200;
 const EXPORT_TILE_DETAIL_RATIO = 1;
 
 export type ExportVisualQuality = "standard" | "high" | "very-high";
+export class SatelliteCoverageError extends Error {
+  constructor() {
+    super("L’IGN n’a pas fourni toutes les images satellite de la zone. Réessaie dans un instant ou ajuste la zone de travail.");
+  }
+}
 export type VisualExportProgress = { percent: number; label: string };
 type VisualExportProgressCallback = (progress: VisualExportProgress) => void;
 type VisualExportOptions = {
@@ -487,7 +493,7 @@ function getTileCoverage(points: WorkspaceBoundsPoints, zoom: number) {
   // la position réelle pour le placement, puis on wrappe seulement l'index
   // utilisé dans l'URL de tuile.
   const minTileX = Math.floor(projectedBounds.northWest.x / TILE_SIZE);
-  const maxTileX = Math.floor((projectedBounds.southEast.x - 1) / TILE_SIZE);
+  const maxTileX = Math.ceil(projectedBounds.southEast.x / TILE_SIZE) - 1;
 
   const minTileY = Math.max(
     0,
@@ -495,7 +501,7 @@ function getTileCoverage(points: WorkspaceBoundsPoints, zoom: number) {
   );
   const maxTileY = Math.min(
     maxTileIndex,
-    Math.floor((projectedBounds.southEast.y - 1) / TILE_SIZE),
+    Math.ceil(projectedBounds.southEast.y / TILE_SIZE) - 1,
   );
 
   const tileCount =
@@ -782,23 +788,21 @@ async function loadTilesAtZoom(
   zoom: number,
   onTile: (tile: LoadedTile, coverage: ReturnType<typeof getTileCoverage>) => void,
   onProgress?: (completed: number, total: number) => void,
+  requestedTiles?: TileCoordinates[],
 ) {
   const coverage = getTileCoverage(points, zoom);
-  const missingTiles: Array<Pick<LoadedTile, "tileX" | "tileY">> = [];
+  const missingTiles: TileCoordinates[] = [];
 
   if (basemap.kind !== "tile") {
     return missingTiles;
   }
 
-  const coordinates: Array<{ tileX: number; tileY: number }> = [];
-
-  for (let tileX = coverage.minTileX; tileX <= coverage.maxTileX; tileX += 1) {
-    for (
-      let tileY = coverage.minTileY;
-      tileY <= coverage.maxTileY;
-      tileY += 1
-    ) {
-      coordinates.push({ tileX, tileY });
+  const coordinates = requestedTiles ?? [];
+  if (!requestedTiles) {
+    for (let tileX = coverage.minTileX; tileX <= coverage.maxTileX; tileX += 1) {
+      for (let tileY = coverage.minTileY; tileY <= coverage.maxTileY; tileY += 1) {
+        coordinates.push({ tileX, tileY });
+      }
     }
   }
 
@@ -899,36 +903,57 @@ async function drawTiles(
 
   const drawTile = (tile: LoadedTile, tileCoverage: typeof coverage) =>
     drawLoadedTile(ctx, mapRect, tileCoverage, tile, basemap);
-  const missingTiles = await loadTilesAtZoom(points, basemap, zoom, drawTile,
+  let missingTiles = await loadTilesAtZoom(points, basemap, zoom, drawTile,
     (completed, total) => onProgress?.({
       percent: 10 + Math.floor(65 * completed / total),
       label: "Chargement du fond de carte…",
     }),
   );
 
-  if (basemap.id === "ign-satellite" && quality === "very-high" && missingTiles.length && zoom > 0) {
-    // Les images de secours ne sont visibles que dans les trous de la mosaïque.
-    ctx.save();
-    ctx.beginPath();
-    for (const { tileX, tileY } of missingTiles) {
-      ctx.rect(
-        mapRect.x + (tileX * TILE_SIZE - coverage.northWest.x) * scaleX,
-        mapRect.y + (tileY * TILE_SIZE - coverage.northWest.y) * scaleY,
-        TILE_SIZE * scaleX,
-        TILE_SIZE * scaleY,
-      );
+  if (basemap.id === "ign-satellite" && missingTiles.length) {
+    for (let fallbackZoom = zoom - 1; fallbackZoom >= 0 && missingTiles.length; fallbackZoom--) {
+      const factor = 2 ** (zoom - fallbackZoom);
+      const getParent = ({ tileX, tileY }: TileCoordinates) => ({
+        tileX: Math.floor(tileX / factor),
+        tileY: Math.floor(tileY / factor),
+      });
+      const tileKey = ({ tileX, tileY }: TileCoordinates) => `${tileX}:${tileY}`;
+      const parents = new Map<string, TileCoordinates>();
+      ctx.save();
+      ctx.beginPath();
+      for (const tile of missingTiles) {
+        const parent = getParent(tile);
+        parents.set(tileKey(parent), parent);
+        ctx.rect(
+          mapRect.x + (tile.tileX * TILE_SIZE - coverage.northWest.x) * scaleX,
+          mapRect.y + (tile.tileY * TILE_SIZE - coverage.northWest.y) * scaleY,
+          TILE_SIZE * scaleX,
+          TILE_SIZE * scaleY,
+        );
+      }
+      ctx.clip();
+      try {
+        const missingParents = await loadTilesAtZoom(
+          points,
+          basemap,
+          fallbackZoom,
+          drawTile,
+          (completed, total) => onProgress?.({
+            percent: 75 + Math.floor(8 * (zoom - fallbackZoom - 1 + completed / total) / zoom),
+            label: "Complément des images satellite…",
+          }),
+          [...parents.values()],
+        );
+        const missingParentKeys = new Set(missingParents.map(tileKey));
+        missingTiles = missingTiles.filter((tile) => missingParentKeys.has(tileKey(getParent(tile))));
+      } finally {
+        ctx.restore();
+      }
     }
-    ctx.clip();
-    await loadTilesAtZoom(points, basemap, Math.max(0, zoom - 2), drawTile,
-      (completed, total) => onProgress?.({
-        percent: 75 + Math.floor(8 * completed / total),
-        label: "Complément des images satellite…",
-      }),
-    );
-    ctx.restore();
   }
 
   ctx.restore();
+  if (basemap.id === "ign-satellite" && missingTiles.length) throw new SatelliteCoverageError();
 
   return {
     zoom,
