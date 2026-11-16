@@ -1,9 +1,5 @@
-.item .letter {
-  opacity: 0;
-}
-
 @media (prefers-reduced-motion: no-preference) {
-  .item :is(.tilePrimary, .tileSecondary, .lid, .question, .flap, .letter, .card, .head, .sliderTop, .sliderBottom) {
+  .item :is(.tile, .lid, .question, .flap, .card, .head, .sliderTop, .sliderBottom) {
     transform-box: fill-box;
     transform-origin: center;
     transition: transform 180ms ease-out;
@@ -17,20 +13,12 @@
     transform-origin: center top;
   }
 
-  .item .letter {
-    transition: transform 180ms ease-out, opacity 180ms ease-out;
-  }
-
   .globe {
     transform-origin: center;
   }
 
-  .item:is(:hover, :focus-visible) .tilePrimary {
-    transform: translateX(3px);
-  }
-
-  .item:is(:hover, :focus-visible) .tileSecondary {
-    transform: translateX(1.5px);
+  .item:is(:hover, :focus-visible) .tile {
+    transform: translate(-1px, -1px) rotate(-10deg);
   }
 
   .item:is(:hover, :focus-visible) .globe {
@@ -46,12 +34,7 @@
   }
 
   .item:is(:hover, :focus-visible) .flap {
-    transform: scaleY(-1);
-  }
-
-  .item:is(:hover, :focus-visible) .letter {
-    opacity: 1;
-    transform: translateY(-4px);
+    transform: scaleY(-0.55);
   }
 
   .item:is(:hover, :focus-visible) .card {
@@ -75,10 +58,6 @@
     transform: none;
     transition: none;
     animation: none;
-  }
-
-  :global(.dromap-reduce-motion) .item:is(:hover, :focus-visible) .letter {
-    opacity: 0;
   }
 }
 

@@ -63,10 +63,8 @@ function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
   if (kind === "contact") {
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path className={styles.letter} d="M7 12V8h10v4M9 10h6" />
-        <path d="M3 8h18v12H3z" />
-        <path d="m3 20 7-6m11 6-7-6" />
-        <path className={styles.flap} d="M3 8 12 15 21 8Z" fill="currentColor" fillOpacity=".18" />
+        <path d="M4 5h16v14H4z" />
+        <path className={styles.flap} d="m4 7 8 6 8-6" />
       </svg>
     );
   }
@@ -96,9 +94,9 @@ function NavigationIcon({ kind }: { kind: NavigationIconKind }) {
 
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect className={styles.tilePrimary} x="3" y="3" width="7" height="7" rx="1" />
+      <rect className={styles.tile} x="3" y="3" width="7" height="7" rx="1" />
       <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect className={styles.tileSecondary} x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
       <rect x="14" y="14" width="7" height="7" rx="1" />
     </svg>
   );
