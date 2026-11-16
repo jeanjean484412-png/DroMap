@@ -13,6 +13,7 @@ export type DromapBillingStatus = {
   configured: boolean;
   testMode: boolean;
   plan: DromapAccountPlan;
+  aiAccess: boolean;
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   subscriptionStatus: string | null;

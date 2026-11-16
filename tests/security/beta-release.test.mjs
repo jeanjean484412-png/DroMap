@@ -50,17 +50,28 @@ test('beta release: atomic quota, legacy retention, restoration, and restricted 
   } finally {await db.close();}
 });
 
-test('default mode stays complete; beta AI is denied before billing or provider calls', async()=>{
+test('beta AI allows only a server-granted account', async()=>{
   const previous=process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE;
   try {
     delete process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE;
     assert.equal(loadSource('lib/dromap/release-mode.ts').DROMAP_BETA,false);
-    process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE='beta';
-    const {checkAiAccess}=loadSource('lib/dromap/server/ai-access.ts',{
-      './supabase-rest':{getAuthenticatedRequestUser:()=>{throw Error('must not authenticate');}},
-      './billing':{},'./security-rpc':{},
-    });
-    assert.equal((await checkAiAccess()).status,403);
+    const access=async(mode,plan,aiAccess=false)=>{
+      process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE=mode;
+      let rateLimitCalls=0;
+      const {checkAiAccess}=loadSource('lib/dromap/server/ai-access.ts',{
+        './supabase-rest':{getAuthenticatedRequestUser:async()=>({accessToken:'session',user:{id:'user'}})},
+        './billing':{getDromapBillingAccessForSession:async()=>({plan,aiAccess})},
+        './security-rpc':{securityRpc:async()=>{rateLimitCalls++;return true;}},
+      });
+      return {response:await checkAiAccess(),rateLimitCalls};
+    };
+    for(const plan of ['free','pro','tester']) {
+      const denied=await access('beta',plan);
+      assert.equal(denied.response.status,403);
+      assert.equal(denied.rateLimitCalls,0);
+    }
+    assert.deepEqual(await access('beta','free',true),{response:null,rateLimitCalls:1});
+    assert.deepEqual(await access('full','pro'),{response:null,rateLimitCalls:1});
   } finally {if(previous===undefined)delete process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE;else process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE=previous;}
 });
 
@@ -79,6 +90,8 @@ test('beta grants every non-AI capability to signed-in free accounts; complete m
       assert.equal(isDromapSubscriberPlan('pro'),true);
       assert.equal(isDromapSubscriberPlan(undefined),false);
       assert.equal(getDromapCapabilities('authenticated','pro').canUseAi,!beta);
+      assert.equal(getDromapCapabilities('authenticated','tester').canUseAi,!beta);
+      assert.equal(getDromapCapabilities('authenticated','free',{aiAccess:true}).canUseAi,beta);
     }
   } finally {if(previous===undefined)delete process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE;else process.env.NEXT_PUBLIC_DROMAP_RELEASE_MODE=previous;}
 });

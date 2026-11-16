@@ -97,6 +97,7 @@ type DromapProductState = {
   accountLastName: string | null;
   accountPreferences: Record<string, unknown>;
   accountPlan: DromapAccountPlan;
+  aiAccess: boolean;
   singleMapMaxExportProjectIds: string[];
   publicMapExportProjectIds: string[];
   accountBackendConfigured: boolean | null;
@@ -1116,6 +1117,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   accountLastName: null,
   accountPreferences: {},
   accountPlan: "tester",
+  aiAccess: false,
   singleMapMaxExportProjectIds: [],
   publicMapExportProjectIds: [],
   accountBackendConfigured: null,
@@ -1145,6 +1147,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
           accountLastName: stored.accountLastName ?? null,
           accountPreferences: stored.accountPreferences ?? {},
           accountPlan: stored.accountPlan ?? "tester",
+          aiAccess: false,
           singleMapMaxExportProjectIds: stored.singleMapMaxExportProjectIds ?? [],
           publicMapExportProjectIds: stored.publicMapExportProjectIds ?? [],
           activeProjectId: stored.activeProjectId,
@@ -1171,6 +1174,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
             accountLastName: null,
             accountPreferences: {},
             accountPlan: "tester",
+            aiAccess: false,
             singleMapMaxExportProjectIds: [],
             publicMapExportProjectIds: [],
             activeProjectId: null,
@@ -1187,6 +1191,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
             accountLastName: null,
             accountPreferences: {},
             accountPlan: "tester",
+            aiAccess: false,
             singleMapMaxExportProjectIds: [],
             publicMapExportProjectIds: [],
           });
@@ -1202,6 +1207,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
           accountLastName: null,
           accountPreferences: {},
           accountPlan: "tester",
+          aiAccess: false,
           singleMapMaxExportProjectIds: [],
           publicMapExportProjectIds: [],
         });
@@ -1250,6 +1256,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       accountLastName: account.lastName ?? null,
       accountPreferences: account.preferences ?? {},
       accountPlan: normalizeDromapAccountPlan(account.plan),
+      aiAccess: account.aiAccess === true,
       singleMapMaxExportProjectIds: Array.from(
         new Set(account.singleMapMaxExportProjectIds ?? []),
       ),
@@ -1366,6 +1373,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       accountLastName: null,
       accountPreferences: {},
       accountPlan: "tester",
+      aiAccess: false,
       singleMapMaxExportProjectIds: [],
       publicMapExportProjectIds: [],
       activeProjectId: null,
@@ -1398,6 +1406,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       accountLastName: null,
       accountPreferences: {},
       accountPlan: "tester",
+      aiAccess: false,
       singleMapMaxExportProjectIds: [],
       publicMapExportProjectIds: [],
       activeProjectId: null,

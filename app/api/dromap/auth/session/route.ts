@@ -122,6 +122,7 @@ async function handleGET() {
         // En cas d’indisponibilité du stockage de facturation, ne jamais
         // accorder des droits premium par défaut.
         plan: billingAccess?.plan ?? "free",
+        aiAccess: billingAccess?.aiAccess === true,
         singleMapMaxExportProjectIds:
           billingAccess?.singleMapMaxExportProjectIds ?? [],
         publicMapExportProjectIds:

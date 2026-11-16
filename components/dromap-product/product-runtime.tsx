@@ -78,6 +78,7 @@ export function DromapProductRuntimeProvider({
   const pathname = usePathname();
   const userMode = useDromapProductStore((state) => state.userMode);
   const accountPlan = useDromapProductStore((state) => state.accountPlan);
+  const aiAccess = useDromapProductStore((state) => state.aiAccess);
   const singleMapMaxExportProjectIds = useDromapProductStore(
     (state) => state.singleMapMaxExportProjectIds,
   );
@@ -135,6 +136,7 @@ export function DromapProductRuntimeProvider({
       enabled: true,
       projectId,
       capabilities: getDromapCapabilities(userMode, accountPlan, {
+        aiAccess,
         singleMapMaxExport: singleMapMaxExportPurchased,
         publicMapExport: publicMapExportPurchased,
       }),
@@ -146,6 +148,7 @@ export function DromapProductRuntimeProvider({
     }),
     [
       accountPlan,
+      aiAccess,
       projectId,
       markSingleMapZoneLockedLocally,
       requestRestriction,

@@ -18,6 +18,7 @@ import {
 type BillingAccountRow = {
   user_id?: unknown;
   plan?: unknown;
+  ai_access?: unknown;
   stripe_customer_id?: unknown;
   stripe_subscription_id?: unknown;
   subscription_status?: unknown;
@@ -34,6 +35,7 @@ type EntitlementRow = {
 
 export type DromapBillingAccessSnapshot = {
   plan: DromapAccountPlan;
+  aiAccess: boolean;
   singleMapMaxExportProjectIds: string[];
   singleMapZoneLockedProjectIds: string[];
   publicMapExportProjectIds: string[];
@@ -65,6 +67,7 @@ function normalizeBillingPlan(value: unknown): DromapAccountPlan {
 function normalizeBillingStatus(row: BillingAccountRow | null): DromapBillingServerStatus {
   return {
     plan: row ? normalizeBillingPlan(row.plan) : "free",
+    aiAccess: row?.ai_access === true,
     singleMapMaxExportProjectIds: [],
     singleMapZoneLockedProjectIds: [],
     publicMapExportProjectIds: [],
@@ -108,7 +111,7 @@ export async function getDromapBillingAccessForSession(
 ): Promise<DromapBillingAccessSnapshot | null> {
   try {
     const billingResponse = await supabaseRestFetch(
-      `/dromap_billing_accounts?user_id=eq.${encodeURIComponent(userId)}&select=plan&limit=1`,
+      `/dromap_billing_accounts?user_id=eq.${encodeURIComponent(userId)}&select=plan,ai_access&limit=1`,
       accessToken,
       { method: "GET" },
     );
@@ -129,6 +132,7 @@ export async function getDromapBillingAccessForSession(
 
     return {
       plan: row ? normalizeBillingPlan(row.plan) : "free",
+      aiAccess: row?.ai_access === true,
       singleMapMaxExportProjectIds: Array.from(
         new Set(
           maxExportRows
@@ -161,7 +165,7 @@ export async function getDromapBillingStatusForUser(
   userId: string,
 ): Promise<DromapBillingServerStatus> {
   const billingResponse = await adminRestFetch(
-    `/dromap_billing_accounts?user_id=eq.${encodeURIComponent(userId)}&select=user_id,plan,stripe_customer_id,stripe_subscription_id,subscription_status,billing_interval,current_period_end,cancel_at_period_end&limit=1`,
+    `/dromap_billing_accounts?user_id=eq.${encodeURIComponent(userId)}&select=user_id,plan,ai_access,stripe_customer_id,stripe_subscription_id,subscription_status,billing_interval,current_period_end,cancel_at_period_end&limit=1`,
     { method: "GET" },
   );
   const billingRows = billingResponse.ok

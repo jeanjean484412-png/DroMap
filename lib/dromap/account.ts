@@ -8,6 +8,7 @@ export type DromapAccountSession = {
   lastName: string | null;
   preferences: Record<string, unknown>;
   plan: DromapAccountPlan;
+  aiAccess: boolean;
   singleMapMaxExportProjectIds: string[];
   publicMapExportProjectIds: string[];
 };

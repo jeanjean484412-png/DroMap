@@ -137,7 +137,7 @@ export function getDromapTrashRemainingDays(
 export function getDromapCapabilities(
   mode: DromapUserMode,
   plan: DromapAccountPlan = "tester",
-  options: { singleMapMaxExport?: boolean; publicMapExport?: boolean } = {},
+  options: { singleMapMaxExport?: boolean; publicMapExport?: boolean; aiAccess?: boolean } = {},
 ): DromapCapabilities {
   if (mode === "guest") {
     return {
@@ -167,7 +167,7 @@ export function getDromapCapabilities(
   const canCustomizeBasemapRender = visualExportPremium;
 
   return {
-    canUseAi: premium && !DROMAP_BETA,
+    canUseAi: DROMAP_BETA ? options.aiAccess === true : premium,
     canImportBuildings: premium,
     // La bibliothèque de données DroMap nécessite au minimum un compte.
     // L'import d'un fichier GeoJSON local reste indépendant de cette règle.

@@ -117,6 +117,7 @@ async function handlePOST(request: Request) {
         lastName,
         preferences,
         plan: billingAccess?.plan ?? "free",
+        aiAccess: billingAccess?.aiAccess === true,
         singleMapMaxExportProjectIds:
           billingAccess?.singleMapMaxExportProjectIds ?? [],
         publicMapExportProjectIds:

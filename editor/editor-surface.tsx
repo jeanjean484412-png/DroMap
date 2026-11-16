@@ -126,7 +126,7 @@ function SearchAndAssistantControls({ product = false }: { product?: boolean } =
   return (
     <div className="flex items-start gap-2">
       <PlaceSearchControl product={product} />
-      {DROMAP_BETA || (runtime.enabled && !runtime.capabilities.canUseAi) ? (
+      {(runtime.enabled ? !runtime.capabilities.canUseAi : DROMAP_BETA) ? (
         <RestrictedAiTrigger docked />
       ) : (
         <AssistantLauncher />

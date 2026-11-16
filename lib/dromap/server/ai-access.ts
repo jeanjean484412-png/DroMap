@@ -7,17 +7,21 @@ import { getDromapBillingAccessForSession } from "./billing";
 import { securityRpc } from "./security-rpc";
 
 export async function checkAiAccess(scope: "ai" | "geojson" = "ai") {
-  if (DROMAP_BETA && scope === "ai") {
-    return NextResponse.json({ error: "L’assistant IA sera disponible prochainement." }, { status: 403 });
-  }
   try {
     const auth = await getAuthenticatedRequestUser();
     if (!auth) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
     if (scope === "ai") {
       const billing = await getDromapBillingAccessForSession(auth.accessToken, auth.user.id);
       if (!billing) throw new Error("BILLING_UNAVAILABLE");
-      if (!["plus", "pro", "tester"].includes(billing.plan)) {
-        return NextResponse.json({ error: "L’assistant IA nécessite un abonnement Plus ou Pro." }, { status: 403 });
+      const canUseAi = DROMAP_BETA
+        ? billing.aiAccess === true
+        : ["plus", "pro", "tester"].includes(billing.plan);
+      if (!canUseAi) {
+        return NextResponse.json({
+          error: DROMAP_BETA
+            ? "L’assistant IA sera disponible prochainement."
+            : "L’assistant IA nécessite un abonnement Plus ou Pro.",
+        }, { status: 403 });
       }
     }
     const allowed = await securityRpc("dromap_take_ai_request", {
