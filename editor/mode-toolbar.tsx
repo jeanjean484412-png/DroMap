@@ -21,6 +21,7 @@ import {
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
 import { useEditorBasemapStore } from "@/stores/editor-basemap";
 import { useEditorDrawingOptionsStore } from "@/stores/editor-drawing-options";
+import { useEditorToolShortcutsStore, type EditorToolShortcut as ToolShortcut } from "@/stores/editor-tool-shortcuts";
 import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
 import {
   getGeoJsonLayerLoadedDisplayData,
@@ -172,28 +173,46 @@ type ZoneToolChoice = Extract<
   "zone" | "freehand-zone" | "fill-zone" | "shape"
 >;
 type MarkerSettingsStep = "symbols" | "style";
+type PickerCategory = "marker" | "line" | "zone" | "text";
+type TextPreset = "standard" | "title" | "caption";
+function shortcutKey(
+  tool: EditorActiveTool,
+  symbol?: DroMapMarkerSymbol,
+  shapeKind?: DroMapZoneShapeKind,
+  textPreset?: TextPreset,
+) {
+  if (tool === "marker" && symbol) return `marker:${symbol.type}:${symbol.id}`;
+  if (tool === "shape") return `shape:${shapeKind ?? "rectangle"}`;
+  if (tool === "text") return `text:${textPreset ?? "standard"}`;
+  return tool;
+}
+
+function shortcutLabel(
+  tool: EditorActiveTool,
+  symbol?: DroMapMarkerSymbol,
+  shapeKind?: DroMapZoneShapeKind,
+  textPreset?: TextPreset,
+) {
+  if (tool === "marker" && symbol) {
+    return getMarkerSymbolLabel({ properties: { symbol } });
+  }
+  if (tool === "text") {
+    if (textPreset === "title") return "Titre";
+    if (textPreset === "caption") return "Légende";
+    return "Texte";
+  }
+  if (tool === "curved-line") return "Trait courbe";
+  if (tool === "trace-line") return "Suivi de trait";
+  return getActiveToolLabel(tool, shapeKind ?? "rectangle");
+}
 
 type ToolButtonRowProps = {
   label: string;
   displayLabel?: string;
-  active: boolean;
-  settingsOpen?: boolean;
-  hasSettings?: boolean;
+  active?: boolean;
   icon: ReactNode;
-  settingsLabel?: string;
+  picker?: PickerCategory | "imports";
   onClick: () => void;
-  onSettingsClick?: () => void;
-};
-
-
-type MarkerToolButtonRowProps = {
-  active: boolean;
-  symbolsOpen: boolean;
-  styleOpen: boolean;
-  icon: ReactNode;
-  onClick: () => void;
-  onSymbolsClick: () => void;
-  onStyleClick: () => void;
 };
 
 function SettingsGlyph() {
@@ -291,26 +310,6 @@ function CycleGlyph() {
       <path d="m8 17 3-7h3l2 4" />
       <path d="m10 10-2-2" />
       <path d="M13 7h3" />
-    </svg>
-  );
-}
-
-function MarkerLibraryGlyph() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className="h-3.5 w-3.5"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="4" y="4" width="6" height="6" rx="1" />
-      <rect x="14" y="4" width="6" height="6" rx="1" />
-      <rect x="4" y="14" width="6" height="6" rx="1" />
-      <rect x="14" y="14" width="6" height="6" rx="1" />
     </svg>
   );
 }
@@ -1214,19 +1213,6 @@ function getLineToolIcon(tool: LineToolChoice) {
   return <ClassicLineGlyph />;
 }
 
-function getActiveLineToolLabel(tool: LineToolChoice) {
-  if (tool === "curved-line") return "Trait courbe";
-  if (tool === "freehand") {
-    return "Dessin libre";
-  }
-
-  if (tool === "trace-line") {
-    return "Suivi de trait";
-  }
-
-  return "Trait classique";
-}
-
 function getZoneToolIcon(tool: ZoneToolChoice, shapeKind: DroMapZoneShapeKind) {
   if (tool === "freehand-zone") {
     return <FreehandZoneGlyph />;
@@ -1246,24 +1232,22 @@ function getZoneToolIcon(tool: ZoneToolChoice, shapeKind: DroMapZoneShapeKind) {
 function ToolButtonRow({
   label,
   displayLabel,
-  active,
-  settingsOpen = false,
-  hasSettings = false,
+  active = false,
   icon,
-  settingsLabel,
+  picker,
   onClick,
-  onSettingsClick,
 }: ToolButtonRowProps) {
   return (
-    <div className="flex justify-center gap-1">
+    <div className="flex w-full justify-center">
       <button
         type="button"
         data-dromap-tool-control="true"
-        aria-pressed={active}
+        data-dromap-tool-picker={picker}
+        aria-pressed={picker === "imports" ? active : undefined}
         onClick={onClick}
         className={[
-          "flex h-12 w-14 flex-col items-center justify-center gap-0.5 rounded-2xl border px-1 shadow-sm transition",
-          active
+          "flex h-12 w-full flex-col items-center justify-center gap-0.5 rounded-2xl border px-1 shadow-sm transition",
+          picker === "imports" && active
             ? "border-blue-700 bg-blue-600 text-white shadow-blue-200/70"
             : "border-neutral-200 bg-white text-neutral-800 hover:border-blue-300 hover:bg-blue-50/60",
         ].join(" ")}
@@ -1274,98 +1258,6 @@ function ToolButtonRow({
           {displayLabel ?? label}
         </span>
       </button>
-
-      {hasSettings ? (
-        <button
-          type="button"
-          data-dromap-tool-control="true"
-          aria-label={settingsLabel ?? `Paramètres ${label}`}
-          onClick={onSettingsClick}
-          className={[
-            "flex h-12 w-5 items-center justify-center rounded-xl border shadow-sm transition",
-            settingsOpen
-              ? "border-blue-700 bg-blue-700 text-white"
-              : active
-                ? "border-blue-500 bg-blue-500 text-white hover:bg-blue-700"
-                : "border-neutral-200 bg-white text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-900",
-          ].join(" ")}
-          title={settingsLabel ?? `Ouvrir les paramètres ${label}`}
-        >
-          <SettingsGlyph />
-        </button>
-      ) : (
-        <span className="block h-12 w-5" />
-      )}
-    </div>
-  );
-}
-
-function MarkerToolButtonRow({
-  active,
-  symbolsOpen,
-  styleOpen,
-  icon,
-  onClick,
-  onSymbolsClick,
-  onStyleClick,
-}: MarkerToolButtonRowProps) {
-  function smallButtonClass(isOpen: boolean) {
-    return [
-      "flex h-[22px] w-5 items-center justify-center rounded-md border leading-none shadow-sm transition",
-      isOpen
-        ? "border-blue-700 bg-blue-700 text-white"
-        : active
-          ? "border-blue-500 bg-blue-500 text-white hover:bg-blue-700"
-          : "border-neutral-200 bg-white text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-900",
-    ].join(" " );
-  }
-
-  return (
-    <div className="flex justify-center gap-1">
-      <button
-        type="button"
-        data-dromap-tool-control="true"
-        aria-pressed={active}
-        onClick={onClick}
-        className={[
-          "flex h-12 w-12 flex-col items-center justify-center gap-0.5 rounded-2xl border px-1 shadow-sm transition",
-          active
-            ? "border-blue-700 bg-blue-600 text-white shadow-blue-200/70"
-            : "border-neutral-200 bg-white text-neutral-800 hover:border-blue-300 hover:bg-blue-50/60",
-        ].join(" " )}
-        title="Marqueur"
-      >
-        <span className="flex h-7 items-center justify-center rounded-lg bg-white/85 px-1 text-neutral-900">
-          {icon}
-        </span>
-        <span className="whitespace-nowrap text-[8px] font-extrabold uppercase leading-none tracking-normal">
-          Marqueur
-        </span>
-      </button>
-
-      <div className="flex h-12 w-5 flex-col gap-1">
-        <button
-          type="button"
-          data-dromap-tool-control="true"
-          aria-label="Choisir le type de marqueur"
-          onClick={onSymbolsClick}
-          className={smallButtonClass(symbolsOpen)}
-          title="Choisir le type de marqueur"
-        >
-          <MarkerLibraryGlyph />
-        </button>
-
-        <button
-          type="button"
-          data-dromap-tool-control="true"
-          aria-label="Paramètres du marqueur"
-          onClick={onStyleClick}
-          className={smallButtonClass(styleOpen)}
-          title="Paramètres du marqueur"
-        >
-          <SettingsGlyph />
-        </button>
-      </div>
     </div>
   );
 }
@@ -1488,6 +1380,10 @@ export default function ModeToolbar({
   );
   const [lineToolChoice, setLineToolChoice] = useState<LineToolChoice>("line");
   const [zoneToolChoice, setZoneToolChoice] = useState<ZoneToolChoice>("zone");
+  const [pickerCategory, setPickerCategory] = useState<PickerCategory | null>(null);
+  const shortcuts = useEditorToolShortcutsStore((state) => state.shortcuts);
+  const setShortcuts = useEditorToolShortcutsStore((state) => state.setShortcuts);
+  const [activeShortcutKey, setActiveShortcutKey] = useState<string | null>(null);
   const [importsOpen, setImportsOpen] = useState(false);
   const [contactOpen, setContactOpen] = useState(false);
   const [importsPanelTop, setImportsPanelTop] = useState(8);
@@ -1595,16 +1491,6 @@ export default function ModeToolbar({
   const markerSymbolGroups = markerSearchResult.groups;
   const markerSymbolCount = markerSearchResult.count;
 
-  const lineToolActive =
-    activeTool === "line" ||
-    activeTool === "curved-line" ||
-    activeTool === "freehand" ||
-    activeTool === "trace-line";
-  const zoneToolActive =
-    activeTool === "zone" ||
-    activeTool === "freehand-zone" ||
-    activeTool === "fill-zone" ||
-    activeTool === "shape";
   const lineSettingsOpen =
     openSettingsTool === "line" ||
     openSettingsTool === "curved-line" ||
@@ -1623,7 +1509,26 @@ export default function ModeToolbar({
 
   const canResetCurrentSettings =
     openSettingsTool !== null &&
+    pickerCategory === null &&
     (openSettingsTool !== "marker" || markerSettingsStep === "style");
+
+  useEffect(() => {
+    if (!activeShortcutKey) return;
+    setShortcuts((current) => current.map((shortcut) => {
+      if (shortcut.key !== activeShortcutKey || shortcut.tool !== activeTool) return shortcut;
+      if (shortcut.tool === "marker" && shortcut.markerStyle !== markerStyle) return { ...shortcut, markerStyle };
+      if (["line", "curved-line", "freehand", "trace-line"].includes(shortcut.tool) && shortcut.lineStyle !== lineStyle) return { ...shortcut, lineStyle };
+      if (["zone", "freehand-zone", "fill-zone", "shape"].includes(shortcut.tool) && shortcut.zoneStyle !== zoneStyle) return { ...shortcut, zoneStyle };
+      if (shortcut.tool === "text" && shortcut.textStyle !== textStyle) return { ...shortcut, textStyle };
+      return shortcut;
+    }));
+  }, [activeShortcutKey, activeTool, lineStyle, markerStyle, setShortcuts, textStyle, zoneStyle]);
+
+  useEffect(() => {
+    if (activeShortcutKey && shortcuts.find((shortcut) => shortcut.key === activeShortcutKey)?.tool !== activeTool) {
+      setActiveShortcutKey(null);
+    }
+  }, [activeShortcutKey, activeTool, shortcuts]);
 
   useEffect(() => {
     if (currentMode !== "edit") {
@@ -1631,6 +1536,8 @@ export default function ModeToolbar({
       setOpenSettingsTool(null);
       setImportsOpen(false);
       setMarkerSettingsStep("symbols");
+      setPickerCategory(null);
+      setActiveShortcutKey(null);
     }
   }, [currentMode, resetActiveTool]);
 
@@ -1762,44 +1669,129 @@ export default function ModeToolbar({
     updateZoneStyle({ zoneFillEnabled: nextValue });
   }
 
-  function togglePlacementTool(isActive: boolean, openSettings: () => void) {
-    if (isActive) {
-      setImportsOpen(false);
+  function rememberShortcut(
+    tool: EditorActiveTool,
+    symbol?: DroMapMarkerSymbol,
+    shapeKind?: DroMapZoneShapeKind,
+    textPreset?: TextPreset,
+  ) {
+    const key = shortcutKey(tool, symbol, shapeKind, textPreset);
+    const existing = shortcuts.find((item) => item.key === key);
+    if (existing?.markerStyle) updateMarkerStyle(existing.markerStyle);
+    if (existing?.lineStyle) updateLineStyle(existing.lineStyle);
+    if (existing?.zoneStyle) updateZoneStyle(existing.zoneStyle);
+    if (existing?.textStyle) updateTextStyle(existing.textStyle);
+    const options = useEditorDrawingOptionsStore.getState();
+    const lastUsed = Math.max(0, ...shortcuts.map((item) => item.lastUsed)) + 1;
+    const shortcut: ToolShortcut = {
+      key,
+      tool,
+      label: shortcutLabel(tool, symbol, shapeKind, textPreset),
+      lastUsed,
+      symbol,
+      shapeKind,
+      textPreset,
+      markerStyle: tool === "marker" ? options.markerStyle : undefined,
+      lineStyle: ["line", "curved-line", "freehand", "trace-line"].includes(tool) ? options.lineStyle : undefined,
+      zoneStyle: ["zone", "freehand-zone", "fill-zone", "shape"].includes(tool) ? options.zoneStyle : undefined,
+      textStyle: tool === "text" ? options.textStyle : undefined,
+    };
+    setShortcuts((current) => {
+      const existingIndex = current.findIndex((item) => item.key === key);
+      if (existingIndex >= 0) {
+        return current.map((item, index) => index === existingIndex ? { ...item, lastUsed: shortcut.lastUsed } : item);
+      }
+      if (current.length < 4) return [...current, shortcut];
+      const oldestIndex = current.reduce(
+        (oldest, item, index) => item.lastUsed < current[oldest].lastUsed ? index : oldest,
+        0,
+      );
+      return current.map((item, index) => index === oldestIndex ? shortcut : item);
+    });
+    setActiveShortcutKey(key);
+    setPickerCategory(null);
+  }
+
+  function openPicker(category: PickerCategory) {
+    resetActiveTool();
+    setActiveShortcutKey(null);
+    setPickerCategory(category);
+    bringSettingsPanelToFront();
+    setOpenSettingsTool(category === "line" ? "line" : category === "zone" ? "zone" : category);
+    if (category === "marker") {
+      void loadMarkerSymbolCatalog().catch(() => undefined);
+      setMarkerSettingsStep("symbols");
+      scrollMarkerSettingsToTop();
+    }
+  }
+
+  function activateShortcut(shortcut: ToolShortcut) {
+    if (activeShortcutKey === shortcut.key && activeTool === shortcut.tool) {
       resetActiveTool();
+      setActiveShortcutKey(null);
       setOpenSettingsTool(null);
       return;
     }
-
-    openSettings();
+    if (shortcut.tool === "trace-line" && !canUseTraceToolOnCurrentBasemap) {
+      openPicker("line");
+      return;
+    }
+    if (shortcut.tool === "fill-zone" && !canUseFillToolOnCurrentBasemap) {
+      openPicker("zone");
+      return;
+    }
+    if (shortcut.tool === "marker" && shortcut.symbol) {
+      setMarkerSymbol(shortcut.symbol);
+      if (shortcut.markerStyle) updateMarkerStyle(shortcut.markerStyle);
+      setMarkerSettingsStep("style");
+    } else if (["line", "curved-line", "freehand", "trace-line"].includes(shortcut.tool)) {
+      setLineToolChoice(shortcut.tool as LineToolChoice);
+      if (shortcut.lineStyle) updateLineStyle(shortcut.lineStyle);
+    } else if (["zone", "freehand-zone", "fill-zone", "shape"].includes(shortcut.tool)) {
+      setZoneToolChoice(shortcut.tool as ZoneToolChoice);
+      if (shortcut.zoneStyle) updateZoneStyle(shortcut.zoneStyle);
+      if (shortcut.shapeKind) updateZoneStyle({ zoneShapeKind: shortcut.shapeKind });
+    } else if (shortcut.tool === "text" && shortcut.textStyle) {
+      updateTextStyle(shortcut.textStyle);
+    }
+    setActiveTool(shortcut.tool);
+    setActiveShortcutKey(shortcut.key);
+    setShortcuts((current) => current.map((item) =>
+      item.key === shortcut.key
+        ? { ...item, lastUsed: Math.max(0, ...current.map((entry) => entry.lastUsed)) + 1 }
+        : item,
+    ));
+    setPickerCategory(null);
+    bringSettingsPanelToFront();
+    setOpenSettingsTool(shortcut.tool);
   }
 
-  function openMarkerSymbolLibrary(toggle = true) {
-    void loadMarkerSymbolCatalog().catch(() => undefined);
-    setActiveTool("marker");
+  function openShortcutSettings(shortcut: ToolShortcut) {
+    if (activeShortcutKey !== shortcut.key || activeTool !== shortcut.tool) {
+      activateShortcut(shortcut);
+      return;
+    }
+    const isOpen = openSettingsTool === shortcut.tool &&
+      pickerCategory === null &&
+      (shortcut.tool !== "marker" || markerSettingsStep === "style");
+    if (isOpen) {
+      setOpenSettingsTool(null);
+      return;
+    }
+    if (shortcut.tool === "marker") setMarkerSettingsStep("style");
+    setPickerCategory(null);
     bringSettingsPanelToFront();
-    setOpenSettingsTool((current) => {
-      if (toggle && current === "marker" && markerSettingsStep === "symbols") {
-        return null;
-      }
-
-      return "marker";
-    });
-    setMarkerSettingsStep("symbols");
-    scrollMarkerSettingsToTop();
+    setOpenSettingsTool(shortcut.tool);
   }
 
-  function openMarkerStyleSettings() {
-    setActiveTool("marker");
+  function chooseTextPreset(preset: TextPreset) {
+    if (preset === "title") updateTextStyle({ fontSize: 36, textBold: true });
+    if (preset === "caption") updateTextStyle({ fontSize: 14, textBold: false });
+    if (preset === "standard") updateTextStyle({ fontSize: 22, textBold: false });
+    setActiveTool("text");
+    rememberShortcut("text", undefined, undefined, preset);
     bringSettingsPanelToFront();
-    setOpenSettingsTool((current) => {
-      if (current === "marker" && markerSettingsStep === "style") {
-        return null;
-      }
-
-      return "marker";
-    });
-    setMarkerSettingsStep("style");
-    scrollMarkerSettingsToTop();
+    setOpenSettingsTool("text");
   }
 
   function scrollToMarkerCategory(categoryId: string) {
@@ -1810,56 +1802,6 @@ export default function ModeToolbar({
         .getElementById(getMarkerCategoryElementId(categoryId))
         ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }, 0);
-  }
-
-  function openLineSettings(toggle = true) {
-    const nextLineTool =
-      lineToolChoice === "trace-line" && !canUseTraceToolOnCurrentBasemap
-        ? "line"
-        : lineToolChoice;
-
-    if (nextLineTool !== lineToolChoice) {
-      setLineToolChoice(nextLineTool);
-    }
-
-    setActiveTool(nextLineTool);
-    bringSettingsPanelToFront();
-    setOpenSettingsTool((current) =>
-      toggle && (current === "line" ||
-        current === "curved-line" ||
-        current === "freehand" ||
-        current === "trace-line")
-        ? null
-        : nextLineTool,
-    );
-  }
-
-  function openZoneSettings(toggle = true) {
-    const nextZoneTool =
-      zoneToolChoice === "fill-zone" && !canUseFillToolOnCurrentBasemap
-        ? "zone"
-        : zoneToolChoice;
-
-    if (nextZoneTool !== zoneToolChoice) {
-      setZoneToolChoice(nextZoneTool);
-    }
-
-    setActiveTool(nextZoneTool);
-    bringSettingsPanelToFront();
-    setOpenSettingsTool((current) =>
-      toggle && (current === "zone" ||
-        current === "freehand-zone" ||
-        current === "fill-zone" ||
-        current === "shape")
-        ? null
-        : nextZoneTool,
-    );
-  }
-
-  function openTextSettings(toggle = true) {
-    setActiveTool("text");
-    bringSettingsPanelToFront();
-    setOpenSettingsTool((current) => toggle && current === "text" ? null : "text");
   }
 
   function chooseLineTool(tool: LineToolChoice) {
@@ -1874,6 +1816,7 @@ export default function ModeToolbar({
 
     setLineToolChoice(tool);
     setActiveTool(tool);
+    rememberShortcut(tool);
     bringSettingsPanelToFront();
     setOpenSettingsTool(tool);
   }
@@ -1897,6 +1840,7 @@ export default function ModeToolbar({
 
     setZoneToolChoice(tool);
     setActiveTool(tool);
+    rememberShortcut(tool, undefined, tool === "shape" ? zoneStyle.zoneShapeKind : undefined);
     bringSettingsPanelToFront();
     setOpenSettingsTool(tool);
   }
@@ -2000,6 +1944,67 @@ export default function ModeToolbar({
           {EDITOR_MODE_LABELS[currentMode]}
         </div>
 
+        {currentMode === "edit" && workspaceBounds && shortcuts.length > 0 ? (
+          <div
+            data-dromap-tool-shortcuts="true"
+            role="group"
+            aria-label="Raccourcis d’outils"
+            className="flex flex-col gap-1 border-b border-neutral-200 pb-2"
+          >
+            <span className="text-center text-[9px] font-bold uppercase tracking-wide text-neutral-500">Raccourcis</span>
+            {Array.from({ length: 4 }, (_, index) => {
+              const shortcut = shortcuts[index];
+              if (!shortcut) {
+                return <span key={index} aria-hidden="true" className="mx-auto h-12 w-16 rounded-xl border border-dashed border-neutral-200 bg-neutral-50" />;
+              }
+              const active = activeShortcutKey === shortcut.key && activeTool === shortcut.tool;
+              const settingsOpen = active && openSettingsTool === shortcut.tool &&
+                pickerCategory === null && (shortcut.tool !== "marker" || markerSettingsStep === "style");
+              const icon = shortcut.tool === "marker" && shortcut.symbol
+                ? <MarkerSymbolPreview
+                    symbol={shortcut.symbol}
+                    color={shortcut.markerStyle?.color ?? markerStyle.color}
+                    size={21}
+                    weight={shortcut.markerStyle?.weight ?? markerStrokeWeight}
+                    markerFilled={shortcut.markerStyle?.markerFilled ?? false}
+                  />
+                : ["line", "curved-line", "freehand", "trace-line"].includes(shortcut.tool)
+                  ? getLineToolIcon(shortcut.tool as LineToolChoice)
+                  : ["zone", "freehand-zone", "fill-zone", "shape"].includes(shortcut.tool)
+                    ? getZoneToolIcon(shortcut.tool as ZoneToolChoice, shortcut.shapeKind ?? "rectangle")
+                    : <span className="text-xl leading-none">T</span>;
+              return (
+                <div key={shortcut.key} className="flex w-full items-center justify-center gap-1">
+                  <button
+                    type="button"
+                    data-dromap-tool-control="true"
+                    data-dromap-tool-shortcut={shortcut.key}
+                    aria-label={`Raccourci ${shortcut.label}`}
+                    aria-pressed={active}
+                    title={shortcut.label}
+                    onClick={() => activateShortcut(shortcut)}
+                    className={`flex h-12 w-11 flex-col items-center justify-center rounded-xl border px-1 shadow-sm transition ${active ? "border-blue-700 bg-blue-600 text-white" : "border-neutral-200 bg-white text-neutral-800 hover:border-blue-300 hover:bg-blue-50"}`}
+                  >
+                    <span className="flex h-7 items-center justify-center">{icon}</span>
+                    <span className="max-w-full truncate text-[8px] font-bold leading-none">{shortcut.label}</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-dromap-tool-control="true"
+                    data-dromap-tool-shortcut-settings={shortcut.key}
+                    aria-label={`Paramètres de ${shortcut.label}`}
+                    aria-expanded={settingsOpen}
+                    onClick={() => openShortcutSettings(shortcut)}
+                    className={`flex h-12 w-5 items-center justify-center rounded-xl border shadow-sm transition ${settingsOpen ? "border-blue-700 bg-blue-700 text-white" : "border-neutral-200 bg-white text-neutral-600 hover:border-blue-300 hover:bg-blue-50"}`}
+                  >
+                    <SettingsGlyph />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
         {currentMode === "workspace-select" ? (
           <div className="rounded-xl border border-dashed border-neutral-300 bg-neutral-50 px-2 py-3 text-center text-[10px] leading-tight text-neutral-600">
             Trace la zone directement sur la carte.
@@ -2012,65 +2017,45 @@ export default function ModeToolbar({
             role="toolbar"
             aria-label="Outils d’édition DroMap"
           >
-            <MarkerToolButtonRow
-              active={activeTool === "marker"}
-              symbolsOpen={
-                openSettingsTool === "marker" && markerSettingsStep === "symbols"
-              }
-              styleOpen={
-                openSettingsTool === "marker" && markerSettingsStep === "style"
-              }
+            <ToolButtonRow
+              label="Marqueur"
+              displayLabel="Marqueur"
+              picker="marker"
               icon={
                 <MarkerSymbolPreview
-                  symbol={markerSymbol}
-                  color={markerStyle.color}
+                  symbol={{ type: "builtin", id: "circle" }}
+                  color="#000000"
                   opacity={1}
                   size={26}
-                  weight={markerStrokeWeight}
-                  markerFilled={markerFilledEnabled}
+                  weight={DEFAULT_MARKER_STROKE_WIDTH}
+                  markerFilled
                 />
               }
-              onClick={() =>
-                togglePlacementTool(activeTool === "marker", () => openMarkerSymbolLibrary(false))
-              }
-              onSymbolsClick={() => openMarkerSymbolLibrary()}
-              onStyleClick={openMarkerStyleSettings}
+              onClick={() => openPicker("marker")}
             />
 
             <ToolButtonRow
-              label={getActiveLineToolLabel(lineToolChoice)}
+              label="Traits"
               displayLabel="Traits"
-              active={lineToolActive}
-              settingsOpen={lineSettingsOpen}
-              hasSettings
-              icon={getLineToolIcon(lineToolChoice)}
-              settingsLabel="Choisir le type de trait et régler son style"
-              onClick={() => togglePlacementTool(lineToolActive, () => openLineSettings(false))}
-              onSettingsClick={() => openLineSettings()}
+              picker="line"
+              icon={<ClassicLineGlyph />}
+              onClick={() => openPicker("line")}
             />
 
             <ToolButtonRow
-              label={getActiveToolLabel(zoneToolChoice, zoneStyle.zoneShapeKind)}
+              label="Zones"
               displayLabel="Zones"
-              active={zoneToolActive}
-              settingsOpen={zoneSettingsOpen}
-              hasSettings
-              icon={getZoneToolIcon(zoneToolChoice, zoneStyle.zoneShapeKind)}
-              settingsLabel="Choisir le type de zone et régler son style"
-              onClick={() => togglePlacementTool(zoneToolActive, () => openZoneSettings(false))}
-              onSettingsClick={() => openZoneSettings()}
+              picker="zone"
+              icon={<PolygonGlyph />}
+              onClick={() => openPicker("zone")}
             />
 
             <ToolButtonRow
               label="Texte"
               displayLabel="Texte"
-              active={activeTool === "text"}
-              settingsOpen={openSettingsTool === "text"}
-              hasSettings
+              picker="text"
               icon="T"
-              settingsLabel="Paramètres Texte"
-              onClick={() => togglePlacementTool(activeTool === "text", () => openTextSettings(false))}
-              onSettingsClick={() => openTextSettings()}
+              onClick={() => openPicker("text")}
             />
 
             {embedded ? (
@@ -2083,6 +2068,7 @@ export default function ModeToolbar({
                   }
                   displayLabel="Imports"
                   active={importsOpen}
+                  picker="imports"
                   icon={<ImportsGlyph />}
                   onClick={toggleImportsPanel}
                 />
@@ -2386,6 +2372,7 @@ export default function ModeToolbar({
                                       : {}),
                                   });
                                   setActiveTool("marker");
+                                  rememberShortcut("marker", { type: "builtin", id: option.id });
                                   setMarkerSettingsStep("style");
                                   scrollMarkerSettingsToTop();
                                 }}
@@ -2432,6 +2419,7 @@ export default function ModeToolbar({
                         ),
                       });
                       setActiveTool("marker");
+                      rememberShortcut("marker", symbol);
                       setMarkerSettingsStep("style");
                       scrollMarkerSettingsToTop();
                     }}
@@ -2851,11 +2839,12 @@ export default function ModeToolbar({
                         <button
                           key={option.value}
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
                             updateZoneStyle({
                               zoneShapeKind: option.value as DroMapZoneShapeKind,
-                            })
-                          }
+                            });
+                            rememberShortcut("shape", undefined, option.value as DroMapZoneShapeKind);
+                          }}
                           className={[
                             "flex flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-center transition",
                             zoneStyle.zoneShapeKind === option.value
@@ -3234,7 +3223,28 @@ export default function ModeToolbar({
             </div>
           ) : null}
 
-          {openSettingsTool === "text" ? (
+          {openSettingsTool === "text" && pickerCategory === "text" ? (
+            <div className="space-y-2">
+              <p className="text-xs text-neutral-600">Choisis un format de texte. Tu pourras ensuite régler sa taille et son style.</p>
+              {([
+                ["standard", "Texte", "Texte courant, 22 px"],
+                ["title", "Titre", "Titre gras, 36 px"],
+                ["caption", "Légende", "Petite annotation, 14 px"],
+              ] as const).map(([preset, label, description]) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => chooseTextPreset(preset)}
+                  className="flex w-full flex-col rounded-xl border border-neutral-200 bg-white px-3 py-2 text-left transition hover:border-blue-300 hover:bg-blue-50"
+                >
+                  <span className="font-semibold text-neutral-900">{label}</span>
+                  <span className="text-[11px] text-neutral-500">{description}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {openSettingsTool === "text" && pickerCategory !== "text" ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <span>Couleur</span>

@@ -38,6 +38,7 @@ import {
   useEditorExportStore,
 } from "@/stores/editor-export";
 import { useEditorToolStore } from "@/stores/editor-tool";
+import { useEditorToolShortcutsStore, type EditorToolShortcut } from "@/stores/editor-tool-shortcuts";
 import { useEditorModeStore } from "@/stores/editor-mode";
 import { useEditorMapViewStore } from "@/stores/editor-map-view";
 import type { ImportedDromapProject } from "@/editor/project-file-import";
@@ -111,6 +112,7 @@ export type DromapEditorProjectSnapshot = {
   activeLayerId?: string;
   geoJsonLayers?: DromapGeoJsonLayer[];
   customMarkers?: DroMapCustomMarkerDefinition[];
+  toolShortcuts?: EditorToolShortcut[];
   exportSettings?: DromapEditorExportSettings;
 };
 
@@ -613,6 +615,7 @@ export function createDromapEditorProjectSnapshot(): DromapEditorProjectSnapshot
     activeLayerId: layersState.activeLayerId,
     geoJsonLayers: cloneValue(geoJsonState.geoJsonLayers),
     customMarkers: cloneValue(customMarkersState.customMarkers),
+    toolShortcuts: cloneValue(useEditorToolShortcutsStore.getState().shortcuts),
     exportSettings,
   };
 }
@@ -640,6 +643,7 @@ export function createBlankDromapEditorProjectSnapshot(
     activeLayerId: layer.id,
     geoJsonLayers: [],
     customMarkers: [],
+    toolShortcuts: [],
     exportSettings: getDefaultDromapEditorExportSettings(),
   };
 }
@@ -666,6 +670,7 @@ export function createDromapEditorSnapshotFromImportedProject(
     activeLayerId: imported.layers[0]?.id ?? "",
     geoJsonLayers: cloneValue(imported.geoJsonLayers),
     customMarkers: cloneValue(imported.customMarkers),
+    toolShortcuts: [],
     exportSettings: {
       legendTitle: imported.legendTitle,
       legendPosition: imported.legendPosition,
@@ -735,6 +740,7 @@ export function restoreDromapEditorProjectSnapshot(
   const activeLayerId = snapshot.activeLayerId ?? null;
 
   useEditorToolStore.getState().resetActiveTool();
+  useEditorToolShortcutsStore.getState().restoreShortcuts(snapshot.toolShortcuts);
   useEditorSelectionStore.getState().clearSelectedFeatureId();
   useEditorLayersStore.getState().setLayers(cloneValue(layers), activeLayerId);
   useEditorGeoJsonLayersStore

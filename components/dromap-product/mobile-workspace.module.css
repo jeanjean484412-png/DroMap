@@ -346,6 +346,20 @@
     gap: 0.75rem;
   }
 
+  .editor :global([data-dromap-tool-shortcuts="true"]) {
+    flex-direction: row;
+    flex-shrink: 0;
+    align-items: center;
+    border-right: 1px solid #e2e8f0;
+    border-bottom: 0;
+    padding-right: 0.5rem;
+    padding-bottom: 0;
+  }
+
+  .editor :global([data-dromap-tool-shortcuts="true"]) > span:first-child {
+    display: none;
+  }
+
   .editor :global([data-dromap-tool-settings-panel="true"]) {
     top: auto !important;
     left: 0;

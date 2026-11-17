@@ -46,6 +46,7 @@ type TourDetail = {
 
 type TourStep = {
   selector: string;
+  fallbackSelector?: string;
   title: string;
   titleContent?: ReactNode;
   description: string;
@@ -54,541 +55,39 @@ type TourStep = {
 
 const TOUR_STEPS: TourStep[] = [
   {
-    selector: '[data-dromap-tour="topbar"]',
-    title: "La barre du projet",
+    selector: '[data-dromap-tour="tools"]',
+    title: "Choisir un outil",
     description:
-      "Nom de la carte, état de sauvegarde, Annuler/Rétablir (Ctrl + Z, Ctrl + Y), accès au tutoriel et aux aides, ainsi qu’à Légende & Rendu final.",
+      "Ouvre Marqueur, Traits, Zones ou Texte, puis choisis un symbole ou un type dans la bibliothèque. Ses paramètres s’ouvrent et l’outil apparaît dans les raccourcis au-dessus.",
     details: [],
   },
   {
-    selector: '[data-dromap-tour="tools"]',
-    title: "Les outils de création",
+    selector: '[data-dromap-tool-shortcuts="true"]',
+    fallbackSelector: '[data-dromap-tour="tools"]',
+    title: "Retrouver ses raccourcis",
     description:
-      "Cette barre regroupe les outils d’édition principaux : marqueurs, traits, zones, textes et imports cartographiques. Les petits boutons de paramètres règlent l’apparence des objets avant leur pose ; les objets déjà créés se modifient ensuite dans l’inspecteur.",
-    details: [
-      {
-        label: "Marqueur",
-        explanation:
-          "Active l’outil Marqueur. Choisis ensuite un symbole puis clique sur la carte pour le poser.",
-        target: { title: "Marqueur" },
-      },
-      {
-        label: "Choisir le type de marqueur",
-        explanation:
-          "Ce bouton ouvre la bibliothèque de symboles : pictogrammes DroMap, formes simples et marqueurs personnalisés. Il sert à choisir le symbole ; l’autre bouton règle son apparence.",
-        target: { ariaLabel: "Choisir le type de marqueur" },
-      },
-      {
-        label: "Réglages du prochain marqueur",
-        explanation:
-          "Cette fenêtre prépare le prochain marqueur : taille visuelle, couleur, opacité, épaisseur du contour et remplissage lorsque le symbole le permet. Le symbole lui-même se choisit avec le bouton de bibliothèque juste au-dessus. Fermer cette fenêtre ne supprime pas les réglages déjà choisis.",
-        target: { selector: '[data-dromap-tool-settings-panel="true"]' },
-        openToolSettings: "marker",
-      },
-      {
-        label: "Traits",
-        explanation:
-          "Ouvre les quatre façons de dessiner une ligne. Trait classique relie des points, Trait courbe permet de modeler une ligne avec des poignées, Dessin libre suit la souris et Suivi de trait longe une frontière ou une ligne déjà visible sur la carte.",
-        target: { text: "Traits" },
-      },
-      {
-        label: "Réglages des prochains traits",
-        explanation:
-          "Cette fenêtre permet d’abord de choisir le type de trait, puis son apparence : couleur, opacité, épaisseur, trait plein/tireté/pointillé, flèche au début ou à la fin et, pour les outils concernés, les paramètres propres au dessin libre ou au suivi.",
-        target: { selector: '[data-dromap-tool-settings-panel="true"]' },
-        openToolSettings: "line",
-      },
-      {
-        label: "Trait classique",
-        explanation:
-          "À utiliser pour obtenir une ligne nette composée de segments : relier plusieurs villes, montrer un axe, tracer un itinéraire simplifié, une séparation ou une flèche. Clique successivement aux endroits où la ligne doit passer. Chaque clic ajoute un point et DroMap relie ces points. C’est le mode le plus simple pour contrôler précisément le trajet de la ligne. Un double-clic au point d’arrivée arrête le trait.",
-        target: { text: "Trait classique" },
-        openToolSettings: "line",
-      },
-      {
-        label: "Trait courbe",
-        explanation:
-          "Clique au départ puis à l’arrivée pour créer le trait. Sélectionne-le et déplace sa poignée centrale pour le courber sans créer d’angles. Pour ajouter une autre courbure, double-clique directement à l’endroit souhaité sur le trait : une nouvelle poignée apparaît, que tu peux déplacer. Les poignées des extrémités déplacent le départ et l’arrivée. Échap quitte la création en cours ; Annuler permet de revenir sur une modification.",
-        target: { text: "Trait courbe" },
-        openToolSettings: "line",
-      },
-      {
-        label: "Dessin libre",
-        explanation:
-          "Le trait suit le déplacement de la souris : contour approximatif, trajet dessiné rapidement, ligne courbe ou annotation. Maintiens le clic et déplace la souris, puis relâche pour arrêter le trait. Le réglage de lissage permet ensuite de rendre le geste plus ou moins régulier.",
-        target: { text: "Dessin libre" },
-        openToolSettings: "line",
-      },
-      {
-        label: "Suivi de trait",
-        explanation:
-          "À utiliser pour suivre précisément une ligne qui existe déjà sur la carte, par exemple une frontière, le contour d’une région ou une ligne provenant d’un fichier GeoJSON. Clique et fais glisser près de la ligne : DroMap s’y accroche et la suit. Ce mode n’est disponible que si la carte contient une ligne exploitable ; s’il est grisé, il faut choisir un fond blanc avec frontières ou afficher un calque contenant des lignes ou des contours.",
-        target: { text: "Suivi de trait" },
-        openToolSettings: "line",
-      },
-      {
-        label: "Zones",
-        explanation:
-          "Ouvre les différentes façons de créer une surface. Ce menu sert à dessiner une zone point par point, à la dessiner à main levée, à reprendre directement le contour d’un territoire déjà visible, ou à poser rapidement un rectangle, un cercle ou une ellipse.",
-        target: { text: "Zones" },
-      },
-      {
-        label: "Réglages des prochaines zones",
-        explanation:
-          "Cette fenêtre permet de choisir le type de zone puis de préparer son rendu : contour, fond, couleurs, opacité, épaisseur, hachures, semis de points et options spécifiques aux formes ou au remplissage. Ces paramètres s’appliquent aux prochaines zones et restent ensuite éditables objet par objet.",
-        target: { selector: '[data-dromap-tool-settings-panel="true"]' },
-        openToolSettings: "zone",
-      },
-      {
-        label: "Zone classique",
-        explanation:
-          "À utiliser pour dessiner soi-même une surface avec des angles précis : zone d’influence, espace contrôlé, quartier, secteur d’étude ou toute forme personnalisée. Clique point par point autour de la surface à délimiter. DroMap relie les points pour former la zone.",
-        target: { text: "Zone classique" },
-        openToolSettings: "zone",
-      },
-      {
-        label: "Zone libre",
-        explanation:
-          "À utiliser pour entourer rapidement une surface à main levée : aire approximative, zone de risque, espace diffus ou contour volontairement irrégulier. Maintiens le bouton de la souris et dessine le contour comme avec un crayon. Le lissage permet de rendre ensuite le contour plus propre sans devoir poser chaque angle un par un.",
-        target: { text: "Zone libre" },
-        openToolSettings: "zone",
-      },
-      {
-        label: "Remplissage",
-        explanation:
-          "À utiliser quand le territoire à colorer existe déjà sur la carte. Par exemple, sur un fond blanc avec frontières, il est possible de cliquer directement sur un pays, une région ou un département pour reprendre son contour exact ; cela fonctionne aussi avec certaines zones provenant d’un calque GeoJSON. Si le bouton est grisé, la carte ne contient actuellement aucune surface dont DroMap peut reprendre automatiquement le contour.",
-        target: { text: "Remplissage" },
-        openToolSettings: "zone",
-      },
-      {
-        label: "Forme rapide",
-        explanation:
-          "À utiliser pour mettre en évidence une partie de la carte avec une forme propre. Le rectangle, le cercle et l’ellipse sont disponibles et se posent en deux clics. C’est pratique pour encadrer une ville, entourer une zone d’attention ou créer un repère graphique simple.",
-        target: { text: "Forme rapide" },
-        openToolSettings: "zone",
-      },
-      {
-        label: "Texte",
-        explanation:
-          "Active l’outil Texte. Clique ensuite sur la carte pour placer un texte. Son contenu et son apparence restent modifiables après la pose dans l’inspecteur.",
-        target: { title: "Texte" },
-      },
-      {
-        label: "Réglages du prochain texte",
-        explanation:
-          "Cette fenêtre prépare l’apparence du texte avant sa pose : taille, gras, italique, rotation, contour des lettres, fond et cadre. Après la pose, le contenu et ces propriétés restent modifiables depuis l’inspecteur.",
-        target: { selector: '[data-dromap-tool-settings-panel="true"]' },
-        openToolSettings: "text",
-      },
-      {
-        label: "Imports",
-        explanation:
-          "Ouvre le panneau Imports cartographiques depuis la barre verticale. Il regroupe les données que DroMap peut récupérer directement dans ta zone de travail, comme les bâtiments et les routes.",
-        target: { selector: '[data-dromap-tour="imports-launcher"] button' },
-      },
-      {
-        label: "Bâtiments",
-        explanation:
-          "Recherche les bâtiments présents dans la zone de travail. Tu peux ajouter toute la zone dans un calque GeoJSON léger ou choisir précisément les bâtiments à conserver comme objets DroMap éditables.",
-        target: { selector: '[data-dromap-tour="imports-buildings"]' },
-        ghost: "cartographic-imports",
-      },
-      {
-        label: "Limites de l’analyse",
-        explanation:
-          "DroMap mesure d’abord la zone de travail et choisit automatiquement la source adaptée. Une analyse peut aller jusqu’à 15 000 bâtiments ; si la zone est trop vaste ou trop dense, elle est refusée avant le téléchargement pour protéger les performances de l’éditeur.",
-        target: { selector: '[data-dromap-tour="buildings-import-limit"]' },
-        ghost: "buildings-import-demo",
-        importExplanationStage: "panel",
-      },
-      {
-        label: "Analyser les bâtiments",
-        explanation:
-          "Lance la recherche des bâtiments qui touchent la zone de travail. DroMap compte d’abord les résultats, puis te laisse choisir entre un calque complet léger et une sélection précise de bâtiments.",
-        target: { selector: '[data-dromap-tour="buildings-import-analyze"]' },
-        ghost: "buildings-import-demo",
-        importExplanationStage: "panel",
-      },
-      {
-        label: "Ajouter le calque complet",
-        explanation:
-          "Ajoute tous les bâtiments trouvés dans un seul calque GeoJSON. C’est le choix le plus fluide pour afficher et styliser beaucoup de bâtiments sans créer des milliers d’objets individuels.",
-        target: { selector: '[data-dromap-tour="buildings-import-choice-all"]' },
-        ghost: "buildings-import-demo",
-        importExplanationStage: "choice",
-      },
-      {
-        label: "Ouvrir la sélection",
-        explanation:
-          "Ouvre la zone en plein écran pour choisir uniquement les bâtiments utiles. Les bâtiments conservés deviennent des objets DroMap éditables individuellement.",
-        target: { selector: '[data-dromap-tour="buildings-import-choice-select"]' },
-        ghost: "buildings-import-demo",
-        importExplanationStage: "choice",
-      },
-      {
-        label: "Bâtiments disponibles",
-        explanation:
-          "Le cadre correspond à la zone de travail. Les bâtiments sélectionnés sont orange et les autres restent clairs. Clique sur une empreinte pour l’ajouter ou la retirer de la sélection.",
-        target: { selector: '[data-dromap-tour="buildings-import-selection-map"]' },
-        additionalTargets: [{ selector: '[data-dromap-tour="buildings-import-selection-count"]' }],
-        ghost: "buildings-import-demo",
-        importExplanationStage: "selection",
-      },
-      {
-        label: "Nombre sélectionné",
-        explanation:
-          "Ce compteur indique en permanence combien de bâtiments seront ajoutés au projet si la sélection est validée.",
-        target: { selector: '[data-dromap-tour="buildings-import-selected-count"]' },
-        ghost: "buildings-import-demo",
-        importExplanationStage: "selection",
-      },
-      {
-        label: "Chercher les noms par coordonnées",
-        explanation:
-          "Quand certains bâtiments sélectionnés n’ont pas de nom, cette recherche utilise leurs coordonnées pour proposer des noms proches. Elle est volontairement limitée aux bâtiments ciblés et les propositions ne sont jamais appliquées automatiquement.",
-        target: { selector: '[data-dromap-tour="buildings-import-name-search"]' },
-        ghost: "buildings-import-demo",
-        importExplanationStage: "selection",
-      },
-      {
-        label: "Vérifier les noms proposés",
-        explanation:
-          "DroMap affiche les noms trouvés avec une indication de confiance et de distance. Garde uniquement les propositions qui correspondent réellement aux bâtiments sélectionnés.",
-        target: { selector: '[data-dromap-tour="buildings-import-name-proposals"]' },
-        ghost: "buildings-import-demo",
-        importExplanationStage: "name-proposals",
-      },
-      {
-        label: "Valider les bâtiments",
-        explanation:
-          "Ajoute les bâtiments actuellement sélectionnés. Si l’import est relancé, les bâtiments déjà présents sont présélectionnés : en désélectionner un puis valider le retire réellement du projet, sans créer de doublon.",
-        target: { selector: '[data-dromap-tour="buildings-import-selection-validate"]' },
-        ghost: "buildings-import-demo",
-        importExplanationStage: "selection",
-      },
-      {
-        label: "Routes",
-        explanation:
-          "Recherche les routes présentes dans la zone de travail. Il faut d’abord choisir les niveaux de réseau à prendre en compte, puis il sera possible d’importer tout le résultat ou de sélectionner seulement les axes utiles. Les routes restent dans un calque GeoJSON.",
-        target: { selector: '[data-dromap-tour="imports-routes"]' },
-        ghost: "cartographic-imports",
-      },
-      {
-        label: "Choisir les niveaux de routes",
-        explanation:
-          "Cocher Autoroutes, Nationales / principales, Départementales / secondaires ou Petites routes. On peut combiner plusieurs niveaux ou utiliser Tout sélectionner.",
-        target: { selector: '[data-dromap-tour="routes-import-categories"]' },
-        ghost: "routes-import-demo",
-        importExplanationStage: "panel",
-      },
-      {
-        label: "Vérifier la limite de zone",
-        explanation:
-          "La taille maximale dépend de la catégorie la plus détaillée cochée. Les autoroutes seules peuvent être recherchées sur une très grande zone ; les petites routes demandent une zone beaucoup plus réduite.",
-        target: { selector: '[data-dromap-tour="routes-import-limit"]' },
-        ghost: "routes-import-demo",
-        importExplanationStage: "panel",
-      },
-      {
-        label: "Analyser les routes",
-        explanation:
-          "Lance la recherche des axes correspondant aux catégories choisies.",
-        target: { selector: '[data-dromap-tour="routes-import-analyze"]' },
-        ghost: "routes-import-demo",
-        importExplanationStage: "panel",
-      },
-      {
-        label: "Importer toutes les routes",
-        explanation:
-          "Conserve directement tous les axes trouvés dans un seul calque GeoJSON.",
-        target: { selector: '[data-dromap-tour="routes-import-choice-all"]' },
-        ghost: "routes-import-demo",
-        importExplanationStage: "choice",
-      },
-      {
-        label: "Ouvrir la sélection",
-        explanation:
-          "Affiche les routes trouvées sur la carte pour ne conserver que les axes utiles. Même après une sélection partielle, le résultat reste un seul calque GeoJSON.",
-        target: { selector: '[data-dromap-tour="routes-import-choice-select"]' },
-        ghost: "routes-import-demo",
-        importExplanationStage: "choice",
-      },
-      {
-        label: "Routes disponibles",
-        explanation:
-          "Les routes sélectionnées apparaissent en orange. Cliquer sur un axe pour l’ajouter ou le retirer de la sélection avant validation.",
-        target: { selector: '[data-dromap-tour="routes-import-selection-map"]' },
-        additionalTargets: [{ selector: '[data-dromap-tour="routes-import-selection-count"]' }],
-        ghost: "routes-import-demo",
-        importExplanationStage: "selection",
-      },
-      {
-        label: "Valider les routes",
-        explanation:
-          "Enregistre la sélection dans le calque Routes. Lors d’une nouvelle analyse, les routes déjà présentes sont présélectionnées : celles que l’on désélectionne sont retirées du même calque et les nouvelles sont ajoutées.",
-        target: { selector: '[data-dromap-tour="routes-import-selection-validate"]' },
-        ghost: "routes-import-demo",
-        importExplanationStage: "selection",
-      },
-      {
-        label: "À venir",
-        explanation:
-          "Cet emplacement est réservé aux prochains imports cartographiques. Envoyez un message à contact@dromap.fr par e-mail ou directement depuis DroMap pour effectuer une demande.",
-        target: { selector: '[data-dromap-tour="imports-cycle"]' },
-        ghost: "cartographic-imports",
-      },
-    ],
+      "Clique sur un raccourci pour activer ou désactiver l’outil ; ses réglages sont juste à côté. Le projet en garde jusqu’à quatre après fermeture. Une fois les places remplies, le moins récemment utilisé est remplacé. Ctrl + Z ne les efface pas.",
+    details: [],
   },
   {
     selector: '[data-dromap-tour="map-visible-area"]',
-    title: "La carte centrale",
+    title: "Créer sur la carte",
     description:
-      "Dessine, sélectionne et déplace directement les objets. Il est possible de modifier la zone de travail, le fond de carte et les calques. Il est aussi possible de rechercher un lieu.",
-    details: [
-      {
-        label: "Zone de travail",
-        explanation:
-          "Trace une nouvelle zone en deux clics ou étire le rectangle existant grâce aux poignées des angles et des côtés. Le monde entier peut aussi être sélectionné lorsque le fond de carte le permet.",
-        target: { text: "Zone de travail" },
-      },
-      {
-        label: "Navigation libre",
-        explanation:
-          "Débloque temporairement un zoom continu et fluide à l’intérieur de la zone pour rechercher un élément avec davantage de précision, sans modifier le cadrage du rendu final.",
-        target: { ariaLabel: "Navigation libre" },
-      },
-      {
-        label: "Fond de carte",
-        explanation:
-          "Ouvre le catalogue des fonds. Le changement de fond conserve la zone, le centre et le zoom lorsque la zone existe déjà.",
-        target: { selector: '[data-dromap-basemap-control="true"] > button' },
-      },
-      {
-        label: "Calques",
-        explanation:
-          "Ouvre la fenêtre des calques pour gérer le calque actif, l’ordre, la visibilité, l’opacité, le verrouillage et les bibliothèques.",
-        target: { selector: '[data-dromap-layers-trigger="true"]' },
-      },
-      {
-        label: "Assistant IA",
-        explanation:
-          "Ouvre l’assistant pour poser une question ou préparer des créations structurées. L’IA propose un plan qu’il est possible de modifier.",
-        target: { text: "Assistant IA" },
-      },
-      {
-        label: "Rechercher un lieu",
-        explanation:
-          "Recherche un lieu ou des coordonnées et indique le résultat avec un repère temporaire. La zone de travail est conservée.",
-        target: { text: "Rechercher un lieu" },
-      },
-    ],
+      "Clique sur la carte pour placer l’outil choisi. Fond de carte et Calque permettent de préparer l’affichage.",
+    details: [],
   },
   {
     selector: '[data-dromap-tour="inspector"]',
-    title: "L’inspecteur",
+    title: "Modifier un objet",
     description:
-      "L’inspecteur est le panneau de contrôle de tout ce qui existe déjà sur la carte. Il ne sert pas à créer de nouveaux objets : il sert à modifier précisément la sélection actuelle, retrouver les objets du projet et gérer leurs étiquettes. En cliquant sur un objet de la carte, l’inspecteur s’ouvre automatiquement sur Sélection. Il est possible de faire des sélections multiples.",
-    details: [
-      {
-        label: "Sélection",
-        explanation:
-          "C’est l’onglet principal pour travailler sur ce qui est déjà posé : nom, légende, style, taille, couleurs, verrouillage et autres réglages compatibles. En sélection multiple, les réglages communs permettent de modifier plusieurs objets ensemble.",
-        target: {
-          selector:
-            '[data-dromap-product-inspector="true"] [role="tab"][aria-selected="true"]',
-        },
-        ghost: "inspector",
-      },
-      {
-        label: "Modifier tous les marqueurs du même type dans ce calque",
-        explanation:
-          "Quand un marqueur est sélectionné, cette option permet d’appliquer les mêmes changements d’apparence à tous les marqueurs du même type présents dans le même calque. Par exemple, changer leur couleur ou leur taille en une seule fois. La même logique existe aussi pour les traits, les zones et les textes du même type dans leur calque. Leur position, leur forme propre, leur nom et leur contenu ne sont pas copiés, et les objets verrouillés restent protégés.",
-        target: { selector: '[data-dromap-tour="same-type-edit-control"]' },
-        ghost: "inspector",
-      },
-      {
-        label: "Objets",
-        explanation:
-          "C’est l’inventaire des objets du projet : il permet de retrouver un élément lorsque la carte est chargée, de le rechercher, de le sélectionner depuis la liste et, lorsque prévu, de recentrer volontairement la carte dessus. Il est particulièrement utile sur les cartes très chargées.",
-        target: { text: "Objets" },
-        ghost: "inspector",
-      },
-      {
-        label: "Étiquettes",
-        explanation:
-          "Cet onglet gère les noms et informations affichés près des objets : visibilité globale ou individuelle, taille, contour et placement. Il sert à organiser les étiquettes sans modifier la géométrie des objets.",
-        target: { text: "Étiquettes" },
-        ghost: "inspector",
-      },
-      {
-        label: "Sélection multiple",
-        explanation:
-          "Active la sélection multiple manuelle, puis clique sur les objets un par un. Ils restent tous sélectionnés. Il est aussi possible de sélectionner tous les objets d’une zone rectangulaire.",
-        target: { selector: '[data-dromap-tour="multi-selection-control"]' },
-        ghost: "inspector",
-      },
-    ],
-  },
-  {
-    selector: '[data-dromap-tour="import"]',
-    title: "Ajouter des données",
-    description:
-      "Le bouton Ajouter / Importer sert à intégrer un autre projet DroMap téléchargé, un fichier GeoJSON ou des calques déjà enregistrés. Une bibliothèque préchargée de données GeoJSON est aussi disponible.",
-    details: [
-      {
-        label: "Ajouter / Importer",
-        explanation:
-          "Ouvre les sources de données que l’on peut ajouter au projet courant sans remplacer son fond ni sa zone de travail.",
-        target: { selector: '[data-dromap-tour="import"]' },
-        explanationDetails: [
-          {
-            label: "La fenêtre Ajouter / Importer",
-            explanation:
-              "Cette fenêtre regroupe les imports de projet, les fichiers GeoJSON et les bibliothèques de calques. On choisit ici la source qui correspond à ce que l’on veut ajouter à la carte actuelle.",
-            target: { selector: '[data-dromap-tour="add-data-dialog"]' },
-            ghost: "add-data-demo",
-          },
-          {
-            label: "Ajouter un Projet DroMap",
-            explanation:
-              "Choisir un fichier Projet DroMap complet. DroMap vérifie son contenu avant d’ajouter ses objets, calques, GeoJSON et éléments de légende au projet courant. Le fond et la zone actuels restent conservés par défaut.",
-            target: { selector: '[data-dromap-tour="add-data-project-button"]' },
-            ghost: "add-data-demo",
-          },
-          {
-            label: "Importer un GeoJSON",
-            explanation:
-              "Sélectionne un fichier GeoJSON local. Après l’analyse, on peut le conserver comme calque GeoJSON léger ou le convertir en objets DroMap lorsque l’on a besoin de modifier chaque élément séparément.",
-            target: { selector: '[data-dromap-tour="add-data-geojson-button"]' },
-            ghost: "add-data-demo",
-          },
-          {
-            label: "Mes calques enregistrés",
-            explanation:
-              "Ouvre la bibliothèque personnelle pour réutiliser un calque DroMap ou GeoJSON déjà enregistré. Il est ajouté au projet courant comme une copie indépendante.",
-            target: { selector: '[data-dromap-tour="add-data-saved-layers-button"]' },
-            ghost: "add-data-demo",
-          },
-          {
-            label: "Bibliothèque GeoJSON",
-            explanation:
-              "Parcourir les données GeoJSON proposées dans DroMap et ajouter uniquement celles qui sont utiles à la carte. Les jeux volumineux peuvent rester sous forme de calque léger pour préserver les performances.",
-            target: { selector: '[data-dromap-tour="add-data-library"]' },
-            ghost: "add-data-demo",
-          },
-        ],
-      },
-    ],
+      "Clique sur un objet déjà posé : l’inspecteur permet de changer son nom, son style et ses étiquettes.",
+    details: [],
   },
   {
     selector: '[data-dromap-tour="render"]',
-    title: "Légende & Rendu final",
+    title: "Finaliser la carte",
     description:
-      "Cet écran permet de voir le rendu final de la carte avec la légende, de modifier cette légende et de calibrer les derniers détails souhaités avant d’exporter la carte dans le format souhaité.",
-    details: [
-      {
-        label: "Titre de la carte",
-        explanation:
-          "Ouvre les réglages du titre directement posé sur la carte. Saisir le texte, choisir sa taille et sa couleur, puis le déplacer dans l’aperçu.",
-        target: { text: "Titre de la carte" },
-        ghost: "render",
-      },
-      {
-        label: "+ Titre",
-        explanation:
-          "Crée ou réaffiche le titre principal de la légende. Il est distinct du titre de la carte.",
-        target: { text: "+ Titre" },
-        ghost: "render",
-      },
-      {
-        label: "+ Sous-titre",
-        explanation:
-          "Ajoute une section dans la légende. On peut ensuite déplacer des éléments de légende dans ce sous-titre.",
-        target: { text: "+ Sous-titre" },
-        ghost: "render",
-      },
-      {
-        label: "Masqués",
-        explanation:
-          "Ouvre la liste des éléments de légende masqués pour les réafficher. Le bouton n’apparaît que s’il existe au moins un élément masqué.",
-        target: { text: "Masqués" },
-        ghost: "render",
-      },
-      {
-        label: "Échelle",
-        explanation:
-          "Active ou ouvre les réglages de l’échelle. On peut aussi la glisser pour la placer librement sur la carte.",
-        target: { text: "Échelle" },
-        ghost: "render",
-      },
-      {
-        label: "Nord",
-        explanation:
-          "Active ou ouvre les réglages de la flèche du nord. On peut aussi la glisser pour la placer librement sur la carte.",
-        target: { text: "Nord" },
-        ghost: "render",
-      },
-      {
-        label: "Masquer les écritures du fond",
-        explanation:
-          "Masque les textes, cartouches, arrêts, pictogrammes et petits symboles du fond vectoriel compatible afin d’alléger la carte.",
-        target: { text: "Masquer les écritures du fond" },
-        ghost: "render",
-      },
-      {
-        label: "Détail du fond",
-        explanation:
-          "Déplacer ce curseur permet d’augmenter ou de réduire la quantité de détail du fond sans modifier la taille des objets DroMap.",
-        target: {
-          title:
-            "Change la quantité de détails du fond vectoriel sans modifier la zone de travail",
-        },
-        ghost: "render",
-      },
-      {
-        label: "Édition avancée de la légende",
-        explanation:
-          "Sert à modifier la légende plus précisément. Il est possible de modifier un seul figuré de légende, d’aligner la taille des figurés de légende avec celle des objets sur la carte, de créer un nouvel élément de légende, etc.",
-        target: { text: "Édition avancée" },
-        ghost: "render",
-      },
-      {
-        label: "Déplacer un élément de légende",
-        explanation:
-          "Utiliser la poignée de déplacement d’un figuré pour changer son ordre ou le déplacer dans un autre sous-titre, y compris lorsque la légende est posée sur la carte.",
-        target: { title: "Glisser pour réordonner cet élément dans la légende" },
-        ghost: "render",
-      },
-      {
-        label: "Télécharger",
-        explanation:
-          "Ouvre les formats de téléchargement disponibles et exporte la carte avec la qualité souhaitée.",
-        target: { text: "Télécharger" },
-        ghost: "render",
-      },
-    ],
-  },
-  {
-    selector: '[data-dromap-tour="help-controls"]',
-    title: "Tutoriel, informations et aide",
-    titleContent: (
-      <>
-        Il est possible de relancer ce tutoriel à tout moment en appuyant sur{" "}
-        <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-300 bg-white align-middle text-sm font-black text-slate-700 shadow-sm">
-          ?
-        </span>
-        , d’accéder aux informations de la carte en appuyant sur{" "}
-        <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-300 bg-white align-middle text-sm font-black text-slate-700 shadow-sm">
-          !
-        </span>{" "}
-        ou encore d’ouvrir la page d’aide avec{" "}
-        <span className="inline-flex h-7 items-center justify-center rounded-lg border border-slate-300 bg-white px-2 align-middle text-xs font-bold text-slate-700 shadow-sm">
-          Aide
-        </span>
-        .
-      </>
-    ),
-    description: "",
+      "Ouvre Légende & Rendu final pour vérifier la carte, ajuster sa légende et la télécharger. Le bouton ? permet de relancer ce tutoriel.",
     details: [],
   },
 ];
@@ -724,14 +223,7 @@ function getOpenToolSettingsType(): TourToolSettings | null {
 }
 
 function getToolSettingsButtonQuery(tool: TourToolSettings): TourTargetQuery {
-  if (tool === "marker") return { ariaLabel: "Paramètres du marqueur" };
-  if (tool === "line") {
-    return { ariaLabel: "Choisir le type de trait et régler son style" };
-  }
-  if (tool === "zone") {
-    return { ariaLabel: "Choisir le type de zone et régler son style" };
-  }
-  return { ariaLabel: "Paramètres Texte" };
+  return { selector: `[data-dromap-tool-picker="${tool}"]` };
 }
 
 function closeVisibleToolSettingsPanel() {
@@ -1990,7 +1482,11 @@ export function DromapEditorTour() {
     if (activeDetail) {
       return [activeDetail.target, ...(activeDetail.additionalTargets ?? [])];
     }
-    return [{ selector: currentStep.selector }];
+    const selector =
+      typeof document !== "undefined" && document.querySelector(currentStep.selector)
+        ? currentStep.selector
+        : currentStep.fallbackSelector ?? currentStep.selector;
+    return [{ selector }];
   }, [activeDetail, currentStep]);
 
   useEffect(() => {
@@ -2423,7 +1919,8 @@ export function DromapEditorTour() {
         ) : null}
 
 
-        <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
+        {explanationMode || detailedMode || currentStep.details.length > 0 ? (
+          <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
           {explanationMode ? (
             explanationReturnMode === "detail" ? (
               <button
@@ -2466,11 +1963,12 @@ export function DromapEditorTour() {
               Explications détaillées
             </button>
           ) : null}
-        </div>
+          </div>
+        ) : null}
       </section>
 
       <nav
-        className="fixed bottom-5 left-1/2 z-[4] flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-white/30 bg-white p-2 shadow-lg"
+        className="fixed bottom-5 left-1/2 z-[4] flex w-[calc(100vw-1rem)] -translate-x-1/2 items-center gap-2 rounded-2xl border border-white/30 bg-white p-2 shadow-lg sm:w-auto"
         aria-label="Navigation du tutoriel"
       >
         <button
@@ -2478,7 +1976,7 @@ export function DromapEditorTour() {
           data-dromap-tour-action="true"
           onClick={explanationMode ? previousExplanation : detailedMode ? previousDetail : previousStep}
           disabled={explanationMode ? explanationIndex === 0 : detailedMode ? detailIndex === 0 : stepIndex === 0}
-          className="min-w-[7.5rem] rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+          className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-2 py-2 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-w-[7.5rem] sm:flex-none sm:px-4"
         >
           Précédent
         </button>
@@ -2486,15 +1984,15 @@ export function DromapEditorTour() {
           type="button"
           data-dromap-tour-action="true"
           onClick={() => closeTour(true)}
-          className="min-w-[9.5rem] rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+          className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-2 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 sm:min-w-[7.5rem] sm:flex-none sm:px-4"
         >
-          Quitter le tutoriel
+          Quitter
         </button>
         <button
           type="button"
           data-dromap-tour-action="true"
           onClick={explanationMode ? nextExplanation : detailedMode ? nextDetail : nextStep}
-          className="min-w-[7.5rem] rounded-xl bg-teal-600 px-4 py-2 text-sm font-black text-white transition hover:bg-teal-500"
+          className="min-w-0 flex-1 rounded-xl bg-teal-600 px-2 py-2 text-sm font-black text-white transition hover:bg-teal-500 sm:min-w-[7.5rem] sm:flex-none sm:px-4"
         >
           {explanationMode
             ? explanationIndex !== null &&

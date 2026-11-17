@@ -20,6 +20,7 @@ import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
 import { useEditorBasemapStore } from "@/stores/editor-basemap";
 import { useEditorMapLabelsStore } from "@/stores/editor-map-labels";
 import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
+import { useEditorToolShortcutsStore } from "@/stores/editor-tool-shortcuts";
 import { useEditorExportStore } from "@/stores/editor-export";
 
 type SaveReason = "manual" | "automatic" | "navigation" | "unload";
@@ -336,6 +337,11 @@ export function DromapProjectAutosaveProvider({
         }
       },
     );
+    const unsubscribeShortcuts = useEditorToolShortcutsStore.subscribe(
+      (state, previous) => {
+        if (state.shortcuts !== previous.shortcuts) scheduleSignificantChange();
+      },
+    );
     const unsubscribeExport = useEditorExportStore.subscribe(
       (state, previous) => {
         if (exportStateChanged(state, previous)) scheduleSignificantChange();
@@ -408,6 +414,7 @@ export function DromapProjectAutosaveProvider({
       unsubscribeBasemap();
       unsubscribeLabels();
       unsubscribeMarkers();
+      unsubscribeShortcuts();
       unsubscribeExport();
       window.removeEventListener("beforeunload", handleBeforeUnload);
       window.removeEventListener("pagehide", handlePageHide);
