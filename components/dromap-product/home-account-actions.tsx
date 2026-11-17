@@ -39,7 +39,7 @@ export function DromapHomeAccountActions() {
   if (session.status === "loading") {
     return (
       <span
-        className="inline-flex min-w-[6.5rem] items-center justify-center rounded-lg px-3 py-2 text-sm font-semibold text-slate-400"
+        className="inline-flex min-w-[13rem] items-center justify-center rounded-lg px-3 py-2 text-sm font-semibold text-slate-400"
         aria-label="Vérification de la session"
       >
         Compte…
@@ -53,13 +53,24 @@ export function DromapHomeAccountActions() {
       : "Mon compte";
 
     return (
-      <Link
-        href="/account"
-        aria-label={accountLabel}
-        className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-950"
-      >
-        Mon compte
-      </Link>
+      <>
+        {session.status === "authenticated" ? (
+          <Link
+            href="/dashboard"
+            data-home-projects-link="true"
+            className="rounded-lg border border-[#1c4355]/25 bg-[#1c4355] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#2e6170]"
+          >
+            Mes projets
+          </Link>
+        ) : null}
+        <Link
+          href="/account"
+          aria-label={accountLabel}
+          className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-950"
+        >
+          Mon compte
+        </Link>
+      </>
     );
   }
 
