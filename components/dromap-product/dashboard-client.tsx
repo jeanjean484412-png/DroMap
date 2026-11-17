@@ -134,19 +134,26 @@ function ProjectCard({
               label={getProjectStatusLabel(project, userMode)}
             />
           </div>
-          <div className={`${styles.details} absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/95 via-slate-950/80 to-transparent px-4 pb-4 pt-12 text-white`}>
-            <h2 className="truncate text-base font-black">{project.name}</h2>
-            <p className="mt-1 truncate text-xs">{project.creatorName}</p>
-            <p className="mt-1 text-[11px]">Créé le {formatDate(project.createdAt)}</p>
-            <p className="text-[11px]">Modifié le {formatDate(project.updatedAt)}</p>
+          <div className={`${styles.details} absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/75 via-slate-950/40 to-transparent px-3 pb-2 pt-6 text-white`}>
+            <p className="truncate text-[11px] font-semibold">{project.creatorName}</p>
+            <p className="text-[10px]">Créé le {formatDate(project.createdAt)}</p>
+            <p className="text-[10px]">Modifié le {formatDate(project.updatedAt)}</p>
           </div>
         </div>
       </button>
 
       <div className="relative flex items-center justify-between border-t border-slate-100 px-4 py-3">
-        <span className="text-xs text-slate-500">
-          {project.setupComplete ? "Prêt à éditer" : `Étape ${project.setup.currentStep} sur 4`}
-        </span>
+        <button
+          type="button"
+          onClick={() => router.push(targetHref)}
+          className="min-w-0 flex-1 text-left focus-visible:rounded focus-visible:outline-2 focus-visible:outline-teal-600"
+          aria-label={`Ouvrir le projet ${project.name}`}
+        >
+          <h2 className="truncate text-sm font-black text-slate-950">{project.name}</h2>
+          {!project.setupComplete ? (
+            <span className="text-xs text-slate-500">Étape {project.setup.currentStep} sur 4</span>
+          ) : null}
+        </button>
         {!selectForSingleMap ? (
           <button
             type="button"
