@@ -22,6 +22,7 @@ import { useDromapProductStore } from "@/stores/dromap-product";
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
 import { resolveDromapPreferences, type DromapDashboardViewPreference } from "@/lib/dromap/preferences";
 import type { DromapPublicPublication } from "@/lib/dromap/publications";
+import styles from "./dashboard-project-card.module.css";
 
 const DashboardProjectExportDialog = dynamic(() => import("./dashboard-project-export-dialog").then((module) => module.DashboardProjectExportDialog), { ssr: false });
 const DashboardProjectPublicationDialog = dynamic(() => import("./dashboard-project-publication-dialog").then((module) => module.DashboardProjectPublicationDialog), { ssr: false });
@@ -79,13 +80,14 @@ function ProjectCard({
   const listView = viewMode === "list";
 
   return (
-    <article className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-teal-300">
+    <article className={`${styles.card} group relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm`}>
       <button
         type="button"
         onClick={() => router.push(targetHref)}
-        className={listView ? "block w-full text-left sm:grid sm:grid-cols-[14rem_minmax(0,1fr)]" : "block w-full text-left"}
+        aria-label={`Ouvrir le projet ${project.name}`}
+        className="block w-full text-left"
       >
-        <div className={listView ? "relative min-h-36 overflow-hidden bg-[#edf4f2] sm:min-h-32" : "relative aspect-[16/9] overflow-hidden bg-[#edf4f2]"}>
+        <div className={listView ? "relative h-36 overflow-hidden bg-[#edf4f2]" : "relative aspect-[16/9] overflow-hidden bg-[#edf4f2]"}>
           {project.thumbnailDataUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -116,11 +118,6 @@ function ProjectCard({
               </div>
             </div>
           )}
-          {project.thumbnailDataUrl ? (
-            <div className="absolute bottom-3 right-3 rounded-full border border-white/70 bg-slate-950/75 px-2.5 py-1 text-[11px] font-bold text-white">
-              Rendu enregistré
-            </div>
-          ) : null}
           {selectForSingleMap && project.setupComplete ? (
             <div className="absolute right-3 top-3 rounded-full border border-emerald-200 bg-emerald-600 px-2.5 py-1 text-[11px] font-black text-white shadow-sm">
               Sélectionner cette carte
@@ -137,17 +134,12 @@ function ProjectCard({
               label={getProjectStatusLabel(project, userMode)}
             />
           </div>
-        </div>
-        <div className={listView ? "flex min-w-0 flex-col justify-center p-4 sm:px-5" : "p-4"}>
-          <h2 className={listView ? "truncate text-lg font-black text-slate-950" : "truncate font-black text-slate-950"}>{project.name}</h2>
-          <div className="mt-1 text-xs text-slate-500">
-            {project.creatorName} · modifié le {formatDate(project.updatedAt)}
+          <div className={`${styles.details} absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/95 via-slate-950/80 to-transparent px-4 pb-4 pt-12 text-white`}>
+            <h2 className="truncate text-base font-black">{project.name}</h2>
+            <p className="mt-1 truncate text-xs">{project.creatorName}</p>
+            <p className="mt-1 text-[11px]">Créé le {formatDate(project.createdAt)}</p>
+            <p className="text-[11px]">Modifié le {formatDate(project.updatedAt)}</p>
           </div>
-          {listView ? (
-            <div className="mt-3 text-xs font-semibold text-slate-600">
-              {basemap.label} · {project.setupComplete ? "Prêt à éditer" : `Étape ${project.setup.currentStep} sur 4`}
-            </div>
-          ) : null}
         </div>
       </button>
 

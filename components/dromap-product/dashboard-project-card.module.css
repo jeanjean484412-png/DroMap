@@ -1,0 +1,33 @@
+.card {
+  transition: transform 180ms ease-out;
+}
+
+.card:is(:hover, :focus-within) {
+  z-index: 1;
+  transform: scale(1.025);
+}
+
+.details {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(6px);
+  transition: opacity 160ms ease-out, transform 180ms ease-out, visibility 180ms;
+}
+
+.card:is(:hover, :focus-within) .details {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .details {
+    transition: none;
+  }
+}
+
+:global(.dromap-reduce-motion) .card,
+:global(.dromap-reduce-motion) .details {
+  transition: none;
+}
