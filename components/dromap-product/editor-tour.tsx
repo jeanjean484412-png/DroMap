@@ -58,7 +58,7 @@ const TOUR_STEPS: TourStep[] = [
     selector: '[data-dromap-tour="tools"]',
     title: "Choisir un outil",
     description:
-      "Ouvre Marqueur, Traits, Zones ou Texte, puis choisis un symbole ou un type dans la bibliothèque. Ses paramètres s’ouvrent et l’outil apparaît dans les raccourcis au-dessus.",
+      "Choisis un symbole ou un type dans Marqueur, Traits ou Zones. L’outil apparaît dans les raccourcis et ses paramètres s’ouvrent. Le bouton Texte active directement l’outil et ouvre ses réglages.",
     details: [],
   },
   {
@@ -66,7 +66,7 @@ const TOUR_STEPS: TourStep[] = [
     fallbackSelector: '[data-dromap-tour="tools"]',
     title: "Retrouver ses raccourcis",
     description:
-      "Clique sur un raccourci pour activer ou désactiver l’outil ; ses réglages sont juste à côté. Le projet en garde jusqu’à quatre après fermeture. Une fois les places remplies, le moins récemment utilisé est remplacé. Ctrl + Z ne les efface pas.",
+      "Clique sur un raccourci pour activer l’outil et ouvrir ses réglages. Le projet en garde jusqu’à quatre après fermeture. Une fois les places remplies, le moins récemment utilisé est remplacé. Ctrl + Z ne les efface pas.",
     details: [],
   },
   {

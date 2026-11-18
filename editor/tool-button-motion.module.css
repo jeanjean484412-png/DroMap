@@ -1,0 +1,80 @@
+.textSuffix {
+  width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .launcher:hover .textSuffix {
+    width: 4ch;
+  }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .launcher:hover .pin {
+    animation: bouncePin 460ms ease-in-out;
+  }
+
+  .launcher:hover .pinShadow {
+    animation: softenPinShadow 460ms ease-in-out;
+  }
+
+  .launcher:hover .outline {
+    stroke-dasharray: 1 1;
+    animation: drawOutline 480ms ease-out;
+  }
+
+  .launcher:hover .vertices {
+    animation: revealVertices 480ms ease-out;
+  }
+
+  .launcher:hover .zoneFill {
+    animation: drawOutline 480ms ease-out, revealZoneFill 480ms ease-out;
+  }
+
+  .launcher:hover .importArrow {
+    animation: enterGrid 420ms ease-out;
+  }
+
+  .launcher:hover .textSuffix {
+    transition: width 480ms steps(4, end);
+  }
+
+  .libraryIcon {
+    transition: transform 150ms ease-out;
+  }
+
+  .libraryChoice:not(:disabled):is(:hover, :focus-visible) .libraryIcon {
+    transform: scale(1.14);
+  }
+}
+
+@keyframes bouncePin {
+  35% { transform: translateY(-5px); }
+  72% { transform: translateY(0) scale(1.08, 0.94); }
+}
+
+@keyframes softenPinShadow {
+  35% { opacity: 0.35; }
+}
+
+@keyframes drawOutline {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes revealVertices {
+  0%, 68% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes revealZoneFill {
+  0%, 72% { fill-opacity: 0; }
+  100% { fill-opacity: 0.18; }
+}
+
+@keyframes enterGrid {
+  from { transform: translate(5px, 5px); opacity: 0; }
+  40% { opacity: 1; }
+  to { transform: translate(0, 0); opacity: 1; }
+}

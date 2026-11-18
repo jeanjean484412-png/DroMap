@@ -13,6 +13,7 @@ import {
 
 import { normalizeImportedMarkerImage } from "./custom-marker-rendering";
 import { loadMarkerSymbolCatalog, getMarkerSymbolHtml } from "./marker-symbol";
+import motionStyles from "./tool-button-motion.module.css";
 import { useDromapProductRuntime } from "@/components/dromap-product/product-runtime";
 
 const CustomMarkerDesignerModal = dynamic(async () => {
@@ -71,7 +72,7 @@ function MarkerThumbnail({ marker }: { marker: DroMapCustomMarkerDefinition }) {
   return (
     <span
       aria-hidden="true"
-      className="pointer-events-none inline-flex h-12 w-12 items-center justify-center"
+      className={`${motionStyles.libraryIcon} pointer-events-none inline-flex h-12 w-12 items-center justify-center`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
@@ -238,10 +239,10 @@ export function CustomMarkerLibrary({
                 <div
                   key={marker.id}
                   className={[
-                    "relative rounded-xl border bg-white p-1.5 transition",
+                    "relative rounded-xl border bg-white p-1.5",
                     selected
                       ? "border-teal-500 bg-teal-50 ring-2 ring-teal-100"
-                      : "border-slate-200 hover:border-teal-300 hover:bg-teal-50/40",
+                      : "border-slate-200",
                   ].join(" ")}
                 >
                   <button
@@ -254,6 +255,7 @@ export function CustomMarkerLibrary({
                       onSelect({ type: symbolType, id: marker.id });
                     }}
                     className={[
+                      motionStyles.libraryChoice,
                       "flex w-full flex-col items-center gap-1 rounded-lg px-1 py-1.5 text-center",
                       personalLibraryLocked ? "cursor-pointer opacity-55" : "",
                     ].join(" ")}
@@ -337,9 +339,9 @@ export function CustomMarkerLibrary({
                 }
                 setDesignerMarker(null);
               }}
-              className="relative flex min-h-20 flex-col items-center justify-center gap-1 rounded-xl border border-teal-300 bg-white px-2 py-3 text-center text-teal-800 shadow-sm transition hover:border-teal-500"
+              className={`${motionStyles.libraryChoice} relative flex min-h-20 flex-col items-center justify-center gap-1 rounded-xl border border-teal-300 bg-white px-2 py-3 text-center text-teal-800 shadow-sm`}
             >
-              <span className="text-2xl">✎</span>
+              <span className={`${motionStyles.libraryIcon} text-2xl`} aria-hidden="true">✎</span>
               <strong className="text-[11px]">Dessiner un marqueur</strong>
               {!canCreateCustomMarkers ? (
                 <span className="absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-100 text-amber-800 ring-1 ring-amber-300">
@@ -357,9 +359,9 @@ export function CustomMarkerLibrary({
                 }
                 fileInputRef.current?.click();
               }}
-              className="relative flex min-h-20 flex-col items-center justify-center gap-1 rounded-xl border border-blue-300 bg-white px-2 py-3 text-center text-blue-800 shadow-sm transition hover:border-blue-500 disabled:cursor-wait disabled:opacity-60"
+              className={`${motionStyles.libraryChoice} relative flex min-h-20 flex-col items-center justify-center gap-1 rounded-xl border border-blue-300 bg-white px-2 py-3 text-center text-blue-800 shadow-sm disabled:cursor-wait disabled:opacity-60`}
             >
-              <span className="text-2xl">⇧</span>
+              <span className={`${motionStyles.libraryIcon} text-2xl`} aria-hidden="true">⇧</span>
               <strong className="text-[11px]">
                 {isImporting ? "Import en cours…" : "Importer un marqueur"}
               </strong>

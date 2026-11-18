@@ -5,19 +5,18 @@ import type { EditorActiveTool } from "@/stores/editor-tool";
 import type { useEditorDrawingOptionsStore } from "@/stores/editor-drawing-options";
 
 type DrawingOptions = ReturnType<typeof useEditorDrawingOptionsStore.getState>;
+type ShortcutTool = Exclude<EditorActiveTool, "select" | "edit" | "text">;
 
 export type EditorToolShortcut = {
   key: string;
-  tool: EditorActiveTool;
+  tool: ShortcutTool;
   label: string;
   lastUsed: number;
   symbol?: DroMapMarkerSymbol;
   shapeKind?: DroMapZoneShapeKind;
-  textPreset?: "standard" | "title" | "caption";
   markerStyle?: DrawingOptions["markerStyle"];
   lineStyle?: DrawingOptions["lineStyle"];
   zoneStyle?: DrawingOptions["zoneStyle"];
-  textStyle?: DrawingOptions["textStyle"];
 };
 
 type EditorToolShortcutsState = {
@@ -26,9 +25,9 @@ type EditorToolShortcutsState = {
   restoreShortcuts: (shortcuts: unknown) => void;
 };
 
-const shortcutTools = new Set<EditorActiveTool>([
+const shortcutTools = new Set<ShortcutTool>([
   "marker", "line", "curved-line", "freehand", "trace-line",
-  "zone", "freehand-zone", "fill-zone", "shape", "text",
+  "zone", "freehand-zone", "fill-zone", "shape",
 ]);
 
 function parseShortcuts(value: unknown): EditorToolShortcut[] {
@@ -40,7 +39,7 @@ function parseShortcuts(value: unknown): EditorToolShortcut[] {
     if (
       typeof shortcut.key !== "string" ||
       typeof shortcut.label !== "string" ||
-      !shortcutTools.has(shortcut.tool as EditorActiveTool) ||
+      shortcut.tool === undefined || !shortcutTools.has(shortcut.tool) ||
       typeof shortcut.lastUsed !== "number" ||
       !Number.isFinite(shortcut.lastUsed) ||
       keys.has(shortcut.key)

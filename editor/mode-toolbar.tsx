@@ -70,6 +70,7 @@ import { getEffectiveGeoJsonFeatureStyle } from "./geojson-layer-style";
 import { ColorPicker } from "./color-picker";
 import { useMarkerSymbolCatalog } from "./use-marker-symbol-catalog";
 import { CustomMarkerLibrary } from "./custom-marker-library";
+import motionStyles from "./tool-button-motion.module.css";
 import {
   DROMAP_OPEN_BUILDINGS_IMPORT_EVENT,
   DROMAP_OPEN_ROUTES_IMPORT_EVENT,
@@ -173,33 +174,25 @@ type ZoneToolChoice = Extract<
   "zone" | "freehand-zone" | "fill-zone" | "shape"
 >;
 type MarkerSettingsStep = "symbols" | "style";
-type PickerCategory = "marker" | "line" | "zone" | "text";
-type TextPreset = "standard" | "title" | "caption";
+type PickerCategory = "marker" | "line" | "zone";
+
 function shortcutKey(
-  tool: EditorActiveTool,
+  tool: ToolShortcut["tool"],
   symbol?: DroMapMarkerSymbol,
   shapeKind?: DroMapZoneShapeKind,
-  textPreset?: TextPreset,
 ) {
   if (tool === "marker" && symbol) return `marker:${symbol.type}:${symbol.id}`;
   if (tool === "shape") return `shape:${shapeKind ?? "rectangle"}`;
-  if (tool === "text") return `text:${textPreset ?? "standard"}`;
   return tool;
 }
 
 function shortcutLabel(
-  tool: EditorActiveTool,
+  tool: ToolShortcut["tool"],
   symbol?: DroMapMarkerSymbol,
   shapeKind?: DroMapZoneShapeKind,
-  textPreset?: TextPreset,
 ) {
   if (tool === "marker" && symbol) {
     return getMarkerSymbolLabel({ properties: { symbol } });
-  }
-  if (tool === "text") {
-    if (textPreset === "title") return "Titre";
-    if (textPreset === "caption") return "Légende";
-    return "Texte";
   }
   if (tool === "curved-line") return "Trait courbe";
   if (tool === "trace-line") return "Suivi de trait";
@@ -211,7 +204,7 @@ type ToolButtonRowProps = {
   displayLabel?: string;
   active?: boolean;
   icon: ReactNode;
-  picker?: PickerCategory | "imports";
+  picker: PickerCategory | "text" | "imports";
   onClick: () => void;
 };
 
@@ -237,6 +230,22 @@ function SettingsGlyph() {
   );
 }
 
+function MarkerPinGlyph() {
+  return (
+    <span className="relative grid h-7 w-7 place-items-center" aria-hidden="true">
+      <span className={`${motionStyles.pinShadow} absolute bottom-[3px] h-[3px] w-3 rounded-full bg-current text-neutral-400`} />
+      <span className={`${motionStyles.pin} relative origin-[50%_90%]`}>
+        <svg viewBox="0 0 24 24" className="h-7 w-7" fill="currentColor">
+          <path
+            fillRule="evenodd"
+            d="M12 3a6 6 0 0 0-6 6c0 4.2 4.7 9.2 5.5 10a.7.7 0 0 0 1 0c.8-.8 5.5-5.8 5.5-10a6 6 0 0 0-6-6Zm0 8.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
+          />
+        </svg>
+      </span>
+    </span>
+  );
+}
+
 function ImportsGlyph() {
   return (
     <svg
@@ -249,8 +258,8 @@ function ImportsGlyph() {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v4H4z" />
-      <path d="M17 14v6M14 17l3 3 3-3" />
+      <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" />
+      <path className={motionStyles.importArrow} d="m21 21-7-7m0 5v-5h5" />
     </svg>
   );
 }
@@ -326,11 +335,13 @@ function ClassicLineGlyph() {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="M3 18 10 10l6 4 9-9" />
-      <circle cx="3" cy="18" r="1.7" fill="currentColor" stroke="none" />
-      <circle cx="10" cy="10" r="1.7" fill="currentColor" stroke="none" />
-      <circle cx="16" cy="14" r="1.7" fill="currentColor" stroke="none" />
-      <circle cx="25" cy="5" r="1.7" fill="currentColor" stroke="none" />
+      <path className={motionStyles.outline} pathLength={1} d="M3 18 10 10l6 4 9-9" />
+      <g className={motionStyles.vertices} fill="currentColor" stroke="none">
+        <circle cx="3" cy="18" r="1.7" />
+        <circle cx="10" cy="10" r="1.7" />
+        <circle cx="16" cy="14" r="1.7" />
+        <circle cx="25" cy="5" r="1.7" />
+      </g>
     </svg>
   );
 }
@@ -384,13 +395,21 @@ function PolygonGlyph() {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="m5 6 9-3 9 6-3 11H8L3 13Z" fill="currentColor" fillOpacity="0.18" />
-      <circle cx="5" cy="6" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="14" cy="3" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="23" cy="9" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="20" cy="20" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="8" cy="20" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="3" cy="13" r="1.5" fill="currentColor" stroke="none" />
+      <path
+        className={`${motionStyles.outline} ${motionStyles.zoneFill}`}
+        pathLength={1}
+        d="m5 6 9-3 9 6-3 11H8L3 13Z"
+        fill="currentColor"
+        fillOpacity="0.18"
+      />
+      <g className={motionStyles.vertices} fill="currentColor" stroke="none">
+        <circle cx="5" cy="6" r="1.5" />
+        <circle cx="14" cy="3" r="1.5" />
+        <circle cx="23" cy="9" r="1.5" />
+        <circle cx="20" cy="20" r="1.5" />
+        <circle cx="8" cy="20" r="1.5" />
+        <circle cx="3" cy="13" r="1.5" />
+      </g>
     </svg>
   );
 }
@@ -494,7 +513,7 @@ const LINE_TOOL_CHOICES: {
 ];
 
 const ZONE_TOOL_CHOICES: {
-  value: ZoneToolChoice;
+  value: Exclude<ZoneToolChoice, "shape">;
   label: string;
   description: string;
   icon: ReactNode;
@@ -516,12 +535,6 @@ const ZONE_TOOL_CHOICES: {
     label: "Remplissage",
     description: "Clique une région ou un département vectoriel du fond.",
     icon: <PaintBucketGlyph />,
-  },
-  {
-    value: "shape",
-    label: "Forme rapide",
-    description: "Rectangle, cercle ou ellipse en deux clics.",
-    icon: <QuickShapeGlyph shapeKind="rectangle" />,
   },
 ];
 
@@ -1170,36 +1183,6 @@ function getSettingsTitle(openSettingsTool: EditorActiveTool) {
   return "Paramètres";
 }
 
-function getSettingsSubtitle(openSettingsTool: EditorActiveTool) {
-  if (openSettingsTool === "marker") {
-    return "Choix du pictogramme ou paramètres avant pose";
-  }
-
-  if (
-    openSettingsTool === "line" ||
-    openSettingsTool === "curved-line" ||
-    openSettingsTool === "freehand" ||
-    openSettingsTool === "trace-line"
-  ) {
-    return "Choix du type de trait et paramètres";
-  }
-
-  if (
-    openSettingsTool === "zone" ||
-    openSettingsTool === "freehand-zone" ||
-    openSettingsTool === "fill-zone" ||
-    openSettingsTool === "shape"
-  ) {
-    return "Choix du type de zone et paramètres";
-  }
-
-  if (openSettingsTool === "text") {
-    return "Style du texte avant pose";
-  }
-
-  return "";
-}
-
 function getLineToolIcon(tool: LineToolChoice) {
   if (tool === "curved-line") return LINE_TOOL_CHOICES.find((choice) => choice.value === tool)!.icon;
   if (tool === "freehand") {
@@ -1237,17 +1220,20 @@ function ToolButtonRow({
   picker,
   onClick,
 }: ToolButtonRowProps) {
+  const tracksSelection = picker === "text" || picker === "imports";
+
   return (
     <div className="flex w-full justify-center">
       <button
         type="button"
         data-dromap-tool-control="true"
         data-dromap-tool-picker={picker}
-        aria-pressed={picker === "imports" ? active : undefined}
+        aria-pressed={tracksSelection ? active : undefined}
         onClick={onClick}
         className={[
+          motionStyles.launcher,
           "flex h-12 w-full flex-col items-center justify-center gap-0.5 rounded-2xl border px-1 shadow-sm transition",
-          picker === "imports" && active
+          tracksSelection && active
             ? "border-blue-700 bg-blue-600 text-white shadow-blue-200/70"
             : "border-neutral-200 bg-white text-neutral-800 hover:border-blue-300 hover:bg-blue-50/60",
         ].join(" ")}
@@ -1492,15 +1478,19 @@ export default function ModeToolbar({
   const markerSymbolCount = markerSearchResult.count;
 
   const lineSettingsOpen =
-    openSettingsTool === "line" ||
-    openSettingsTool === "curved-line" ||
-    openSettingsTool === "freehand" ||
-    openSettingsTool === "trace-line";
+    pickerCategory === null && (
+      openSettingsTool === "line" ||
+      openSettingsTool === "curved-line" ||
+      openSettingsTool === "freehand" ||
+      openSettingsTool === "trace-line"
+    );
   const zoneSettingsOpen =
-    openSettingsTool === "zone" ||
-    openSettingsTool === "freehand-zone" ||
-    openSettingsTool === "fill-zone" ||
-    openSettingsTool === "shape";
+    pickerCategory === null && (
+      openSettingsTool === "zone" ||
+      openSettingsTool === "freehand-zone" ||
+      openSettingsTool === "fill-zone" ||
+      openSettingsTool === "shape"
+    );
 
   const settingsPanelWidth =
     openSettingsTool === "marker" && markerSettingsStep === "symbols"
@@ -1519,10 +1509,9 @@ export default function ModeToolbar({
       if (shortcut.tool === "marker" && shortcut.markerStyle !== markerStyle) return { ...shortcut, markerStyle };
       if (["line", "curved-line", "freehand", "trace-line"].includes(shortcut.tool) && shortcut.lineStyle !== lineStyle) return { ...shortcut, lineStyle };
       if (["zone", "freehand-zone", "fill-zone", "shape"].includes(shortcut.tool) && shortcut.zoneStyle !== zoneStyle) return { ...shortcut, zoneStyle };
-      if (shortcut.tool === "text" && shortcut.textStyle !== textStyle) return { ...shortcut, textStyle };
       return shortcut;
     }));
-  }, [activeShortcutKey, activeTool, lineStyle, markerStyle, setShortcuts, textStyle, zoneStyle]);
+  }, [activeShortcutKey, activeTool, lineStyle, markerStyle, setShortcuts, zoneStyle]);
 
   useEffect(() => {
     if (activeShortcutKey && shortcuts.find((shortcut) => shortcut.key === activeShortcutKey)?.tool !== activeTool) {
@@ -1571,6 +1560,7 @@ export default function ModeToolbar({
       resetActiveTool();
     }
     if (openSettingsTool === "trace-line") {
+      setPickerCategory("line");
       setOpenSettingsTool("line");
     }
   }, [
@@ -1592,6 +1582,7 @@ export default function ModeToolbar({
         resetActiveTool();
       }
       if (openSettingsTool === "fill-zone") {
+        setPickerCategory("zone");
         setOpenSettingsTool("zone");
       }
       return;
@@ -1670,31 +1661,27 @@ export default function ModeToolbar({
   }
 
   function rememberShortcut(
-    tool: EditorActiveTool,
+    tool: ToolShortcut["tool"],
     symbol?: DroMapMarkerSymbol,
     shapeKind?: DroMapZoneShapeKind,
-    textPreset?: TextPreset,
   ) {
-    const key = shortcutKey(tool, symbol, shapeKind, textPreset);
+    const key = shortcutKey(tool, symbol, shapeKind);
     const existing = shortcuts.find((item) => item.key === key);
     if (existing?.markerStyle) updateMarkerStyle(existing.markerStyle);
     if (existing?.lineStyle) updateLineStyle(existing.lineStyle);
     if (existing?.zoneStyle) updateZoneStyle(existing.zoneStyle);
-    if (existing?.textStyle) updateTextStyle(existing.textStyle);
     const options = useEditorDrawingOptionsStore.getState();
     const lastUsed = Math.max(0, ...shortcuts.map((item) => item.lastUsed)) + 1;
     const shortcut: ToolShortcut = {
       key,
       tool,
-      label: shortcutLabel(tool, symbol, shapeKind, textPreset),
+      label: shortcutLabel(tool, symbol, shapeKind),
       lastUsed,
       symbol,
       shapeKind,
-      textPreset,
       markerStyle: tool === "marker" ? options.markerStyle : undefined,
       lineStyle: ["line", "curved-line", "freehand", "trace-line"].includes(tool) ? options.lineStyle : undefined,
       zoneStyle: ["zone", "freehand-zone", "fill-zone", "shape"].includes(tool) ? options.zoneStyle : undefined,
-      textStyle: tool === "text" ? options.textStyle : undefined,
     };
     setShortcuts((current) => {
       const existingIndex = current.findIndex((item) => item.key === key);
@@ -1717,7 +1704,7 @@ export default function ModeToolbar({
     setActiveShortcutKey(null);
     setPickerCategory(category);
     bringSettingsPanelToFront();
-    setOpenSettingsTool(category === "line" ? "line" : category === "zone" ? "zone" : category);
+    setOpenSettingsTool(category);
     if (category === "marker") {
       void loadMarkerSymbolCatalog().catch(() => undefined);
       setMarkerSettingsStep("symbols");
@@ -1751,8 +1738,6 @@ export default function ModeToolbar({
       setZoneToolChoice(shortcut.tool as ZoneToolChoice);
       if (shortcut.zoneStyle) updateZoneStyle(shortcut.zoneStyle);
       if (shortcut.shapeKind) updateZoneStyle({ zoneShapeKind: shortcut.shapeKind });
-    } else if (shortcut.tool === "text" && shortcut.textStyle) {
-      updateTextStyle(shortcut.textStyle);
     }
     setActiveTool(shortcut.tool);
     setActiveShortcutKey(shortcut.key);
@@ -1784,12 +1769,10 @@ export default function ModeToolbar({
     setOpenSettingsTool(shortcut.tool);
   }
 
-  function chooseTextPreset(preset: TextPreset) {
-    if (preset === "title") updateTextStyle({ fontSize: 36, textBold: true });
-    if (preset === "caption") updateTextStyle({ fontSize: 14, textBold: false });
-    if (preset === "standard") updateTextStyle({ fontSize: 22, textBold: false });
+  function activateTextTool() {
     setActiveTool("text");
-    rememberShortcut("text", undefined, undefined, preset);
+    setActiveShortcutKey(null);
+    setPickerCategory(null);
     bringSettingsPanelToFront();
     setOpenSettingsTool("text");
   }
@@ -1805,14 +1788,7 @@ export default function ModeToolbar({
   }
 
   function chooseLineTool(tool: LineToolChoice) {
-    if (tool === "trace-line" && !canUseTraceToolOnCurrentBasemap) {
-      setLineToolChoice("line");
-      if (activeTool === "trace-line") {
-        resetActiveTool();
-      }
-      setOpenSettingsTool("line");
-      return;
-    }
+    if (tool === "trace-line" && !canUseTraceToolOnCurrentBasemap) return;
 
     setLineToolChoice(tool);
     setActiveTool(tool);
@@ -1821,15 +1797,8 @@ export default function ModeToolbar({
     setOpenSettingsTool(tool);
   }
 
-  function chooseZoneTool(tool: ZoneToolChoice) {
-    if (tool === "fill-zone" && !canUseFillToolOnCurrentBasemap) {
-      setZoneToolChoice("zone");
-      if (activeTool === "fill-zone") {
-        resetActiveTool();
-      }
-      setOpenSettingsTool("zone");
-      return;
-    }
+  function chooseZoneTool(tool: ZoneToolChoice, shapeKind?: DroMapZoneShapeKind) {
+    if (tool === "fill-zone" && !canUseFillToolOnCurrentBasemap) return;
 
     if (tool === "fill-zone" && zoneToolChoice !== "fill-zone") {
       updateZoneStyle({
@@ -1837,10 +1806,11 @@ export default function ModeToolbar({
         zoneStrokeEnabled: false,
       });
     }
+    if (shapeKind) updateZoneStyle({ zoneShapeKind: shapeKind });
 
     setZoneToolChoice(tool);
     setActiveTool(tool);
-    rememberShortcut(tool, undefined, tool === "shape" ? zoneStyle.zoneShapeKind : undefined);
+    rememberShortcut(tool, undefined, shapeKind);
     bringSettingsPanelToFront();
     setOpenSettingsTool(tool);
   }
@@ -1859,6 +1829,7 @@ export default function ModeToolbar({
     }
 
     setOpenSettingsTool(null);
+    setPickerCategory(null);
     setImportsOpen(true);
   }
 
@@ -1972,7 +1943,7 @@ export default function ModeToolbar({
                   ? getLineToolIcon(shortcut.tool as LineToolChoice)
                   : ["zone", "freehand-zone", "fill-zone", "shape"].includes(shortcut.tool)
                     ? getZoneToolIcon(shortcut.tool as ZoneToolChoice, shortcut.shapeKind ?? "rectangle")
-                    : <span className="text-xl leading-none">T</span>;
+                    : null;
               return (
                 <div key={shortcut.key} className="flex w-full items-center justify-center gap-1">
                   <button
@@ -2021,16 +1992,7 @@ export default function ModeToolbar({
               label="Marqueur"
               displayLabel="Marqueur"
               picker="marker"
-              icon={
-                <MarkerSymbolPreview
-                  symbol={{ type: "builtin", id: "circle" }}
-                  color="#000000"
-                  opacity={1}
-                  size={26}
-                  weight={DEFAULT_MARKER_STROKE_WIDTH}
-                  markerFilled
-                />
-              }
+              icon={<MarkerPinGlyph />}
               onClick={() => openPicker("marker")}
             />
 
@@ -2054,8 +2016,13 @@ export default function ModeToolbar({
               label="Texte"
               displayLabel="Texte"
               picker="text"
-              icon="T"
-              onClick={() => openPicker("text")}
+              active={activeTool === "text"}
+              icon={
+                <span className="inline-flex font-mono text-sm tracking-normal" aria-hidden="true">
+                  T<span className={motionStyles.textSuffix}>exte</span>
+                </span>
+              }
+              onClick={activateTextTool}
             />
 
             {embedded ? (
@@ -2146,7 +2113,7 @@ export default function ModeToolbar({
               type="button"
               data-dromap-tour="imports-buildings"
               onClick={openBuildingsImport}
-              className="flex w-full items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-left font-bold text-amber-950 transition hover:bg-amber-100"
+              className={`${motionStyles.libraryChoice} flex w-full items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-left font-bold text-amber-950`}
               title={
                 productRuntimeEnabled && !capabilities.canImportBuildings
                   ? "Importer des bâtiments — accès premium"
@@ -2154,7 +2121,7 @@ export default function ModeToolbar({
               }
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-amber-800 shadow-sm">
-                <BuildingsGlyph />
+                <span className={motionStyles.libraryIcon}><BuildingsGlyph /></span>
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block">
@@ -2173,7 +2140,7 @@ export default function ModeToolbar({
               type="button"
               data-dromap-tour="imports-routes"
               onClick={openRoutesImport}
-              className="flex w-full items-center gap-3 rounded-xl border border-slate-300 bg-white px-3 py-3 text-left font-bold text-slate-900 transition hover:border-slate-400 hover:bg-slate-50"
+              className={`${motionStyles.libraryChoice} flex w-full items-center gap-3 rounded-xl border border-slate-300 bg-white px-3 py-3 text-left font-bold text-slate-900`}
               title={
                 productRuntimeEnabled && !capabilities.canImportBuildings
                   ? "Importer des routes — accès premium"
@@ -2181,7 +2148,7 @@ export default function ModeToolbar({
               }
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-700 shadow-sm">
-                <RoadGlyph />
+                <span className={motionStyles.libraryIcon}><RoadGlyph /></span>
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block">
@@ -2238,7 +2205,11 @@ export default function ModeToolbar({
                 {getSettingsTitle(openSettingsTool)}
               </strong>
               <span className="text-[11px] text-neutral-500">
-                {getSettingsSubtitle(openSettingsTool)}
+                {pickerCategory === "line" || pickerCategory === "zone"
+                  ? "Choisis un type dans la bibliothèque"
+                  : markerLibraryOpen
+                    ? "Choisis un pictogramme"
+                    : "Paramètres avant la pose"}
               </span>
             </div>
 
@@ -2258,7 +2229,10 @@ export default function ModeToolbar({
               <button
                 type="button"
                 data-dromap-tool-control="true"
-                onClick={() => setOpenSettingsTool(null)}
+                onClick={() => {
+                  setOpenSettingsTool(null);
+                  setPickerCategory(null);
+                }}
                 className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-bold text-neutral-800 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700"
               >
                 Fermer
@@ -2270,7 +2244,7 @@ export default function ModeToolbar({
             markerSettingsStep === "symbols" ? (
               <div className="space-y-3">
                 <div className="rounded-lg bg-neutral-50 px-2 py-2 text-[11px] leading-snug text-neutral-600">
-                  Choisis le marqueur à poser. Le bouton de la toolbar prendra ensuite cette image.
+                  Choisis un marqueur à poser. Son pictogramme apparaîtra dans les raccourcis.
                 </div>
 
                 <div className="border-t border-neutral-200 pt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
@@ -2377,24 +2351,27 @@ export default function ModeToolbar({
                                   scrollMarkerSettingsToTop();
                                 }}
                                 className={[
-                                  "flex min-h-[5.25rem] flex-col items-center justify-center gap-1 rounded-xl border px-2 py-2 text-center transition",
+                                  motionStyles.libraryChoice,
+                                  "flex min-h-[5.25rem] flex-col items-center justify-center gap-1 rounded-xl border px-2 py-2 text-center",
                                   isSelected
                                     ? "border-blue-500 bg-blue-50 text-blue-700"
-                                    : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50",
+                                    : "border-neutral-200 bg-white text-neutral-700",
                                 ].join(" ")}
                                 title={option.label}
                               >
-                                <MarkerSymbolPreview
-                                  symbol={{ type: "builtin", id: option.id }}
-                                  color={markerStyle.color}
-                                  opacity={1}
-                                  size={30}
-                                  weight={markerStrokeWeight}
-                                  markerFilled={
-                                    markerStyle.markerFilled === true &&
-                                    markerSymbolSupportsFill(option.id)
-                                  }
-                                />
+                                <span className={motionStyles.libraryIcon}>
+                                  <MarkerSymbolPreview
+                                    symbol={{ type: "builtin", id: option.id }}
+                                    color={markerStyle.color}
+                                    opacity={1}
+                                    size={30}
+                                    weight={markerStrokeWeight}
+                                    markerFilled={
+                                      markerStyle.markerFilled === true &&
+                                      markerSymbolSupportsFill(option.id)
+                                    }
+                                  />
+                                </span>
                                 <span className="line-clamp-2 text-[10px] leading-tight">
                                   {option.label}
                                 </span>
@@ -2578,47 +2555,48 @@ export default function ModeToolbar({
             )
           ) : null}
 
+          {pickerCategory === "line" ? (
+            <div className="grid grid-cols-3 gap-2 rounded-lg bg-neutral-50 p-2">
+              {LINE_TOOL_CHOICES.map((choice) => {
+                const traceDisabled =
+                  choice.value === "trace-line" && !canUseTraceToolOnCurrentBasemap;
+
+                return (
+                  <button
+                    key={choice.value}
+                    type="button"
+                    disabled={traceDisabled}
+                    title={
+                      traceDisabled
+                        ? "Le suivi de trait nécessite des frontières d’un fond blanc vectoriel ou des lignes/contours GeoJSON visibles."
+                        : undefined
+                    }
+                    onClick={() => chooseLineTool(choice.value)}
+                    className={[
+                      motionStyles.libraryChoice,
+                      "flex min-h-[5rem] flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-center",
+                      traceDisabled
+                        ? "cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-400 opacity-70"
+                        : "border-neutral-200 bg-white text-neutral-700",
+                    ].join(" ")}
+                  >
+                    <span className={motionStyles.libraryIcon}>{choice.icon}</span>
+                    <span className="text-[11px] font-semibold">
+                      {choice.label}
+                    </span>
+                    <span className="text-[10px] leading-snug text-neutral-500">
+                      {traceDisabled
+                        ? "Aucune ligne vectorielle disponible."
+                        : choice.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
           {lineSettingsOpen ? (
             <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2 rounded-lg bg-neutral-50 p-2">
-                {LINE_TOOL_CHOICES.map((choice) => {
-                  const traceDisabled =
-                    choice.value === "trace-line" && !canUseTraceToolOnCurrentBasemap;
-
-                  return (
-                    <button
-                      key={choice.value}
-                      type="button"
-                      disabled={traceDisabled}
-                      title={
-                        traceDisabled
-                          ? "Le suivi de trait nécessite des frontières d’un fond blanc vectoriel ou des lignes/contours GeoJSON visibles."
-                          : undefined
-                      }
-                      onClick={() => chooseLineTool(choice.value)}
-                      className={[
-                        "flex min-h-[5rem] flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-center transition",
-                        traceDisabled
-                          ? "cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-400 opacity-70"
-                          : lineToolChoice === choice.value
-                            ? "border-blue-500 bg-blue-50 text-blue-700"
-                            : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
-                      ].join(" ")}
-                    >
-                      {choice.icon}
-                      <span className="text-[11px] font-semibold">
-                        {choice.label}
-                      </span>
-                      <span className="text-[10px] leading-snug text-neutral-500">
-                        {traceDisabled
-                          ? "Aucune ligne vectorielle disponible."
-                          : choice.description}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
               <div className="flex items-center justify-between gap-3">
                 <span>Couleur</span>
                 <ColorPicker
@@ -2731,7 +2709,7 @@ export default function ModeToolbar({
                 />
               </label>
 
-              {lineToolChoice === "freehand" ? (
+              {openSettingsTool === "freehand" ? (
                 <label className="block rounded-lg bg-neutral-50 px-2 py-2">
                   <div className="mb-1 flex justify-between">
                     <span>Lissage</span>
@@ -2757,7 +2735,7 @@ export default function ModeToolbar({
                 </label>
               ) : null}
 
-              {lineToolChoice === "trace-line" ? (
+              {openSettingsTool === "trace-line" ? (
                 <p className="rounded-lg bg-blue-50 px-2 py-2 text-[11px] leading-snug text-blue-700">
                   Maintiens la souris près d’une frontière vectorielle visible :
                   le trait s’accroche à cette ligne et la suit jusqu’au relâchement.
@@ -2787,7 +2765,7 @@ export default function ModeToolbar({
             </div>
           ) : null}
 
-          {zoneSettingsOpen ? (
+          {pickerCategory === "zone" ? (
             <div className="space-y-3">
               <div className="grid grid-cols-3 gap-2 rounded-lg bg-neutral-50 p-2">
                 {ZONE_TOOL_CHOICES.map((choice) => {
@@ -2806,15 +2784,14 @@ export default function ModeToolbar({
                       }
                       onClick={() => chooseZoneTool(choice.value)}
                       className={[
-                        "flex min-h-[5.5rem] flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-center transition",
+                        motionStyles.libraryChoice,
+                        "flex min-h-[5.5rem] flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-center",
                         fillDisabled
                           ? "cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-400 opacity-70"
-                          : zoneToolChoice === choice.value
-                            ? "border-blue-500 bg-blue-50 text-blue-700"
-                            : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
+                          : "border-neutral-200 bg-white text-neutral-700",
                       ].join(" ")}
                     >
-                      {choice.icon}
+                      <span className={motionStyles.libraryIcon}>{choice.icon}</span>
                       <span className="text-[11px] font-semibold">
                         {choice.label}
                       </span>
@@ -2828,52 +2805,36 @@ export default function ModeToolbar({
                 })}
               </div>
 
-              {zoneToolChoice === "shape" ? (
-                <>
-                  <div>
-                    <div className="mb-1 text-[11px] font-semibold text-neutral-600">
-                      Type de forme
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {DROMAP_QUICK_SHAPES.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => {
-                            updateZoneStyle({
-                              zoneShapeKind: option.value as DroMapZoneShapeKind,
-                            });
-                            rememberShortcut("shape", undefined, option.value as DroMapZoneShapeKind);
-                          }}
-                          className={[
-                            "flex flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-center transition",
-                            zoneStyle.zoneShapeKind === option.value
-                              ? "border-blue-500 bg-blue-50 text-blue-700"
-                              : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
-                          ].join(" ")}
-                        >
-                          <span className="text-lg font-black">
-                            {option.value === "circle"
-                              ? "○"
-                              : option.value === "ellipse"
-                                ? "⬭"
-                                : "▭"}
-                          </span>
-                          <span className="text-[11px] font-semibold">
-                            {option.label}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+              <div>
+                <h3 className="mb-1 text-[11px] font-semibold text-neutral-600">Formes rapides</h3>
+                <div className="grid grid-cols-3 gap-2 rounded-lg bg-neutral-50 p-2">
+                  {DROMAP_QUICK_SHAPES.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => chooseZoneTool("shape", option.value)}
+                      className={`${motionStyles.libraryChoice} flex flex-col items-center justify-center gap-1 rounded-lg border border-neutral-200 bg-white px-2 py-2 text-center text-neutral-700`}
+                    >
+                      <span className={motionStyles.libraryIcon}>
+                        <QuickShapeGlyph shapeKind={option.value} />
+                      </span>
+                      <span className="text-[11px] font-semibold">{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
 
-                  <p className="rounded-lg bg-blue-50 px-2 py-2 text-[11px] leading-snug text-blue-700">
-                    Pose : premier clic pour le premier point, deuxième clic pour le point opposé. Modification : utilise les poignées bleues sur la carte. Le cercle n’a pas de rotation.
-                  </p>
-                </>
+          {zoneSettingsOpen ? (
+            <div className="space-y-3">
+              {openSettingsTool === "shape" ? (
+                <p className="rounded-lg bg-blue-50 px-2 py-2 text-[11px] leading-snug text-blue-700">
+                  Pose : premier clic pour le premier point, deuxième clic pour le point opposé. Modification : utilise les poignées bleues sur la carte. Le cercle n’a pas de rotation.
+                </p>
               ) : null}
 
-              {zoneToolChoice === "fill-zone" ? (
+              {openSettingsTool === "fill-zone" ? (
                 <div className="space-y-2 rounded-lg bg-blue-50 px-2 py-2 text-[11px] leading-snug text-blue-700">
                   <p>
                     Clique une région, un département, un pays ou une subdivision visible sur les fonds vectoriels. La zone créée reprend les paramètres visibles actuels.
@@ -2885,7 +2846,7 @@ export default function ModeToolbar({
               ) : null}
 
 
-              {zoneToolChoice === "freehand-zone" ? (
+              {openSettingsTool === "freehand-zone" ? (
                 <label className="block rounded-lg bg-neutral-50 px-2 py-2">
                   <div className="mb-1 flex justify-between">
                     <span>Lissage</span>
@@ -3223,28 +3184,7 @@ export default function ModeToolbar({
             </div>
           ) : null}
 
-          {openSettingsTool === "text" && pickerCategory === "text" ? (
-            <div className="space-y-2">
-              <p className="text-xs text-neutral-600">Choisis un format de texte. Tu pourras ensuite régler sa taille et son style.</p>
-              {([
-                ["standard", "Texte", "Texte courant, 22 px"],
-                ["title", "Titre", "Titre gras, 36 px"],
-                ["caption", "Légende", "Petite annotation, 14 px"],
-              ] as const).map(([preset, label, description]) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => chooseTextPreset(preset)}
-                  className="flex w-full flex-col rounded-xl border border-neutral-200 bg-white px-3 py-2 text-left transition hover:border-blue-300 hover:bg-blue-50"
-                >
-                  <span className="font-semibold text-neutral-900">{label}</span>
-                  <span className="text-[11px] text-neutral-500">{description}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          {openSettingsTool === "text" && pickerCategory !== "text" ? (
+          {openSettingsTool === "text" ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <span>Couleur</span>
