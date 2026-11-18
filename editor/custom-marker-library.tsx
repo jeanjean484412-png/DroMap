@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type Ref, useEffect, useMemo, useRef, useState } from "react";
 
 import type { DroMapMarkerSymbol } from "@/lib/dromap/feature";
 import {
@@ -26,6 +26,7 @@ type CustomMarkerLibraryProps = {
   onSelect: (symbol: DroMapMarkerSymbol) => void;
   className?: string;
   selectionOnly?: boolean;
+  listRef?: Ref<HTMLDivElement>;
 };
 
 function LockIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
@@ -83,6 +84,7 @@ export function CustomMarkerLibrary({
   onSelect,
   className = "",
   selectionOnly = false,
+  listRef,
 }: CustomMarkerLibraryProps) {
   const runtime = useDromapProductRuntime();
   const keepsPersonalLibrary =
@@ -227,7 +229,7 @@ export function CustomMarkerLibrary({
             Aucun marqueur personnel enregistré pour le moment.
           </div>
         ) : (
-          <div className="grid max-h-64 grid-cols-3 gap-2 overflow-y-auto pr-1">
+          <div ref={listRef} className="grid max-h-64 grid-cols-3 gap-2 overflow-y-auto pr-1">
             {visibleCustomMarkers.map((marker) => {
               const symbolType =
                 marker.kind === "drawn" ? "drawn" : "custom-image";

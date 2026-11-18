@@ -1117,7 +1117,7 @@ export function LayersPanel({
           setPanelZIndex(bringFloatingPanelToFront());
           setIsOpen(true);
         }}
-        className="absolute right-4 top-[4.25rem] z-[1000] border-teal-200 text-teal-800 hover:border-teal-400"
+        className="absolute right-4 top-[4.25rem] z-[1000] origin-right border-teal-200 text-teal-800 motion-safe:transition-[scale] motion-safe:hover:scale-[1.025]"
         icon={
           <span className="grid size-7 place-items-center rounded-lg bg-teal-600 text-white">
             <svg

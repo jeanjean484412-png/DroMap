@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation";
 
 import { DromapProductBootstrap } from "./product-bootstrap";
 import { DromapButton } from "@/components/dromap-ui/button";
-import { BasemapPreviewThumbnail } from "@/editor/basemap-controls";
+import { BasemapPreviewThumbnail, BasemapThumbnailCredits } from "@/editor/basemap-controls";
 import GraphicZoomViewport from "@/editor/graphic-zoom-viewport";
 import { SavedLayersLibraryModal } from "@/editor/saved-layers-library-modal";
 import { DromapDialog } from "@/components/dromap-ui/dialog";
@@ -587,6 +587,7 @@ function SetupBasemapPicker({
           </div>
         </div>
       </div>
+      <BasemapThumbnailCredits />
     </div>
   );
 }

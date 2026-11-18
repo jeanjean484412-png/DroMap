@@ -178,71 +178,22 @@ function shouldAutoWorkspaceForWhiteBasemap(basemapId: DromapBasemapId) {
 
 const IGN_SATELLITE_PREVIEW_URL =
   "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg&TILEMATRIXSET=PM&TILEMATRIX=10&TILEROW=352&TILECOL=518";
-const IGN_PLAN_PREVIEW_URL =
-  "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX=10&TILEROW=352&TILECOL=518";
+const BASEMAP_PREVIEW_IMAGES: Partial<Record<DromapBasemapId, string>> = {
+  "openfreemap-liberty": "/basemap-nantes-classic.webp",
+  "openfreemap-positron": "/basemap-nantes-light.webp",
+  "ign-plan": "/basemap-nantes-ign.webp",
+  "ign-plan-raster": "/basemap-nantes-ign.webp",
+  "ign-satellite": IGN_SATELLITE_PREVIEW_URL,
+};
 
-function BasemapVectorPreview(input: { variant: "classic" | "light" }) {
-  const isLight = input.variant === "light";
-
+export function BasemapThumbnailCredits() {
   return (
-    <svg
-      viewBox="0 0 120 76"
-      className="h-full w-full"
-      aria-hidden="true"
-      preserveAspectRatio="xMidYMid slice"
-    >
-      <rect width="120" height="76" fill={isLight ? "#eaf3f5" : "#a9d4df"} />
-      <path
-        d="M-8 6 C20 1 29 10 46 7 C65 4 70 18 91 14 C106 11 115 16 128 12 L128 83 L-8 83 Z"
-        fill={isLight ? "#f7f7f5" : "#f2efe9"}
-      />
-      <path
-        d="M5 61 C25 46 32 53 49 44 C66 35 73 42 90 34 C102 28 111 31 125 24"
-        fill="none"
-        stroke={isLight ? "#d4d4d4" : "#d9c2a0"}
-        strokeWidth="7"
-      />
-      <path
-        d="M5 61 C25 46 32 53 49 44 C66 35 73 42 90 34 C102 28 111 31 125 24"
-        fill="none"
-        stroke={isLight ? "#ffffff" : "#ffffff"}
-        strokeWidth="3.5"
-      />
-      <path
-        d="M18 4 C29 19 35 31 47 75 M71 4 C67 22 69 44 83 75"
-        fill="none"
-        stroke={isLight ? "#dcdcdc" : "#e7d7bf"}
-        strokeWidth="2.5"
-      />
-      <path
-        d="M12 19 C26 15 36 19 42 27 C32 35 18 34 9 29 Z"
-        fill={isLight ? "#e6eee4" : "#b8d7a8"}
-      />
-      <path
-        d="M81 48 C94 41 109 45 118 55 L118 74 L91 74 Z"
-        fill={isLight ? "#e8eee5" : "#c4ddb5"}
-      />
-      <circle cx="63" cy="39" r="3.2" fill={isLight ? "#9ca3af" : "#e11d48"} />
-      <text
-        x="68"
-        y="37"
-        fontSize="7"
-        fontFamily="system-ui, sans-serif"
-        fontWeight="700"
-        fill={isLight ? "#6b7280" : "#374151"}
-      >
-        Ville
-      </text>
-      <text
-        x="24"
-        y="53"
-        fontSize="6"
-        fontFamily="system-ui, sans-serif"
-        fill={isLight ? "#9ca3af" : "#64748b"}
-      >
-        Rivière
-      </text>
-    </svg>
+    <p className="mt-3 text-[10px] leading-relaxed text-slate-600 [&_a]:underline [&_a]:underline-offset-2">
+      Captures de Nantes · © <a href="https://openfreemap.org/" target="_blank" rel="noreferrer">OpenFreeMap</a> · ©{" "}
+      <a href="https://www.openmaptiles.org/" target="_blank" rel="noreferrer">OpenMapTiles</a> · ©{" "}
+      <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> · ©{" "}
+      <a href="https://www.ign.fr/" target="_blank" rel="noreferrer">IGN</a> / Géoplateforme
+    </p>
   );
 }
 
@@ -324,12 +275,7 @@ export function BasemapPreviewThumbnail(input: {
   compact?: boolean;
 }) {
   const basemap = getDromapBasemapConfig(input.basemapId);
-  const previewImageUrl =
-    input.basemapId === "ign-satellite"
-      ? IGN_SATELLITE_PREVIEW_URL
-      : input.basemapId === "ign-plan" || input.basemapId === "ign-plan-raster"
-        ? IGN_PLAN_PREVIEW_URL
-        : null;
+  const previewImageUrl = BASEMAP_PREVIEW_IMAGES[input.basemapId];
   const sizeClassName = input.compact ? "h-10 w-16" : "h-16 w-24";
 
   return (
@@ -345,10 +291,6 @@ export function BasemapPreviewThumbnail(input: {
             style={{ backgroundImage: `url(${previewImageUrl})` }}
           />
         </>
-      ) : input.basemapId === "openfreemap-liberty" ? (
-        <BasemapVectorPreview variant="classic" />
-      ) : input.basemapId === "openfreemap-positron" ? (
-        <BasemapVectorPreview variant="light" />
       ) : (
         <BasemapSolidPreview basemap={basemap} />
       )}
@@ -716,7 +658,7 @@ export function BasemapControls() {
           aria-label="Fond de carte"
           aria-description={selectedBasemap.label}
           label="Fond de carte"
-          className="border-emerald-200 text-emerald-800 hover:border-emerald-400"
+          className="origin-right border-emerald-200 text-emerald-800 motion-safe:transition-[scale] motion-safe:hover:scale-[1.025]"
           icon={
             <span className="grid size-7 place-items-center rounded-lg bg-emerald-600 text-white">
               <svg
@@ -863,6 +805,7 @@ export function BasemapControls() {
               </div>
             </>
           )}
+          <BasemapThumbnailCredits />
         </div>
       )}
     </section>

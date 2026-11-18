@@ -8,6 +8,7 @@ import {
   type DromapGeoJsonLayer,
 } from "@/stores/editor-geojson-layers";
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
+import { getDataBelowBasemapSymbolsPane } from "./basemap-symbol-panes";
 import {
   getEffectiveGeoJsonFeatureStyle,
   getGeoJsonDashArray,
@@ -62,7 +63,8 @@ export function ensureGeoJsonPane(
   options: { capBelowWorkspaceMask?: boolean } = {},
 ) {
   const paneName = getGeoJsonPaneName(layer.id);
-  const pane = map.getPane(paneName) ?? map.createPane(paneName);
+  const parent = getDataBelowBasemapSymbolsPane(map, "geojson");
+  const pane = map.getPane(paneName) ?? map.createPane(paneName, parent);
   const requestedZIndex = GEOJSON_PANE_BASE_Z_INDEX + index * GEOJSON_PANE_STEP;
 
   // Le masque de zone reste à 20 000. Même avec un nombre anormalement élevé

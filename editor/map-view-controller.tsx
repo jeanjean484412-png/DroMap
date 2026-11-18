@@ -5,6 +5,7 @@ import L from "leaflet";
 import { useMap } from "react-leaflet";
 
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
+import { DROMAP_SUGGEST_FREE_NAVIGATION_EVENT } from "@/lib/dromap/map-navigation";
 import { toLatLngBounds } from "@/lib/dromap/workspace-bounds";
 import { useEditorBasemapStore } from "@/stores/editor-basemap";
 import { useEditorModeStore } from "@/stores/editor-mode";
@@ -52,6 +53,10 @@ const VIEW_CONSTRAINT_EPSILON_PX = 0.5;
 const BASEMAP_FIT_PADDING: [number, number] = [48, 48];
 const GEOJSON_IMPORT_FIT_PADDING: [number, number] = [72, 72];
 const BASEMAP_FIT_CONSTRAINT_SUSPEND_MS = 900;
+const BLOCKED_ZOOM_MIN_INTERVAL_MS = 180;
+const BLOCKED_ZOOM_SEQUENCE_MS = 2000;
+const FREE_NAVIGATION_HINT_COOLDOWN_MS = 8000;
+const ZOOM_LIMIT_EPSILON = 0.005;
 const PANNABLE_WORLD_BOUNDS = L.latLngBounds([-88, -360], [88, 360]);
 
 let workspaceConstraintSuspendedUntil = 0;
@@ -714,6 +719,9 @@ export default function MapViewController() {
     let animationFrameId: number | null = null;
     let isApplyingViewConstraint = false;
     let smoothZoomConstraintUntil = 0;
+    const explorationMaxZoom = (activeBasemap.kind === "tile" || activeBasemap.kind === "maplibre")
+      ? activeBasemap.maxZoom
+      : 22;
 
     const constrainEditorViewport = (options: ViewConstraintOptions = {}) => {
       if (isApplyingViewConstraint || isWorkspaceConstraintSuspended()) {
@@ -753,10 +761,6 @@ export default function MapViewController() {
        * détail validé, même pendant cette exploration.
        */
       if (workspaceNavigationUnlocked) {
-        const explorationMaxZoom =
-          activeBasemap.kind === "tile" || activeBasemap.kind === "maplibre"
-            ? activeBasemap.maxZoom
-            : 22;
         const safeMinZoom = Math.min(lockedMinZoom, currentZoom);
         const safeMaxZoom = Math.max(
           safeMinZoom,
@@ -920,6 +924,83 @@ export default function MapViewController() {
 
     const mapContainer = map.getContainer();
 
+    let blockedZoomAttempts = 0;
+    let firstBlockedZoomAt = -Infinity;
+    let lastBlockedZoomAt = -Infinity;
+    let lastNavigationHintAt = -Infinity;
+    let pinchStartDistance: number | null = null;
+
+    const isAtWorkspaceZoomLimit = () => {
+      const maximum = map.getMaxZoom();
+      const snap = L.Browser.any3d ? map.options.zoomSnap : 1;
+      // Leaflet arrondit de nouveau le zoom lorsqu'il applique la vue.
+      const reachableMaximum = snap
+        ? Math.max(map.getMinZoom(), Math.min(maximum, Math.round(maximum / snap) * snap))
+        : maximum;
+      return !isWorkspaceConstraintSuspended() &&
+        useEditorWorkspaceStore.getState().workspaceBasemapZoom !== null &&
+        maximum < explorationMaxZoom - ZOOM_LIMIT_EPSILON &&
+        map.getZoom() >= reachableMaximum - ZOOM_LIMIT_EPSILON;
+    };
+
+    const countBlockedZoom = () => {
+      const now = performance.now();
+      if (now - lastNavigationHintAt < FREE_NAVIGATION_HINT_COOLDOWN_MS ||
+          now - lastBlockedZoomAt < BLOCKED_ZOOM_MIN_INTERVAL_MS) return;
+
+      if (now - firstBlockedZoomAt > BLOCKED_ZOOM_SEQUENCE_MS) {
+        blockedZoomAttempts = 0;
+        firstBlockedZoomAt = now;
+      }
+      lastBlockedZoomAt = now;
+      blockedZoomAttempts += 1;
+      if (blockedZoomAttempts < 3) return;
+
+      blockedZoomAttempts = 0;
+      lastNavigationHintAt = now;
+      window.dispatchEvent(new Event(DROMAP_SUGGEST_FREE_NAVIGATION_EVENT));
+    };
+
+    const isMapInput = (target: EventTarget | null) =>
+      !(target instanceof Element && target.closest(
+        ".leaflet-control, [data-dromap-ignore-map-wheel='true'], [role='dialog'], input, button, select, textarea, [contenteditable='true']",
+      ));
+
+    const handleBlockedWheel = (event: WheelEvent) => {
+      if (!map.scrollWheelZoom.enabled() || !isMapInput(event.target)) return;
+      if (event.deltaY < 0 && isAtWorkspaceZoomLimit()) {
+        countBlockedZoom();
+      } else if (event.deltaY !== 0) {
+        blockedZoomAttempts = 0;
+        firstBlockedZoomAt = -Infinity;
+      }
+    };
+
+    const getPinchDistance = (touches: TouchList) => Math.hypot(
+      touches[0].clientX - touches[1].clientX,
+      touches[0].clientY - touches[1].clientY,
+    );
+
+    const handlePinchStart = (event: TouchEvent) => {
+      pinchStartDistance = event.touches.length === 2 && map.touchZoom.enabled() &&
+        isMapInput(event.target) && isAtWorkspaceZoomLimit()
+        ? getPinchDistance(event.touches)
+        : null;
+    };
+
+    const handlePinchMove = (event: TouchEvent) => {
+      if (pinchStartDistance === null || event.touches.length !== 2) return;
+      if (getPinchDistance(event.touches) < pinchStartDistance + 12) return;
+      pinchStartDistance = null;
+      if (isAtWorkspaceZoomLimit()) countBlockedZoom();
+    };
+
+    if (!workspaceNavigationUnlocked) {
+      mapContainer.addEventListener("wheel", handleBlockedWheel, { passive: true, capture: true });
+      mapContainer.addEventListener("touchstart", handlePinchStart, { passive: true });
+      mapContainer.addEventListener("touchmove", handlePinchMove, { passive: true });
+    }
+
     map.on("zoomend", handleZoomEnd);
     map.on("resize", handleResize);
     map.on("drag", handleDrag);
@@ -938,6 +1019,9 @@ export default function MapViewController() {
       map.off("resize", handleResize);
       map.off("drag", handleDrag);
       map.off("moveend", handleMoveEnd);
+      mapContainer.removeEventListener("wheel", handleBlockedWheel, true);
+      mapContainer.removeEventListener("touchstart", handlePinchStart);
+      mapContainer.removeEventListener("touchmove", handlePinchMove);
       mapContainer.removeEventListener(
         CONTINUOUS_WHEEL_ZOOM_END_EVENT,
         finalizeContinuousWheelZoom,

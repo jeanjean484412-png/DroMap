@@ -1,0 +1,60 @@
+.inspector :where(button):focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .inspector button {
+    transition: scale 160ms ease-out;
+  }
+
+  .inspector :where(button):not(:disabled):hover {
+    scale: 1.035;
+  }
+
+  .inspector :where(button):hover [data-inspector-icon="selected"] .selectionFrame {
+    transform-origin: 12px 12px;
+    animation: selectFrame 360ms ease-out;
+  }
+
+  .inspector :where(button):hover [data-inspector-icon="all"] .listLines,
+  .inspector :where(button):hover [data-inspector-icon="area"] rect {
+    stroke-dasharray: 1 1;
+    animation: drawStroke 400ms ease-out;
+  }
+
+  .inspector :where(button):hover [data-inspector-icon="labels"] {
+    transform-origin: 33% 33%;
+    animation: swingTag 400ms ease-in-out;
+  }
+
+  .inspector :where(button):hover [data-inspector-icon="expand"] .panelArrow {
+    animation: nudgeArrowLeft 360ms ease-out;
+  }
+
+  .inspector :where(button):hover [data-inspector-icon="collapse"] .panelArrow {
+    animation: nudgeArrowRight 360ms ease-out;
+  }
+}
+
+@keyframes selectFrame {
+  45% { transform: scale(0.82); }
+}
+
+@keyframes drawStroke {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes swingTag {
+  35% { transform: rotate(-15deg); }
+  72% { transform: rotate(7deg); }
+}
+
+@keyframes nudgeArrowLeft {
+  45% { transform: translateX(-2px); }
+}
+
+@keyframes nudgeArrowRight {
+  45% { transform: translateX(2px); }
+}

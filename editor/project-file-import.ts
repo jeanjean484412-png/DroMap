@@ -473,6 +473,7 @@ function parseDromapFeature(value: unknown): DroMapFeature | null {
     : {};
   const safeSymbol = parseDromapMarkerSymbol(rawSymbol);
   const safeSource = parseDromapFeatureSource(rawSource);
+  const belowBasemapLabels = getRecordValue(properties, "belowBasemapLabels");
 
   return {
     type: "Feature",
@@ -496,6 +497,7 @@ function parseDromapFeature(value: unknown): DroMapFeature | null {
           }
         : {}),
       ...(safeMapLabelOffset ? { mapLabelOffset: safeMapLabelOffset } : {}),
+      ...(typeof belowBasemapLabels === "boolean" ? { belowBasemapLabels } : {}),
       ...(typeof rawMapLabelScale === "number" && Number.isFinite(rawMapLabelScale)
         ? { mapLabelScale: clamp(rawMapLabelScale, 0.5, 2.5) }
         : {}),

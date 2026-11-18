@@ -8,26 +8,27 @@ import {
 } from "@/editor/legend-panel";
 import { useEditorFeaturesStore } from "@/stores/editor-features";
 import { useEditorSelectionStore } from "@/stores/editor-selection";
+import styles from "./editor-inspector.module.css";
 
 type InspectorTab = "selected" | "all" | "labels";
 
-const TABS: Array<{ id: InspectorTab; label: string; compact: string }> = [
-  { id: "selected", label: "Sélection", compact: "Sélection" },
-  { id: "all", label: "Objets", compact: "Objets" },
-  { id: "labels", label: "Étiquettes", compact: "Étiquettes" },
+const TABS: Array<{ id: InspectorTab; label: string }> = [
+  { id: "selected", label: "Sélection" },
+  { id: "all", label: "Objets" },
+  { id: "labels", label: "Étiquettes" },
 ];
 
 const INSPECTOR_ICONS = {
-  selected: <path d="M9 4H5a1 1 0 0 0-1 1v4m11-5h4a1 1 0 0 1 1 1v4M4 15v4a1 1 0 0 0 1 1h4m3-8 3.5 8 1.3-3.2 3.2-1.3Z" />,
-  all: <><rect x="4" y="5" width="4" height="4" rx="1" /><circle cx="6" cy="16" r="2" /><path d="M12 7h8m-8 9h8" /></>,
+  selected: <><path className={styles.selectionFrame} d="M9 4H5a1 1 0 0 0-1 1v4m11-5h4a1 1 0 0 1 1 1v4M4 15v4a1 1 0 0 0 1 1h4" /><path d="m12 12 3.5 8 1.3-3.2 3.2-1.3Z" /></>,
+  all: <><rect x="4" y="5" width="4" height="4" rx="1" /><circle cx="6" cy="16" r="2" /><path className={styles.listLines} pathLength={1} d="M12 7h8m-8 9h8" /></>,
   labels: <><path d="M20 12.4 12.4 20a1.5 1.5 0 0 1-2.1 0l-6.9-6.9A1.5 1.5 0 0 1 3 12V5a2 2 0 0 1 2-2h7c.4 0 .8.2 1.1.5l6.9 6.8a1.5 1.5 0 0 1 0 2.1Z" /><circle cx="8" cy="8" r="1.3" /></>,
-  expand: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16m-4-11-3 3 3 3" /></>,
-  collapse: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16m-7-11 3 3-3 3" /></>,
+  expand: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /><path className={styles.panelArrow} d="m11 9-3 3 3 3" /></>,
+  collapse: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /><path className={styles.panelArrow} d="m8 9 3 3-3 3" /></>,
 };
 
-function InspectorIcon({ name }: { name: keyof typeof INSPECTOR_ICONS }) {
+function InspectorIcon({ name, compact = false }: { name: keyof typeof INSPECTOR_ICONS; compact?: boolean }) {
   return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg data-inspector-icon={name} viewBox="0 0 24 24" className={compact ? "h-4 w-4 shrink-0" : "h-5 w-5"} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {INSPECTOR_ICONS[name]}
     </svg>
   );
@@ -112,11 +113,11 @@ export function DromapEditorInspector({
 
   if (collapsed) {
     return (
-      <aside data-dromap-product-inspector="true" data-collapsed="true" className="relative z-30 flex h-full w-12 shrink-0 flex-col border-l border-slate-200 bg-white">
+      <aside data-dromap-product-inspector="true" data-collapsed="true" className={`${styles.inspector} relative z-30 flex h-full w-12 shrink-0 flex-col border-l border-slate-200 bg-white`}>
         <button
           type="button"
           onClick={() => setCollapsed(false)}
-          className="m-1 flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-lg font-black text-slate-700 transition hover:bg-slate-50"
+          className="m-1 flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700"
           title="Déployer l’inspecteur"
           aria-label="Déployer l’inspecteur"
         >
@@ -131,7 +132,7 @@ export function DromapEditorInspector({
                 setActiveTab(tab.id);
                 setCollapsed(false);
               }}
-              className={`flex h-10 w-10 items-center justify-center rounded-xl transition ${activeTab === tab.id ? "bg-teal-50 text-teal-700 hover:bg-teal-100" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}
+              className={`flex h-10 w-10 items-center justify-center rounded-xl ${activeTab === tab.id ? "bg-teal-50 text-teal-700" : "text-slate-600"}`}
               title={tab.label}
               aria-label={tab.label}
             >
@@ -155,10 +156,10 @@ export function DromapEditorInspector({
       data-dromap-tour="inspector"
       data-dromap-product-inspector="true"
       data-collapsed="false"
-      className="relative z-30 flex h-full w-[min(25rem,calc(100vw-5rem))] min-w-0 max-w-none shrink-0 flex-col border-l border-slate-200 bg-white sm:w-[25rem] sm:min-w-[22rem] sm:max-w-[31vw]"
+      className={`${styles.inspector} relative z-30 flex h-full w-[min(25rem,calc(100vw-5rem))] min-w-0 max-w-none shrink-0 flex-col border-l border-slate-200 bg-white sm:w-[25rem] sm:min-w-[22rem] sm:max-w-[31vw]`}
     >
-      <div className="flex shrink-0 items-center gap-1 border-b border-slate-200 bg-slate-50 px-2 py-2">
-        <div className="grid min-w-0 flex-1 grid-cols-3 gap-1" role="tablist" aria-label="Inspecteur de la carte">
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-2.5 py-2">
+        <div className="grid min-w-0 flex-1 grid-cols-3 gap-1.5" role="tablist" aria-label="Inspecteur de la carte">
           {TABS.map((tab) => {
             const active = activeTab === tab.id;
             const badge =
@@ -176,23 +177,21 @@ export function DromapEditorInspector({
                 aria-selected={active}
                 onClick={() => setActiveTab(tab.id)}
                 className={[
-                  "min-w-0 rounded-lg px-2 py-2 text-[11px] font-black transition",
+                  "flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-[11px] font-bold",
                   active
                     ? "bg-slate-950 text-white shadow-sm"
-                    : "text-slate-600 hover:bg-white hover:text-slate-950",
+                    : "text-slate-600",
                 ].join(" ")}
               >
-                <span className="block whitespace-nowrap">{tab.compact}</span>
-                {badge !== null ? (
-                  <span
-                    className={[
-                      "mt-0.5 inline-flex rounded-full px-1.5 py-0.5 text-[9px]",
-                      active ? "bg-white/15 text-white" : "bg-slate-200 text-slate-600",
-                    ].join(" ")}
-                  >
-                    {badge}
-                  </span>
-                ) : null}
+                <InspectorIcon name={tab.id} compact />
+                <span className="flex items-center gap-1 whitespace-nowrap">
+                  {tab.label}
+                  {badge !== null ? (
+                    <span className={`rounded-full px-1.5 text-[9px] tabular-nums ${active ? "bg-white/15 text-white" : "bg-slate-200 text-slate-600"}`}>
+                      {badge}
+                    </span>
+                  ) : null}
+                </span>
               </button>
             );
           })}
@@ -201,7 +200,7 @@ export function DromapEditorInspector({
         <button
           type="button"
           onClick={() => setCollapsed(true)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg font-black text-slate-500 transition hover:bg-white hover:text-slate-950"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-600"
           title="Replier l’inspecteur"
           aria-label="Replier l’inspecteur"
         >
@@ -210,7 +209,7 @@ export function DromapEditorInspector({
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-<LegendPanel variant="embedded" mode={legendMode} />
+        <LegendPanel variant="embedded" mode={legendMode} />
       </div>
     </aside>
   );

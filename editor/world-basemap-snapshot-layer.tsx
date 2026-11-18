@@ -11,6 +11,7 @@ import {
 } from "@/lib/dromap/workspace-bounds";
 import { useEditorWorldSnapshotStore } from "@/stores/editor-world-snapshot";
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
+import { BASEMAP_SYMBOLS_PANE, getBasemapSymbolsPane } from "./basemap-symbol-panes";
 
 import {
   getWorldBasemapSnapshot,
@@ -22,8 +23,10 @@ const WORLD_FIT_PADDING: [number, number] = [32, 32];
 
 export function WorldBasemapSnapshotLayer({
   basemap,
+  stackBasemapSymbols,
 }: {
   basemap: DromapBasemapConfig;
+  stackBasemapSymbols: boolean;
 }) {
   const map = useMap();
   const workspaceBasemapBaseZoom = useEditorWorkspaceStore(
@@ -32,7 +35,11 @@ export function WorldBasemapSnapshotLayer({
   const setWorldSnapshotStatus = useEditorWorldSnapshotStore(
     (state) => state.setWorldSnapshotStatus,
   );
-  const [snapshot, setSnapshot] = useState<WorldBasemapSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<{
+    base: WorldBasemapSnapshot;
+    symbols: WorldBasemapSnapshot | null;
+  } | null>(null);
+  const splitSymbols = basemap.kind === "maplibre" && stackBasemapSymbols;
   const [hasError, setHasError] = useState(false);
   const worldBoundsExpression = useMemo(
     () => toLatLngBounds(DROMAP_FULL_WORLD_WORKSPACE_BOUNDS),
@@ -70,13 +77,18 @@ export function WorldBasemapSnapshotLayer({
       status: "loading",
     });
 
-    getWorldBasemapSnapshot(basemap, detailLeafletZoom)
-      .then((nextSnapshot) => {
+    if (splitSymbols) getBasemapSymbolsPane(map);
+
+    Promise.all([
+      getWorldBasemapSnapshot(basemap, detailLeafletZoom, splitSymbols ? "base" : "full"),
+      splitSymbols ? getWorldBasemapSnapshot(basemap, detailLeafletZoom, "symbols") : null,
+    ])
+      .then(([base, symbols]) => {
         if (isCancelled) {
           return;
         }
 
-        setSnapshot(nextSnapshot);
+        setSnapshot({ base, symbols });
         setHasError(false);
         setWorldSnapshotStatus({
           basemapId: basemap.id,
@@ -110,6 +122,7 @@ export function WorldBasemapSnapshotLayer({
     basemap,
     map,
     setWorldSnapshotStatus,
+    splitSymbols,
     workspaceBasemapBaseZoom,
     worldBoundsExpression,
   ]);
@@ -119,32 +132,43 @@ export function WorldBasemapSnapshotLayer({
   }
 
   return (
-    <Pane
-      name={WORLD_SNAPSHOT_PANE}
-      style={{ zIndex: 200, pointerEvents: "none" }}
-    >
-      <Rectangle
-        bounds={worldBoundsExpression}
-        pathOptions={{
-          stroke: false,
-          fill: true,
-          fillColor: basemap.exportBackground,
-          fillOpacity: 1,
-          interactive: false,
-        }}
-      />
-
-      {snapshot ? (
-        <ImageOverlay
-          key={`${basemap.id}-${snapshot.url}`}
-          url={snapshot.url}
+    <>
+      <Pane
+        name={WORLD_SNAPSHOT_PANE}
+        style={{ zIndex: 200, pointerEvents: "none" }}
+      >
+        <Rectangle
           bounds={worldBoundsExpression}
-          opacity={1}
+          pathOptions={{
+            stroke: false,
+            fill: true,
+            fillColor: basemap.exportBackground,
+            fillOpacity: 1,
+            interactive: false,
+          }}
+        />
+
+        {snapshot ? (
+          <ImageOverlay
+            key={snapshot.base.url}
+            url={snapshot.base.url}
+            bounds={worldBoundsExpression}
+            opacity={1}
+            interactive={false}
+            crossOrigin="anonymous"
+            zIndex={200}
+          />
+        ) : null}
+      </Pane>
+      {snapshot?.symbols && splitSymbols ? (
+        <ImageOverlay
+          key={snapshot.symbols.url}
+          url={snapshot.symbols.url}
+          bounds={worldBoundsExpression}
           interactive={false}
-          crossOrigin="anonymous"
-          zIndex={200}
+          pane={BASEMAP_SYMBOLS_PANE}
         />
       ) : null}
-    </Pane>
+    </>
   );
 }

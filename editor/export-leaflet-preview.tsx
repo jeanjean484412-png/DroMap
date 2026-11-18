@@ -46,6 +46,7 @@ import { getDromapExportDataAttributionText } from "./export-attribution";
 import { BasemapBoundariesLayer } from "./basemap-boundaries-layer";
 import { FullGeoJsonLayersRenderer } from "./geojson-layers-renderer";
 import { MapLibreBasemapLayer } from "./maplibre-basemap-layer";
+import { placeFeaturePane } from "./basemap-symbol-panes";
 import {
   createLineArrowBodyLeafletLayer,
   createLineArrowLeafletLayer,
@@ -115,7 +116,7 @@ function ensureExportFeaturePane(
   drawIndex: number,
 ) {
   const paneName = getExportFeaturePaneName(feature.id);
-  const pane = map.getPane(paneName) ?? map.createPane(paneName);
+  const pane = placeFeaturePane(map, paneName, feature.properties.belowBasemapLabels === true);
 
   pane.style.zIndex = String(
     EXPORT_FEATURE_PANE_BASE_Z_INDEX + drawIndex * EXPORT_FEATURE_PANE_STEP,
@@ -1006,6 +1007,9 @@ export function ExportLeafletPreview({
             attribution={basemap.attribution}
             lockedNativeZoom={forcedMapLibreDetailZoom}
             showTextLabels={showBasemapLabels}
+            stackBasemapSymbols={renderableGeoJsonLayers.length > 0 || features.some(
+              (feature) => feature.properties.belowBasemapLabels === true,
+            )}
             fallbackTileUrl={mapLibreFallbackTileUrl}
             fallbackTileMaxZoom={
               mapLibreFallbackBasemap?.kind === "tile"

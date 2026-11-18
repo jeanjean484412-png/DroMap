@@ -1,5 +1,7 @@
 import type L from "leaflet";
 
+export const DROMAP_SUGGEST_FREE_NAVIGATION_EVENT = "dromap:suggest-free-navigation";
+
 type MapNavigationSnapshot = {
   dragging: boolean;
   scrollWheelZoom: boolean;

@@ -8,6 +8,7 @@ import { useMap } from "react-leaflet";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
 import { getFeaturesByDrawOrder } from "@/lib/dromap/feature-order";
+import { placeFeaturePane } from "./basemap-symbol-panes";
 import { scaleFeatureForVisualZoom } from "@/lib/dromap/feature-visual-scale";
 import { getFeatureMarkerSize, getLeafletDashArray } from "./feature-style";
 import {
@@ -96,7 +97,7 @@ function ensureFeaturePane(
   activeTool: string,
 ) {
   const paneName = getFeaturePaneName(feature.id);
-  const pane = map.getPane(paneName) ?? map.createPane(paneName);
+  const pane = placeFeaturePane(map, paneName, feature.properties.belowBasemapLabels === true);
 
   pane.style.zIndex = String(
     Math.min(

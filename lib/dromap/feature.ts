@@ -144,6 +144,8 @@ export type DroMapFeatureProperties = {
   legendLabel?: string;
   /** Affichage de l’étiquette du nom sur la carte. */
   mapLabelVisibility?: DroMapFeatureMapLabelVisibility;
+  /** Place le figuré sous les noms et pictogrammes du fond vectoriel. */
+  belowBasemapLabels?: boolean;
   /** Facteur de taille propre à cette étiquette, en plus du réglage global. */
   mapLabelScale?: number;
   /** Placement manuel de l’étiquette, enregistré indépendamment du zoom courant. */

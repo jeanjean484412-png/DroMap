@@ -3,6 +3,7 @@
 import { isCurvedLineFeature, getCurvedLegendPath } from "@/lib/dromap/curved-line";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import controlStyles from "./settings-controls.module.css";
 
 import {
   getFeatureLockOverride,
@@ -937,6 +938,41 @@ export function LegendPanel({
       .map((candidate) => candidate.id);
   }
 
+  function renderBasemapLabelsPlacementButton(featureIds: string[]) {
+    const isBelowBasemapLabels = (id: string) =>
+      featuresById.get(id)?.properties.belowBasemapLabels === true;
+    const allBelow = featureIds.length > 0 && featureIds.every(isBelowBasemapLabels);
+    const isMixed = !allBelow && featureIds.some(isBelowBasemapLabels);
+    const nextPlacement = !allBelow;
+
+    return (
+      <button
+        type="button"
+        aria-pressed={isMixed ? "mixed" : allBelow}
+        disabled={featureIds.length === 0}
+        onClick={() => updateFeaturesWithHistory(featureIds, (currentFeature) => {
+          if ((currentFeature.properties.belowBasemapLabels === true) === nextPlacement) {
+            return currentFeature;
+          }
+
+          return {
+            ...currentFeature,
+            properties: {
+              ...currentFeature.properties,
+              belowBasemapLabels: nextPlacement,
+            },
+          };
+        })}
+        className="col-span-2 flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-2 py-2 text-left font-semibold text-slate-700 hover:border-emerald-500 aria-pressed:border-emerald-500 aria-pressed:bg-emerald-50 aria-pressed:text-emerald-900 disabled:cursor-not-allowed"
+      >
+        Sous les écritures du fond
+        <span aria-hidden="true" className="text-[10px]">
+          {isMixed ? "Mixte" : allBelow ? "Activé" : "Désactivé"}
+        </span>
+      </button>
+    );
+  }
+
   function getStylePatch(
     beforeFeature: DroMapFeature,
     afterFeature: DroMapFeature,
@@ -1367,7 +1403,7 @@ export function LegendPanel({
         </>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className={`${controlStyles.settings} min-h-0 flex-1 overflow-y-auto p-4`}>
         {effectivePanelMode === "labels" ? (
           <section className="space-y-3">
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
@@ -1451,31 +1487,31 @@ export function LegendPanel({
             {effectivePanelMode === "selected" ? (
               <div
                 data-dromap-tour="multi-selection-control"
-                className="mb-4 rounded-lg border border-teal-200 bg-teal-50 p-2.5"
+                className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3"
               >
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="text-xs font-extrabold text-teal-950">
-                      Sélection multiple personnalisée
+                      Sélection multiple
                     </div>
                     <div className="mt-0.5 text-[10px] leading-snug text-teal-700">
-                      Active-la puis clique sur chaque objet de la carte ou de la liste.
+                      Une fois activée, clique sur les objets à sélectionner.
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setMultiSelectionEnabled(!multiSelectionEnabled)}
                     className={[
-                      "shrink-0 rounded-lg border px-3 py-2 text-[11px] font-extrabold transition",
+                      "shrink-0 rounded-lg border px-3 py-2 text-[11px] font-bold",
                       multiSelectionEnabled
-                        ? "border-teal-700 bg-teal-600 text-white hover:bg-teal-700"
-                        : "border-teal-300 bg-white text-teal-800 hover:bg-teal-100",
+                        ? "border-teal-700 bg-teal-700 text-white"
+                        : "border-teal-200 bg-white text-teal-800",
                     ].join(" ")}
                   >
                     {multiSelectionEnabled ? "Terminer" : "Activer"}
                   </button>
                 </div>
-                <div className="mt-2 border-t border-teal-200 pt-2">
+                <div className="mt-3 border-t border-slate-200 pt-3">
                   <button
                     type="button"
                     onClick={() => {
@@ -1485,18 +1521,21 @@ export function LegendPanel({
                       setAreaSelectionEnabled(!areaSelectionEnabled);
                     }}
                     className={[
-                      "w-full rounded-lg border px-3 py-2 text-[11px] font-extrabold transition",
+                      "flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-[11px] font-bold",
                       areaSelectionEnabled
-                        ? "border-teal-700 bg-teal-600 text-white hover:bg-teal-700"
-                        : "border-teal-300 bg-white text-teal-800 hover:bg-teal-100",
+                        ? "border-teal-700 bg-teal-700 text-white"
+                        : "border-teal-200 bg-white text-teal-800",
                     ].join(" ")}
                   >
+                    <svg data-inspector-icon="area" viewBox="0 0 20 20" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                      <rect x="3" y="4" width="14" height="12" rx="2" pathLength={1} />
+                    </svg>
                     {areaSelectionEnabled ? "Annuler la sélection par zone" : "Sélectionner par zone"}
                   </button>
                   <div className="mt-1 text-[10px] leading-snug text-teal-700">
                     {areaSelectionEnabled
                       ? "Glisse un rectangle sur la carte."
-                      : "Sélectionne en une fois tous les objets présents dans un rectangle."}
+                      : "Trace un rectangle pour sélectionner les objets qu’il contient."}
                   </div>
                 </div>
                 {selectedFeatures.length > 0 ? (
@@ -1505,7 +1544,7 @@ export function LegendPanel({
                     <button
                       type="button"
                       onClick={clearSelectedFeatureId}
-                      className="rounded-md border border-teal-300 bg-white px-2 py-1 font-bold hover:bg-teal-100"
+                      className="rounded-md border border-teal-200 bg-white px-2 py-1 font-bold"
                     >
                       Tout désélectionner
                     </button>
@@ -1527,7 +1566,7 @@ export function LegendPanel({
             {displayedFeatures.length === 0 ? (
               <p className="text-xs leading-relaxed text-slate-500">
                 {effectivePanelMode === "selected"
-                  ? "Aucun objet sélectionné. Active la sélection multiple ou clique sur un objet de la carte."
+                  ? "Clique sur un objet de la carte pour afficher ses réglages."
                   : "Aucun élément pour le moment. Passe en mode édition puis dessine un marqueur, une ligne, une zone ou un texte."}
               </p>
             ) : (
@@ -1544,6 +1583,10 @@ export function LegendPanel({
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-xs">
+                  {modifiableSelectedFeatures.length > 0 ? renderBasemapLabelsPlacementButton(
+                    modifiableSelectedFeatures.map((feature) => feature.id),
+                  ) : null}
+
                   {selectedColorFeatures.length > 0 ? (
                     <div className="flex items-center justify-between gap-2 rounded-lg border border-teal-200 bg-white px-2 py-2">
                       <span className="font-semibold text-slate-700">Couleur</span>
@@ -2004,7 +2047,7 @@ export function LegendPanel({
                   "cursor-pointer rounded-lg border p-3 transition",
                   selectedFeatureIds.includes(feature.id)
                     ? "border-blue-400 bg-blue-50 ring-2 ring-blue-100"
-                    : "border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white",
+                    : "border-slate-100 bg-slate-50",
                 ].join(" ")}
               >
                 <div className="mb-3 flex items-start gap-3">
@@ -2228,6 +2271,7 @@ export function LegendPanel({
                       </span>
                     </label>
                   ) : null}
+                  {renderBasemapLabelsPlacementButton(getScopedFeatureIds(feature))}
                   {isZone(feature) && (
                     <div className="col-span-2 grid grid-cols-2 gap-2 rounded-md bg-white px-2 py-2">
                       <label className="flex items-center justify-between gap-2">
@@ -2830,7 +2874,7 @@ export function LegendPanel({
                           "flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition",
                           openMarkerLibraryFeatureId === feature.id
                             ? "border-blue-400 bg-blue-50 ring-2 ring-blue-100"
-                            : "border-slate-200 bg-white hover:border-blue-300 hover:bg-slate-50",
+                            : "border-slate-200 bg-white",
                         ].join(" ")}
                         aria-expanded={openMarkerLibraryFeatureId === feature.id}
                       >
@@ -2919,7 +2963,7 @@ export function LegendPanel({
                                     markerLibraryCategoryId === category.id &&
                                     !normalizedMarkerLibrarySearch
                                       ? "border-blue-500 bg-blue-600 text-white"
-                                      : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700",
+                                      : "border-slate-200 bg-white text-slate-600",
                                   ].join(" ")}
                                 >
                                   {category.label}
@@ -2989,7 +3033,7 @@ export function LegendPanel({
                                         "flex min-h-[5.25rem] flex-col items-center justify-center gap-1 rounded-xl border px-1.5 py-2 text-center transition",
                                         isSelected
                                           ? "border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-100"
-                                          : "border-slate-200 bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50/60",
+                                          : "border-slate-200 bg-white text-slate-700",
                                       ].join(" ")}
                                     >
                                       <MarkerVisualPreview

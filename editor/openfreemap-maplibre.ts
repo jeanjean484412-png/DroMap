@@ -639,25 +639,14 @@ function getSafeDetailZoom(value: number | null | undefined) {
   return null;
 }
 
-/**
- * Masque les éléments de type `symbol` du fond vectoriel.
- *
- * Les styles MapLibre placent dans ces couches non seulement les textes,
- * mais aussi les petits pictogrammes associés au fond : arrêts de bus,
- * stations de métro, POI, pictogrammes de services, cartouches routiers, etc.
- * Quand l’utilisateur masque les « écritures du fond », DroMap retire donc
- * volontairement toute la couche symbolique afin de produire un fond nettoyé
- * et cohérent, sans conserver de petits pictogrammes isolés.
- *
- * Le fond est recréé lorsque l’option est réactivée (showTextLabels fait partie
- * des dépendances / clés de rendu), il n’est donc pas nécessaire de restaurer
- * manuellement chaque propriété de layout ici.
- */
-export function applyMapLibreBasemapTextVisibility(
+export type MapLibreBasemapPass = "full" | "base" | "symbols";
+
+// Les écritures du fond incluent tous les symboles MapLibre, dont les pictogrammes.
+export function applyMapLibreBasemapPass(
   map: any,
-  visible: boolean,
+  pass: MapLibreBasemapPass,
 ) {
-  if (visible || !map || typeof map.getStyle !== "function") {
+  if (pass === "full" || !map || typeof map.getStyle !== "function") {
     return;
   }
 
@@ -668,9 +657,10 @@ export function applyMapLibreBasemapTextVisibility(
   }
 
   for (const layer of layers) {
-    if (!layer || layer.type !== "symbol" || typeof layer.id !== "string") {
-      continue;
-    }
+    if (!layer || typeof layer.id !== "string") continue;
+    const isSymbol = layer.type === "symbol";
+    const shouldHide = pass === "symbols" ? !isSymbol : isSymbol;
+    if (!shouldHide) continue;
 
     try {
       map.setLayoutProperty(layer.id, "visibility", "none");
@@ -688,7 +678,7 @@ export async function renderMapLibreStyleToCanvas(input: {
   height: number;
   detailLeafletZoom?: number | null;
   renderWorldCopies?: boolean;
-  showTextLabels?: boolean;
+  pass?: MapLibreBasemapPass;
 }) {
   const maplibregl = await ensureMapLibreGl();
   const resolvedStyle = await resolveDromapMapLibreStyle(input.styleUrl);
@@ -748,10 +738,7 @@ export async function renderMapLibreStyleToCanvas(input: {
       errorMonitor,
     );
 
-    applyMapLibreBasemapTextVisibility(
-      map,
-      input.showTextLabels !== false,
-    );
+    applyMapLibreBasemapPass(map, input.pass ?? "full");
 
     map.resize();
     map.jumpTo({

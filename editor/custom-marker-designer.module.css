@@ -203,8 +203,7 @@
   accent-color: #168c88;
 }
 .dialog input:not([type="range"]):not([type="checkbox"]):not([type="color"]),
-.dialog textarea,
-.dialog select {
+.dialog textarea {
   border: 1px solid #cfdddf;
   border-radius: 5px;
   background: #fff;

@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
@@ -71,6 +71,7 @@ import { ColorPicker } from "./color-picker";
 import { useMarkerSymbolCatalog } from "./use-marker-symbol-catalog";
 import { CustomMarkerLibrary } from "./custom-marker-library";
 import motionStyles from "./tool-button-motion.module.css";
+import controlStyles from "./settings-controls.module.css";
 import {
   DROMAP_OPEN_BUILDINGS_IMPORT_EVENT,
   DROMAP_OPEN_ROUTES_IMPORT_EVENT,
@@ -489,25 +490,25 @@ const LINE_TOOL_CHOICES: {
   {
     value: "line",
     label: "Trait classique",
-    description: "Ligne droite ou brisée par clics.",
+    description: "Pose les points un par un, puis double-clique au point d’arrivée.",
     icon: <ClassicLineGlyph />,
   },
   {
     value: "curved-line",
     label: "Trait courbe",
-    description: "Posez les extrémités, puis courbez. Double-cliquez sur le trait pour ajouter une poignée.",
+    description: "Pose les deux extrémités, puis déplace les poignées pour courber le trait.",
     icon: <svg width="28" height="20" viewBox="0 0 28 20" fill="none"><path d="M2 17 Q14 -10 26 17" stroke="currentColor" strokeWidth="2" /><circle cx="14" cy="3.5" r="3" fill="currentColor" /></svg>,
   },
   {
     value: "freehand",
     label: "Dessin libre",
-    description: "Trait dessiné en maintenant la souris.",
+    description: "Maintiens le clic pour dessiner le trait, puis relâche pour le terminer.",
     icon: <FreehandLineGlyph />,
   },
   {
     value: "trace-line",
     label: "Suivi de trait",
-    description: "Suit une frontière vectorielle du fond.",
+    description: "Clique et glisse le long d’une frontière, d’un contour ou d’une route importée visible.",
     icon: <TraceLineGlyph />,
   },
 ];
@@ -521,22 +522,67 @@ const ZONE_TOOL_CHOICES: {
   {
     value: "zone",
     label: "Zone classique",
-    description: "Polygone posé point par point.",
+    description: "Pose les sommets, puis clique sur le premier point pour fermer la zone.",
     icon: <PolygonGlyph />,
   },
   {
     value: "freehand-zone",
     label: "Zone libre",
-    description: "Zone dessinée en maintenant la souris.",
+    description: "Dessine le contour en maintenant le clic, puis relâche pour fermer la zone.",
     icon: <FreehandZoneGlyph />,
   },
   {
     value: "fill-zone",
     label: "Remplissage",
-    description: "Clique une région ou un département vectoriel du fond.",
+    description: "Clique dans un territoire du fond vectoriel ou dans un polygone GeoJSON visible.",
     icon: <PaintBucketGlyph />,
   },
 ];
+
+const DRAWING_TOOL_HELP: Partial<Record<EditorActiveTool, string>> = {
+  line: "Clique sur la carte pour poser chaque point du trait. Double-clique au point d’arrivée pour terminer.",
+  "curved-line": "Clique au départ puis à l’arrivée. Une fois le trait posé, déplace ses poignées pour le courber. Double-clique sur le trait pour ajouter une poignée.",
+  freehand: "Maintiens le clic en déplaçant la souris, puis relâche pour terminer le trait. Augmente le lissage pour atténuer les tremblements.",
+  "trace-line": "Commence près d’une ligne visible et maintiens le clic en la longeant, puis relâche pour terminer. Tu peux suivre les frontières d’un fond blanc vectoriel, les routes importées et les lignes ou contours des calques GeoJSON visibles.",
+  zone: "Clique pour poser les sommets de la zone. Quand le contour est prêt, clique sur le premier point pour fermer le polygone.",
+  "freehand-zone": "Maintiens le clic en dessinant le contour, puis relâche pour fermer la zone. Augmente le lissage pour atténuer les tremblements du contour.",
+  "fill-zone": "Clique à l’intérieur d’un territoire du fond vectoriel ou d’un polygone GeoJSON visible. DroMap reprend sa forme et applique les réglages ci-dessus. Garde au moins le fond ou le contour activé.",
+  shape: "Clique pour poser le premier point, puis clique à l’opposé pour dimensionner la forme. Après la pose, sélectionne-la pour ajuster sa taille avec les poignées bleues.",
+};
+
+function DrawingLibraryOption({
+  label,
+  icon,
+  description,
+  unavailableReason,
+  onClick,
+}: {
+  label: string;
+  icon: ReactNode;
+  description: string;
+  unavailableReason?: string;
+  onClick: () => void;
+}) {
+  const descriptionId = useId();
+
+  return (
+    <>
+      <button
+        type="button"
+        className={motionStyles.toolChoice}
+        aria-describedby={descriptionId}
+        disabled={Boolean(unavailableReason)}
+        onClick={onClick}
+      >
+        {icon}
+        <span>{label}</span>
+      </button>
+      <p id={descriptionId} className={motionStyles.toolDescription}>
+        {unavailableReason ?? description}
+      </p>
+    </>
+  );
+}
 
 function percentage(value: number) {
   return `${Math.round(value * 100)}%`;
@@ -1361,6 +1407,7 @@ export default function ModeToolbar({
   const [markerSettingsStep, setMarkerSettingsStep] =
     useState<MarkerSettingsStep>("symbols");
   const [markerSymbolSearch, setMarkerSymbolSearch] = useState("");
+  const [markerThemesOpen, setMarkerThemesOpen] = useState(false);
   const [settingsPanelZIndex, setSettingsPanelZIndex] = useState(
     getInitialFloatingPanelZIndex(),
   );
@@ -1377,6 +1424,8 @@ export default function ModeToolbar({
   const importsLauncherRef = useRef<HTMLDivElement | null>(null);
   const settingsPanelRef = useRef<HTMLDivElement | null>(null);
   const markerLibraryScrollRef = useRef<HTMLDivElement | null>(null);
+  const customMarkerListRef = useRef<HTMLDivElement | null>(null);
+  const markerLibraryScroll = useRef({ panel: 0, symbols: 0, custom: 0 });
 
   const currentMode = useEditorModeStore((state) => state.currentMode);
   const pathname = usePathname();
@@ -1466,6 +1515,7 @@ export default function ModeToolbar({
   const zoneFillEnabled = zoneStyle.zoneFillEnabled === true;
 
   const markerLibraryOpen = openSettingsTool === "marker" && markerSettingsStep === "symbols";
+  const drawingLibraryOpen = pickerCategory === "line" || pickerCategory === "zone";
   const markerCatalog = useMarkerSymbolCatalog(markerLibraryOpen);
   const markerSearchResult = useMemo(
     () => getMarkerSymbolSearchGroups(
@@ -1476,6 +1526,20 @@ export default function ModeToolbar({
   );
   const markerSymbolGroups = markerSearchResult.groups;
   const markerSymbolCount = markerSearchResult.count;
+
+  useLayoutEffect(() => {
+    if (!markerLibraryOpen) {
+      if (pickerCategory === "line" || pickerCategory === "zone") {
+        settingsPanelRef.current?.scrollTo({ top: 0, behavior: "instant" });
+      }
+      return;
+    }
+
+    const { panel, symbols, custom } = markerLibraryScroll.current;
+    if (settingsPanelRef.current) settingsPanelRef.current.scrollTop = panel;
+    if (markerLibraryScrollRef.current) markerLibraryScrollRef.current.scrollTop = symbols;
+    if (customMarkerListRef.current) customMarkerListRef.current.scrollTop = custom;
+  }, [markerLibraryOpen, pickerCategory]);
 
   const lineSettingsOpen =
     pickerCategory === null && (
@@ -1493,14 +1557,21 @@ export default function ModeToolbar({
     );
 
   const settingsPanelWidth =
-    openSettingsTool === "marker" && markerSettingsStep === "symbols"
+    markerLibraryOpen
       ? "w-[calc(100vw-5rem)] sm:w-[30rem]"
-      : "w-[calc(100vw-5rem)] sm:w-72";
+      : drawingLibraryOpen
+        ? "w-[calc(100vw-5rem)] sm:w-[26rem]"
+        : "w-[calc(100vw-5rem)] sm:w-72";
+
+  const drawingHelp = openSettingsTool ? DRAWING_TOOL_HELP[openSettingsTool] : null;
 
   const canResetCurrentSettings =
     openSettingsTool !== null &&
     pickerCategory === null &&
     (openSettingsTool !== "marker" || markerSettingsStep === "style");
+  const settingsMotionClass = canResetCurrentSettings
+    ? `${controlStyles.settings} ${controlStyles.beforePlacement}`
+    : "";
 
   useEffect(() => {
     if (!activeShortcutKey) return;
@@ -1640,7 +1711,6 @@ export default function ModeToolbar({
   function scrollMarkerSettingsToTop() {
     window.requestAnimationFrame(() => {
       settingsPanelRef.current?.scrollTo({ top: 0 });
-      markerLibraryScrollRef.current?.scrollTo({ top: 0 });
     });
   }
 
@@ -1708,7 +1778,6 @@ export default function ModeToolbar({
     if (category === "marker") {
       void loadMarkerSymbolCatalog().catch(() => undefined);
       setMarkerSettingsStep("symbols");
-      scrollMarkerSettingsToTop();
     }
   }
 
@@ -2193,19 +2262,26 @@ export default function ModeToolbar({
         <div
           ref={settingsPanelRef}
           data-dromap-tool-settings-panel="true"
+          onScrollCapture={(event) => {
+            if (!markerLibraryOpen || !(event.target instanceof HTMLElement)) return;
+            const { target } = event;
+            if (target === settingsPanelRef.current) markerLibraryScroll.current.panel = target.scrollTop;
+            if (target === markerLibraryScrollRef.current) markerLibraryScroll.current.symbols = target.scrollTop;
+            if (target === customMarkerListRef.current) markerLibraryScroll.current.custom = target.scrollTop;
+          }}
           className={
             embedded
-              ? `pointer-events-auto absolute left-20 top-0 h-full min-h-0 ${settingsPanelWidth} overflow-y-auto border-r border-slate-200 bg-white p-3 text-xs text-neutral-700 shadow-lg sm:left-24`
-              : `pointer-events-auto ${settingsPanelWidth} max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl border border-black/10 bg-white/95 p-3 text-xs text-neutral-700 shadow-lg backdrop-blur`
+              ? `${settingsMotionClass} pointer-events-auto absolute left-20 top-0 h-full min-h-0 ${settingsPanelWidth} overflow-y-auto border-r border-slate-200 bg-white p-3 text-xs text-neutral-700 shadow-lg sm:left-24`
+              : `${settingsMotionClass} pointer-events-auto ${settingsPanelWidth} max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl border border-black/10 bg-white/95 p-3 text-xs text-neutral-700 shadow-lg backdrop-blur`
           }
         >
-          <div className="sticky top-0 z-30 -mx-3 -mt-3 mb-3 flex items-center justify-between gap-2 border-b border-neutral-200 bg-white/95 px-3 py-3 shadow-sm backdrop-blur">
+          <div className={`sticky top-0 z-30 -mx-3 -mt-3 mb-3 flex items-center justify-between gap-2 border-b px-3 py-3 ${drawingLibraryOpen ? "border-neutral-300 bg-neutral-50" : "border-neutral-200 bg-white/95 shadow-sm backdrop-blur"}`}>
             <div>
               <strong className="block text-sm text-neutral-900">
                 {getSettingsTitle(openSettingsTool)}
               </strong>
               <span className="text-[11px] text-neutral-500">
-                {pickerCategory === "line" || pickerCategory === "zone"
+                {drawingLibraryOpen
                   ? "Choisis un type dans la bibliothèque"
                   : markerLibraryOpen
                     ? "Choisis un pictogramme"
@@ -2219,9 +2295,10 @@ export default function ModeToolbar({
                   type="button"
                   data-dromap-tool-control="true"
                   onClick={resetCurrentSettings}
-                  className="rounded-lg px-2 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900"
+                  className="inline-flex items-center gap-1 rounded-lg bg-teal-50 px-2 py-1.5 text-xs font-semibold text-teal-800"
                   title="Réinitialiser les paramètres de cet outil"
                 >
+                  <span aria-hidden="true">↻</span>
                   Réinitialiser
                 </button>
               ) : null}
@@ -2233,9 +2310,10 @@ export default function ModeToolbar({
                   setOpenSettingsTool(null);
                   setPickerCategory(null);
                 }}
-                className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-bold text-neutral-800 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold text-slate-700 hover:bg-red-50 hover:text-red-700"
               >
                 Fermer
+                {canResetCurrentSettings ? <span aria-hidden="true">×</span> : null}
               </button>
             </div>
           </div>
@@ -2243,14 +2321,6 @@ export default function ModeToolbar({
           {openSettingsTool === "marker" ? (
             markerSettingsStep === "symbols" ? (
               <div className="space-y-3">
-                <div className="rounded-lg bg-neutral-50 px-2 py-2 text-[11px] leading-snug text-neutral-600">
-                  Choisis un marqueur à poser. Son pictogramme apparaîtra dans les raccourcis.
-                </div>
-
-                <div className="border-t border-neutral-200 pt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  Bibliothèque DroMap
-                </div>
-
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-medium text-neutral-600">
                     Rechercher un marqueur
@@ -2262,14 +2332,15 @@ export default function ModeToolbar({
                     placeholder="Ville, gare, port, bataille, énergie, risque..."
                     className="w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none transition placeholder:text-neutral-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
-                  <span className="mt-1 block text-[10px] leading-snug text-neutral-500">
-                    La recherche ignore les majuscules et les accents, comprend des synonymes courants et tolère de petites fautes de frappe.
-                  </span>
                 </label>
 
-                <details className="group rounded-xl border border-neutral-200 bg-white">
+                <details
+                  className="group rounded-xl border border-neutral-200 bg-white"
+                  open={markerThemesOpen}
+                  onToggle={(event) => setMarkerThemesOpen(event.currentTarget.open)}
+                >
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-600 marker:content-none">
-                    <span>Thèmes</span>
+                    <span>Rechercher par thème</span>
                     <span className="flex items-center gap-2">
                       <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] tabular-nums text-neutral-500">
                         {DROMAP_MARKER_SYMBOL_CATEGORIES.length}
@@ -2293,20 +2364,13 @@ export default function ModeToolbar({
                   </div>
                 </details>
 
-                <div className="text-[11px] text-neutral-500">
-                  {!markerCatalog ? (
-                    <span role="status">Chargement des symboles…</span>
-                  ) : markerSearchResult.fallback ? (
-                    <>
-                      Aucun résultat exact : {markerSymbolCount} suggestion{markerSymbolCount > 1 ? "s" : ""} proche{markerSymbolCount > 1 ? "s" : ""}
-                    </>
-                  ) : (
-                    <>
-                      {markerSymbolCount} marqueur{markerSymbolCount > 1 ? "s" : ""}
-                      {markerSymbolSearch.trim() ? " trouvé(s)" : " disponibles"}
-                    </>
-                  )}
-                </div>
+                {!markerCatalog ? (
+                  <p role="status" className="text-[11px] text-neutral-500">Chargement des symboles…</p>
+                ) : markerSearchResult.fallback ? (
+                  <p className="text-[11px] text-neutral-500">
+                    Aucun résultat exact. {markerSymbolCount} suggestion{markerSymbolCount > 1 ? "s" : ""} proche{markerSymbolCount > 1 ? "s" : ""}.
+                  </p>
+                ) : null}
 
                 <div
                   ref={markerLibraryScrollRef}
@@ -2387,6 +2451,7 @@ export default function ModeToolbar({
                 <div className="border-t border-neutral-200 pt-3">
                   <CustomMarkerLibrary
                     selectedSymbol={markerSymbol}
+                    listRef={customMarkerListRef}
                     onSelect={(symbol) => {
                       setMarkerSymbol(symbol);
                       updateMarkerStyle({
@@ -2423,16 +2488,6 @@ export default function ModeToolbar({
                         },
                       })}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMarkerSettingsStep("symbols");
-                        scrollMarkerSettingsToTop();
-                      }}
-                      className="mt-1 rounded-md px-0 text-[11px] font-medium text-blue-600 hover:text-blue-800"
-                    >
-                      ← Revenir au choix du marqueur
-                    </button>
                   </div>
                 </div>
 
@@ -2556,42 +2611,23 @@ export default function ModeToolbar({
           ) : null}
 
           {pickerCategory === "line" ? (
-            <div className="grid grid-cols-3 gap-2 rounded-lg bg-neutral-50 p-2">
-              {LINE_TOOL_CHOICES.map((choice) => {
-                const traceDisabled =
-                  choice.value === "trace-line" && !canUseTraceToolOnCurrentBasemap;
-
-                return (
-                  <button
+            <div className={motionStyles.toolLibrary}>
+              <div className={`${motionStyles.toolRow} ${motionStyles.lineToolRow}`}>
+                {LINE_TOOL_CHOICES.map((choice) => (
+                  <DrawingLibraryOption
                     key={choice.value}
-                    type="button"
-                    disabled={traceDisabled}
-                    title={
-                      traceDisabled
-                        ? "Le suivi de trait nécessite des frontières d’un fond blanc vectoriel ou des lignes/contours GeoJSON visibles."
+                    label={choice.label}
+                    icon={choice.icon}
+                    description={choice.description}
+                    unavailableReason={
+                      choice.value === "trace-line" && !canUseTraceToolOnCurrentBasemap
+                        ? "Affiche un fond blanc vectoriel avec des frontières ou un calque GeoJSON visible contenant des lignes ou des contours, comme un calque de routes importées."
                         : undefined
                     }
                     onClick={() => chooseLineTool(choice.value)}
-                    className={[
-                      motionStyles.libraryChoice,
-                      "flex min-h-[5rem] flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-center",
-                      traceDisabled
-                        ? "cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-400 opacity-70"
-                        : "border-neutral-200 bg-white text-neutral-700",
-                    ].join(" ")}
-                  >
-                    <span className={motionStyles.libraryIcon}>{choice.icon}</span>
-                    <span className="text-[11px] font-semibold">
-                      {choice.label}
-                    </span>
-                    <span className="text-[10px] leading-snug text-neutral-500">
-                      {traceDisabled
-                        ? "Aucune ligne vectorielle disponible."
-                        : choice.description}
-                    </span>
-                  </button>
-                );
-              })}
+                  />
+                ))}
+              </div>
             </div>
           ) : null}
 
@@ -2728,19 +2764,7 @@ export default function ModeToolbar({
                       })
                     }
                   />
-                  <p className="mt-1 text-[10px] leading-snug text-neutral-500">
-                    0% garde le trait brut. 100% nettoie très fortement les
-                    tremblements du dessin libre.
-                  </p>
                 </label>
-              ) : null}
-
-              {openSettingsTool === "trace-line" ? (
-                <p className="rounded-lg bg-blue-50 px-2 py-2 text-[11px] leading-snug text-blue-700">
-                  Maintiens la souris près d’une frontière vectorielle visible :
-                  le trait s’accroche à cette ligne et la suit jusqu’au relâchement.
-                  Fonctionne sur les fonds blancs vectoriels, pays, régions et départements.
-                </p>
               ) : null}
 
               <label className="block">
@@ -2766,60 +2790,35 @@ export default function ModeToolbar({
           ) : null}
 
           {pickerCategory === "zone" ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2 rounded-lg bg-neutral-50 p-2">
-                {ZONE_TOOL_CHOICES.map((choice) => {
-                  const fillDisabled =
-                    choice.value === "fill-zone" && !canUseFillToolOnCurrentBasemap;
-
-                  return (
-                    <button
-                      key={choice.value}
-                      type="button"
-                      disabled={fillDisabled}
-                      title={
-                        fillDisabled
-                          ? "Le remplissage nécessite les frontières d’un fond blanc vectoriel ou un calque GeoJSON polygonal visible."
-                          : undefined
-                      }
-                      onClick={() => chooseZoneTool(choice.value)}
-                      className={[
-                        motionStyles.libraryChoice,
-                        "flex min-h-[5.5rem] flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-center",
-                        fillDisabled
-                          ? "cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-400 opacity-70"
-                          : "border-neutral-200 bg-white text-neutral-700",
-                      ].join(" ")}
-                    >
-                      <span className={motionStyles.libraryIcon}>{choice.icon}</span>
-                      <span className="text-[11px] font-semibold">
-                        {choice.label}
-                      </span>
-                      <span className="text-[10px] leading-snug text-neutral-500">
-                        {fillDisabled
-                          ? "Aucun polygone vectoriel disponible."
-                          : choice.description}
-                      </span>
-                    </button>
-                  );
-                })}
+            <div className={`${motionStyles.toolLibrary} space-y-3`}>
+              <div className={motionStyles.toolRow}>
+                {ZONE_TOOL_CHOICES.map((choice) => (
+                  <DrawingLibraryOption
+                    key={choice.value}
+                    label={choice.label}
+                    icon={choice.icon}
+                    description={choice.description}
+                    unavailableReason={
+                      choice.value === "fill-zone" && !canUseFillToolOnCurrentBasemap
+                        ? "Affiche un fond blanc vectoriel avec des frontières ou un calque GeoJSON visible contenant des polygones."
+                        : undefined
+                    }
+                    onClick={() => chooseZoneTool(choice.value)}
+                  />
+                ))}
               </div>
 
               <div>
                 <h3 className="mb-1 text-[11px] font-semibold text-neutral-600">Formes rapides</h3>
-                <div className="grid grid-cols-3 gap-2 rounded-lg bg-neutral-50 p-2">
+                <div className={motionStyles.toolRow}>
                   {DROMAP_QUICK_SHAPES.map((option) => (
-                    <button
+                    <DrawingLibraryOption
                       key={option.value}
-                      type="button"
+                      label={option.label}
+                      icon={<QuickShapeGlyph shapeKind={option.value} />}
+                      description="Clique pour poser le premier point, puis clique à l’opposé pour dimensionner la forme."
                       onClick={() => chooseZoneTool("shape", option.value)}
-                      className={`${motionStyles.libraryChoice} flex flex-col items-center justify-center gap-1 rounded-lg border border-neutral-200 bg-white px-2 py-2 text-center text-neutral-700`}
-                    >
-                      <span className={motionStyles.libraryIcon}>
-                        <QuickShapeGlyph shapeKind={option.value} />
-                      </span>
-                      <span className="text-[11px] font-semibold">{option.label}</span>
-                    </button>
+                    />
                   ))}
                 </div>
               </div>
@@ -2828,24 +2827,6 @@ export default function ModeToolbar({
 
           {zoneSettingsOpen ? (
             <div className="space-y-3">
-              {openSettingsTool === "shape" ? (
-                <p className="rounded-lg bg-blue-50 px-2 py-2 text-[11px] leading-snug text-blue-700">
-                  Pose : premier clic pour le premier point, deuxième clic pour le point opposé. Modification : utilise les poignées bleues sur la carte. Le cercle n’a pas de rotation.
-                </p>
-              ) : null}
-
-              {openSettingsTool === "fill-zone" ? (
-                <div className="space-y-2 rounded-lg bg-blue-50 px-2 py-2 text-[11px] leading-snug text-blue-700">
-                  <p>
-                    Clique une région, un département, un pays ou une subdivision visible sur les fonds vectoriels. La zone créée reprend les paramètres visibles actuels.
-                  </p>
-                  <p>
-                    Garde au moins un fond ou un contour pour éviter une zone invisible.
-                  </p>
-                </div>
-              ) : null}
-
-
               {openSettingsTool === "freehand-zone" ? (
                 <label className="block rounded-lg bg-neutral-50 px-2 py-2">
                   <div className="mb-1 flex justify-between">
@@ -2865,10 +2846,6 @@ export default function ModeToolbar({
                       })
                     }
                   />
-                  <p className="mt-1 text-[10px] leading-snug text-neutral-500">
-                    0% garde le contour brut. 100% nettoie très fortement les
-                    tremblements de la zone libre.
-                  </p>
                 </label>
               ) : null}
 
@@ -3182,6 +3159,12 @@ export default function ModeToolbar({
                 </>
               ) : null}
             </div>
+          ) : null}
+
+          {(lineSettingsOpen || zoneSettingsOpen) && drawingHelp ? (
+            <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-900">
+              {drawingHelp}
+            </p>
           ) : null}
 
           {openSettingsTool === "text" ? (

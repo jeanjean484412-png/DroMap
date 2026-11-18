@@ -7,6 +7,8 @@ import "leaflet/dist/leaflet.css";
 import { WorkspaceMaskLayer } from "./workspace-mask-layer";
 import { WorkspaceInteractionGuard } from "./workspace-interaction-guard";
 import { useEditorBasemapStore } from "@/stores/editor-basemap";
+import { useEditorFeaturesStore } from "@/stores/editor-features";
+import { useEditorGeoJsonLayersStore } from "@/stores/editor-geojson-layers";
 import { useEditorModeStore } from "@/stores/editor-mode";
 import { useEditorSelectionStore } from "@/stores/editor-selection";
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
@@ -363,6 +365,13 @@ type EditorMapProps = {
 
 export default function EditorMap({ onPresentationReady }: EditorMapProps = {}) {
   const basemapId = useEditorBasemapStore((state) => state.basemapId);
+  const hasVisibleGeoJson = useEditorGeoJsonLayersStore((state) =>
+    state.geoJsonLayers.some((layer) => layer.visible !== false && layer.opacity > 0),
+  );
+  const hasObjectsBelowBasemapLabels = useEditorFeaturesStore((state) =>
+    state.features.some((feature) => feature.properties.belowBasemapLabels === true),
+  );
+  const stackBasemapSymbols = hasVisibleGeoJson || hasObjectsBelowBasemapLabels;
   const currentMode = useEditorModeStore((state) => state.currentMode);
   const workspaceBasemapZoom = useEditorWorkspaceStore(
     (state) => state.workspaceBasemapZoom,
@@ -557,6 +566,8 @@ export default function EditorMap({ onPresentationReady }: EditorMapProps = {}) 
             styleUrl={basemap.styleUrl}
             attribution={basemap.attribution}
             lockedNativeZoom={lockedMapLibreDetailZoom}
+            animateLockedZoom
+            stackBasemapSymbols={stackBasemapSymbols}
             fallbackTileUrl={mapLibreFallbackTileUrl}
             fallbackTileMaxZoom={
               mapLibreFallbackBasemap?.kind === "tile"
@@ -578,7 +589,7 @@ export default function EditorMap({ onPresentationReady }: EditorMapProps = {}) 
         ) : null}
 
         {shouldUseWorldSnapshot ? (
-          <WorldBasemapSnapshotLayer basemap={basemap} />
+          <WorldBasemapSnapshotLayer basemap={basemap} stackBasemapSymbols={stackBasemapSymbols} />
         ) : null}
 
         <BasemapAttributionControl basemap={basemap} />

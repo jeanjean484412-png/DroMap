@@ -281,7 +281,7 @@ const HELP_ARTICLES: HelpArticle[] = [
       "redimensionner",
     ],
     steps: [
-      "Dans la bibliothèque de symboles, Bibliothèque DroMap regroupe les pictogrammes intégrés et Mes marqueurs les symboles personnels enregistrés.",
+      "Dans la bibliothèque de symboles, utilise la recherche ou Rechercher par thème pour trouver un pictogramme. La section Mes marqueurs regroupe tes symboles personnels.",
       "Le concepteur permet de sélectionner, déplacer, redimensionner et faire pivoter les éléments, avec multi-sélection, formes, lignes, flèches, polygones, dessin libre et texte.",
       "Le symbole enregistré reste une définition DroMap/SVG afin de conserver un rendu net sur la carte, dans la légende et à l’export.",
       "L’import accepte PNG, JPEG, WebP ou SVG lorsque l’offre autorise les marqueurs personnalisés.",

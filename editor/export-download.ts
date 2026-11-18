@@ -973,6 +973,7 @@ async function drawMapLibreBasemap(
   pixelRatio: number,
   quality: ExportVisualQuality,
   showBasemapLabels: boolean,
+  stackBasemapSymbols: boolean,
   onProgress?: VisualExportProgressCallback,
 ) {
   const zoom = chooseMapLibreDetailZoom(
@@ -992,15 +993,21 @@ async function drawMapLibreBasemap(
   ctx.fillStyle = basemap.exportBackground;
   ctx.fillRect(mapRect.x, mapRect.y, mapRect.width, mapRect.height);
 
+  let basemapSymbols: HTMLCanvasElement | null = null;
+
   if (basemap.kind === "maplibre") {
     try {
-      const mapCanvas = await renderMapLibreStyleToCanvas({
+      const renderOptions = {
         styleUrl: basemap.styleUrl,
         bounds: points,
         width: mapRect.width * pixelRatio,
         height: mapRect.height * pixelRatio,
         detailLeafletZoom: zoom,
-        showTextLabels: showBasemapLabels,
+      };
+      const splitSymbols = showBasemapLabels && stackBasemapSymbols;
+      const mapCanvas = await renderMapLibreStyleToCanvas({
+        ...renderOptions,
+        pass: showBasemapLabels && !splitSymbols ? "full" : "base",
       });
 
       ctx.drawImage(
@@ -1010,6 +1017,11 @@ async function drawMapLibreBasemap(
         mapRect.width,
         mapRect.height,
       );
+      mapCanvas.width = 0;
+
+      if (splitSymbols) {
+        basemapSymbols = await renderMapLibreStyleToCanvas({ ...renderOptions, pass: "symbols" });
+      }
     } catch (error) {
       console.warn(
         "Fond vectoriel impossible à rendre dans l’export, fallback raster.",
@@ -1043,6 +1055,7 @@ async function drawMapLibreBasemap(
     projectedNorthWest: projectedBounds.northWest,
     scaleX,
     scaleY,
+    basemapSymbols,
   };
 }
 
@@ -1056,8 +1069,15 @@ async function drawBasemap(
   pixelRatio: number,
   quality: ExportVisualQuality,
   showBasemapLabels: boolean,
+  stackBasemapSymbols: boolean,
   onProgress?: VisualExportProgressCallback,
-) {
+): Promise<{
+  zoom: number;
+  projectedNorthWest: ProjectedPoint;
+  scaleX: number;
+  scaleY: number;
+  basemapSymbols?: HTMLCanvasElement | null;
+}> {
   if (basemap.kind === "maplibre") {
     return drawMapLibreBasemap(
       ctx,
@@ -1069,6 +1089,7 @@ async function drawBasemap(
       pixelRatio,
       quality,
       showBasemapLabels,
+      stackBasemapSymbols,
       onProgress,
     );
   }
@@ -5038,6 +5059,14 @@ async function renderCanvasExportToCanvas(
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, layout.canvasWidth, layout.canvasHeight);
 
+  const featuresByDrawOrder = getFeaturesByDrawOrder(input.features);
+  const featuresBelowBasemapLabels = featuresByDrawOrder.filter(
+    (feature) => feature.properties.belowBasemapLabels === true,
+  );
+  const foregroundFeatures = featuresByDrawOrder.filter(
+    (feature) => feature.properties.belowBasemapLabels !== true,
+  );
+  const hasVisibleGeoJson = getRenderableGeoJsonLayers(input.geoJsonLayers ?? []).length > 0;
   onProgress?.({ percent: 10, label: "Chargement du fond de carte…" });
   const projection = await drawBasemap(
     ctx,
@@ -5049,6 +5078,7 @@ async function renderCanvasExportToCanvas(
     safePixelRatio,
     quality,
     input.showBasemapLabels !== false,
+    hasVisibleGeoJson || featuresBelowBasemapLabels.length > 0,
     onProgress,
   );
 
@@ -5078,7 +5108,6 @@ async function renderCanvasExportToCanvas(
     layout.mapRect,
   );
 
-  const featuresByDrawOrder = getFeaturesByDrawOrder(input.features);
   const projectionVisualZoom = getProjectionVisualZoom(projection);
   const fallbackReferenceZoom =
     typeof input.workspaceBasemapZoom === "number" &&
@@ -5086,7 +5115,7 @@ async function renderCanvasExportToCanvas(
       ? input.workspaceBasemapZoom
       : projectionVisualZoom;
 
-  for (const feature of featuresByDrawOrder) {
+  const drawMapFeature = (feature: DroMapFeature) => {
     drawFeature(
       ctx,
       feature,
@@ -5099,7 +5128,17 @@ async function renderCanvasExportToCanvas(
         fallbackReferenceZoom,
       ),
     );
+  };
+
+  featuresBelowBasemapLabels.forEach(drawMapFeature);
+
+  if (projection.basemapSymbols) {
+    const { x, y, width, height } = layout.mapRect;
+    ctx.drawImage(projection.basemapSymbols, x, y, width, height);
+    projection.basemapSymbols.width = 0;
   }
+
+  foregroundFeatures.forEach(drawMapFeature);
 
   const scaleBarPosition = input.scaleBarPosition ?? "bottom-left";
   const northArrowPosition = input.northArrowPosition ?? "top-right";

@@ -5,11 +5,13 @@ import L from "leaflet";
 import { TileLayer, useMap } from "react-leaflet";
 
 import {
-  applyMapLibreBasemapTextVisibility,
+  applyMapLibreBasemapPass,
   ensureMapLibreGl,
   resolveDromapMapLibreStyle,
+  type MapLibreBasemapPass,
 } from "./openfreemap-maplibre";
 import { getFullWorldScreenFrame } from "./full-world-screen-frame";
+import { getBasemapSymbolsPane } from "./basemap-symbol-panes";
 
 type MapLibreBasemapLayerProps = {
   styleUrl: string;
@@ -26,12 +28,14 @@ type MapLibreBasemapLayerProps = {
    * l'échelle pour suivre le zoom graphique Leaflet.
    */
   lockedNativeZoom?: number | null;
+  animateLockedZoom?: boolean;
   fallbackTileUrl?: string;
   fallbackTileMaxZoom?: number;
   fallbackTileMaxNativeZoom?: number;
   renderWorldCopies?: boolean;
   /** Affiche ou masque seulement les écritures du fond vectoriel. */
   showTextLabels?: boolean;
+  stackBasemapSymbols?: boolean;
   /**
    * En mode « Monde entier », MapLibre ne doit pas utiliser toute la largeur
    * de l’éditeur. Sinon, avec renderWorldCopies=false, MapLibre augmente
@@ -69,6 +73,7 @@ const MAPLIBRE_LEAFLET_ZOOM_OFFSET = -1;
 const MIN_MAPLIBRE_ZOOM = 0;
 const MAX_LOCK_SCALE = 8;
 const MIN_LOCK_SCALE = 1 / 8;
+const MAX_BUFFERED_VIEWPORT_SIDE = 3072;
 const MAPLIBRE_BASEMAP_LOAD_TIMEOUT_MS = 16000;
 
 
@@ -321,17 +326,40 @@ function getMapLibreCenterCorrection(
   return correction;
 }
 
-export function MapLibreBasemapLayer({
+export function MapLibreBasemapLayer(props: MapLibreBasemapLayerProps) {
+  const showTextLabels = props.showTextLabels !== false;
+  const splitSymbols = showTextLabels && props.stackBasemapSymbols;
+
+  return (
+    <>
+      <MapLibreBasemapPassLayer
+        {...props}
+        pass={showTextLabels && !splitSymbols ? "full" : "base"}
+      />
+      {splitSymbols ? (
+        <MapLibreBasemapPassLayer
+          {...props}
+          attribution=""
+          fallbackTileUrl={undefined}
+          pass="symbols"
+        />
+      ) : null}
+    </>
+  );
+}
+
+function MapLibreBasemapPassLayer({
   styleUrl,
   attribution,
   lockedNativeZoom = null,
+  animateLockedZoom = false,
   fallbackTileUrl,
   fallbackTileMaxZoom = 22,
   fallbackTileMaxNativeZoom,
   renderWorldCopies = true,
-  showTextLabels = true,
+  pass,
   singleWorldBounds,
-}: MapLibreBasemapLayerProps) {
+}: MapLibreBasemapLayerProps & { pass: MapLibreBasemapPass }) {
   const map = useMap();
   const [hasLoadFailure, setHasLoadFailure] = useState(false);
 
@@ -379,6 +407,12 @@ export function MapLibreBasemapLayer({
     let lastCenterCorrectionX = Number.NaN;
     let lastCenterCorrectionY = Number.NaN;
     let mapLibreResizePending = false;
+    let isLeafletZooming = false;
+    let renderedView: { topLeft: L.LatLng; zoom: number } | null = null;
+    const hasLockedDetail =
+      typeof lockedNativeZoom === "number" &&
+      Number.isFinite(lockedNativeZoom);
+    const useLeafletZoomTransform = animateLockedZoom && hasLockedDetail;
 
     const singleWorldLatLngBounds = singleWorldBounds
       ? singleWorldBounds instanceof L.LatLngBounds
@@ -386,7 +420,7 @@ export function MapLibreBasemapLayer({
         : L.latLngBounds(singleWorldBounds as L.LatLngExpression[])
       : null;
 
-    const getViewportLayout = () => {
+    const getViewportLayout = (visualScale: number) => {
       if (singleWorldLatLngBounds?.isValid()) {
         const frame = getFullWorldScreenFrame(
           map,
@@ -407,19 +441,28 @@ export function MapLibreBasemapLayer({
       }
 
       const size = map.getSize();
+      // Garder de l’image autour du cadre pendant le dézoom, sans agrandir
+      // davantage les canvas MapLibre déjà grands au niveau de détail figé.
+      const paddingForSide = (side: number) => {
+        const sparePixels = MAX_BUFFERED_VIEWPORT_SIDE * visualScale - side;
+        return Math.max(0, Math.floor(Math.min(side, sparePixels) / 2));
+      };
+      const padding = useLeafletZoomTransform
+        ? L.point(paddingForSide(size.x), paddingForSide(size.y))
+        : L.point(0, 0);
 
       return {
-        topLeft: map.containerPointToLayerPoint([0, 0]),
-        width: Math.max(1, size.x),
-        height: Math.max(1, size.y),
+        topLeft: map.containerPointToLayerPoint(padding.multiplyBy(-1)),
+        width: Math.max(1, size.x + 2 * padding.x),
+        height: Math.max(1, size.y + 2 * padding.y),
         center: map.getCenter(),
       };
     };
 
-    let pane = map.getPane(MAPLIBRE_BASEMAP_PANE);
-
-    if (!pane) {
-      pane = map.createPane(MAPLIBRE_BASEMAP_PANE);
+    const pane = pass === "symbols"
+      ? getBasemapSymbolsPane(map)
+      : map.getPane(MAPLIBRE_BASEMAP_PANE) ?? map.createPane(MAPLIBRE_BASEMAP_PANE);
+    if (pass !== "symbols") {
       pane.style.zIndex = "200";
       pane.style.pointerEvents = "none";
     }
@@ -439,7 +482,12 @@ export function MapLibreBasemapLayer({
     container.style.overflow = "hidden";
     container.style.pointerEvents = "none";
     container.style.background = "transparent";
-    container.style.transition = "none";
+    if (pass === "symbols") container.style.visibility = "hidden";
+    if (useLeafletZoomTransform) {
+      container.classList.add("leaflet-zoom-animated");
+    } else {
+      container.style.transition = "none";
+    }
     container.style.willChange = "transform,width,height";
     container.style.backfaceVisibility = "hidden";
     container.style.transformOrigin = "0 0";
@@ -465,13 +513,13 @@ export function MapLibreBasemapLayer({
         return;
       }
 
-      const viewport = getViewportLayout();
       const currentZoom = getFiniteZoom(options?.zoom ?? map.getZoom());
       const { mapLibreZoom, renderedDetailLeafletZoom } =
         getMapLibreRenderZoom(currentZoom, lockedNativeZoom);
       const visualScale = clampScale(
         2 ** (currentZoom - renderedDetailLeafletZoom),
       );
+      const viewport = getViewportLayout(visualScale);
       const innerWidth = Math.max(1, Math.ceil(viewport.width / visualScale));
       const innerHeight = Math.max(1, Math.ceil(viewport.height / visualScale));
       const topLeft = viewport.topLeft;
@@ -486,6 +534,12 @@ export function MapLibreBasemapLayer({
         visualScale !== lastVisualScale;
 
       L.DomUtil.setPosition(container, topLeft);
+      if (useLeafletZoomTransform) {
+        renderedView = {
+          topLeft: map.layerPointToLatLng(topLeft),
+          zoom: currentZoom,
+        };
+      }
 
       if (containerWidth !== lastContainerWidth) {
         container.style.width = `${containerWidth}px`;
@@ -579,13 +633,13 @@ export function MapLibreBasemapLayer({
           return;
         }
 
-        const viewport = getViewportLayout();
         const currentZoom = getFiniteZoom(map.getZoom());
         const { mapLibreZoom, renderedDetailLeafletZoom } =
           getMapLibreRenderZoom(currentZoom, lockedNativeZoom);
         const visualScale = clampScale(
           2 ** (currentZoom - renderedDetailLeafletZoom),
         );
+        const viewport = getViewportLayout(visualScale);
         const center = viewport.center;
         const innerWidth = Math.max(1, Math.ceil(viewport.width / visualScale));
         const innerHeight = Math.max(1, Math.ceil(viewport.height / visualScale));
@@ -671,14 +725,20 @@ export function MapLibreBasemapLayer({
 
         mapLibreMap.on("load", () => {
           didMapLibreLoad = true;
-          applyMapLibreBasemapTextVisibility(mapLibreMap, showTextLabels);
+          applyMapLibreBasemapPass(mapLibreMap, pass);
+          if (pass === "symbols") {
+            mapLibreMap.once("render", () => {
+              if (!isCancelled) container.style.visibility = "";
+            });
+            mapLibreMap.triggerRepaint();
+          }
 
           if (mapLibreLoadTimeoutId !== null) {
             window.clearTimeout(mapLibreLoadTimeoutId);
             mapLibreLoadTimeoutId = null;
           }
 
-          applyView();
+          if (!useLeafletZoomTransform || !isLeafletZooming) applyView();
         });
 
         if (fallbackTileUrl) {
@@ -713,15 +773,29 @@ export function MapLibreBasemapLayer({
         }
       });
 
-    const hasLockedDetail =
-      typeof lockedNativeZoom === "number" &&
-      Number.isFinite(lockedNativeZoom);
-    let isLeafletZooming = false;
-
     const applyTransientZoomView = (event?: LeafletZoomAnimationEvent) => {
+      const center = event?.center ?? map.getCenter();
+      const zoom = event?.zoom ?? map.getZoom();
+      if (useLeafletZoomTransform) {
+        if (!renderedView) return;
+
+        // Même origine de pixels et même transition que les formes Leaflet.
+        // L'image déjà dessinée garde son centre géographique pendant le geste.
+        const targetOrigin = map.project(center, zoom)
+          .subtract(map.getSize().divideBy(2))
+          .subtract(map.containerPointToLayerPoint([0, 0]))
+          .round();
+        const position = map.project(renderedView.topLeft, zoom).subtract(targetOrigin);
+        L.DomUtil.setTransform(
+          container,
+          position,
+          map.getZoomScale(zoom, renderedView.zoom),
+        );
+        return;
+      }
       applyView({
-        center: event?.center ?? map.getCenter(),
-        zoom: event?.zoom ?? map.getZoom(),
+        center,
+        zoom,
         deferResize: hasLockedDetail,
         deferMapLibreSync: hasLockedDetail,
       });
@@ -794,13 +868,14 @@ export function MapLibreBasemapLayer({
       container.remove();
     };
   }, [
+    animateLockedZoom,
     attribution,
     fallbackTileUrl,
     hasLoadFailure,
     lockedNativeZoom,
     map,
+    pass,
     renderWorldCopies,
-    showTextLabels,
     singleWorldBounds,
     styleUrl,
   ]);

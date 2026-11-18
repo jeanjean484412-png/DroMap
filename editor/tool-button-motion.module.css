@@ -4,9 +4,81 @@
   white-space: nowrap;
 }
 
+.toolLibrary {
+  padding-block-start: 1rem;
+}
+
+.toolRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 0.625rem;
+}
+
+.lineToolRow {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.toolChoice {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 4.75rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.5rem 0.25rem;
+  border: 1px solid #e5e5e5;
+  border-radius: 0.625rem;
+  background: white;
+  color: #404040;
+  text-align: center;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.toolChoice:disabled {
+  background: #f5f5f5;
+  color: #737373;
+  cursor: not-allowed;
+}
+
+.toolChoice:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
+.toolDescription {
+  order: 1;
+  grid-column: 1 / -1;
+  display: none;
+  border-radius: 0.5rem;
+  background: #f5f5f5;
+  padding: 0.625rem 0.75rem;
+  color: #525252;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.toolChoice:focus-visible + .toolDescription {
+  display: block;
+}
+
 @media (hover: hover) {
   .launcher:hover .textSuffix {
     width: 4ch;
+  }
+
+  .toolChoice:hover + .toolDescription {
+    display: block;
+  }
+
+  .toolRow:has(.toolChoice:hover) .toolChoice:not(:hover) + .toolDescription {
+    display: none;
   }
 }
 
@@ -46,6 +118,15 @@
 
   .libraryChoice:not(:disabled):is(:hover, :focus-visible) .libraryIcon {
     transform: scale(1.14);
+  }
+
+  .toolChoice {
+    transition: transform 150ms ease-out;
+  }
+
+  .toolChoice:not(:disabled):is(:hover, :focus-visible) {
+    z-index: 1;
+    transform: scale(1.05);
   }
 }
 

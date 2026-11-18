@@ -3,7 +3,7 @@
 import type { DromapBasemapConfig } from "@/lib/dromap/basemap";
 import { DROMAP_FULL_WORLD_WORKSPACE_BOUNDS } from "@/lib/dromap/workspace-bounds";
 
-import { renderMapLibreStyleToCanvas } from "./openfreemap-maplibre";
+import { renderMapLibreStyleToCanvas, type MapLibreBasemapPass } from "./openfreemap-maplibre";
 
 const WEB_MERCATOR_MAX_LATITUDE = 85.05112878;
 const DEFAULT_WORLD_SNAPSHOT_SIZE = 2048;
@@ -293,6 +293,7 @@ async function renderTileBasemapSnapshot(
 async function createWorldBasemapSnapshot(
   basemap: DromapBasemapConfig,
   detailLeafletZoom: number,
+  pass: MapLibreBasemapPass,
 ): Promise<WorldBasemapSnapshot> {
   const normalizedDetailZoom = normalizeDetailZoom(detailLeafletZoom);
 
@@ -309,6 +310,7 @@ async function createWorldBasemapSnapshot(
       height: outputSize,
       detailLeafletZoom: normalizedDetailZoom,
       renderWorldCopies: false,
+      pass,
     });
 
     return {
@@ -335,13 +337,14 @@ async function createWorldBasemapSnapshot(
 export function getWorldBasemapSnapshot(
   basemap: DromapBasemapConfig,
   detailLeafletZoom: number,
+  pass: MapLibreBasemapPass = "full",
 ) {
   const normalizedDetailZoom = normalizeDetailZoom(detailLeafletZoom);
   const outputSize =
     basemap.id === "ign-satellite"
       ? SATELLITE_WORLD_SNAPSHOT_SIZE
       : DEFAULT_WORLD_SNAPSHOT_SIZE;
-  const cacheKey = `${basemap.id}:${normalizedDetailZoom}:${outputSize}`;
+  const cacheKey = `${basemap.id}:${normalizedDetailZoom}:${outputSize}:${pass}`;
   const cachedPromise = snapshotPromiseCache.get(cacheKey);
 
   if (cachedPromise) {
@@ -351,6 +354,7 @@ export function getWorldBasemapSnapshot(
   const snapshotPromise = createWorldBasemapSnapshot(
     basemap,
     normalizedDetailZoom,
+    pass,
   ).catch((error) => {
     snapshotPromiseCache.delete(cacheKey);
     throw error;

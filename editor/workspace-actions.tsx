@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { getDromapBasemapConfig } from "@/lib/dromap/basemap";
-import { DROMAP_FULL_WORLD_WORKSPACE_BOUNDS } from "@/lib/dromap/workspace-bounds";
+import { DROMAP_SUGGEST_FREE_NAVIGATION_EVENT } from "@/lib/dromap/map-navigation";
+import { DROMAP_FULL_WORLD_WORKSPACE_BOUNDS, type WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
 import { validateWorkspaceBoundsRatio } from "@/lib/dromap/workspace-validation";
 import { useEditorBasemapStore } from "@/stores/editor-basemap";
 import { useEditorFeaturesStore } from "@/stores/editor-features";
@@ -31,6 +32,7 @@ const WORKSPACE_MENU_WIDTH = 260;
 const WORKSPACE_MENU_ESTIMATED_HEIGHT = 148;
 const WORKSPACE_MENU_GAP = 10;
 const WORKSPACE_MENU_VIEWPORT_MARGIN = 12;
+const FREE_NAVIGATION_HINT_DURATION_MS = 7000;
 
 function YellowLockBadge({ className = "h-5 w-5" }: { className?: string }) {
   return (
@@ -63,6 +65,8 @@ export function WorkspaceActions() {
   const [zoneLockedMessageOpen, setZoneLockedMessageOpen] = useState(false);
   const [workspaceMenuPosition, setWorkspaceMenuPosition] =
     useState<WorkspaceMenuPosition | null>(null);
+  const [navigationHintBounds, setNavigationHintBounds] =
+    useState<WorkspaceBounds | null>(null);
 
   const productRuntime = useDromapProductRuntime();
 
@@ -100,6 +104,30 @@ export function WorkspaceActions() {
   const toggleWorkspaceNavigationUnlocked = useEditorWorkspaceStore(
     (state) => state.toggleWorkspaceNavigationUnlocked,
   );
+  const showNavigationHint = navigationHintBounds !== null &&
+    navigationHintBounds === workspaceBounds &&
+    currentMode === "edit" && !workspaceNavigationUnlocked;
+
+  useEffect(() => {
+    let timer: number | undefined;
+
+    const showHint = () => {
+      const { workspaceBounds } = useEditorWorkspaceStore.getState();
+      if (workspaceBounds === null) return;
+
+      setNavigationHintBounds(workspaceBounds);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        setNavigationHintBounds(null);
+      }, FREE_NAVIGATION_HINT_DURATION_MS);
+    };
+
+    window.addEventListener(DROMAP_SUGGEST_FREE_NAVIGATION_EVENT, showHint);
+    return () => {
+      window.removeEventListener(DROMAP_SUGGEST_FREE_NAVIGATION_EVENT, showHint);
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   const features = useEditorFeaturesStore((state) => state.features);
   const removeFeaturesWithHistory = useEditorFeaturesStore(
@@ -587,16 +615,25 @@ export function WorkspaceActions() {
                 <path d="m9 9-5-5m0 5V4h5m6 5 5-5m-5 0h5v5M9 15l-5 5m0-5v5h5m6-5 5 5m-5 0h5v-5" />
               </svg>
             )}
-            onClick={toggleWorkspaceNavigationUnlocked}
+            onClick={() => {
+              setNavigationHintBounds(null);
+              toggleWorkspaceNavigationUnlocked();
+            }}
             disabled={!workspaceBounds}
+            revealDetails={showNavigationHint}
             aria-label="Navigation libre"
             aria-pressed={workspaceNavigationUnlocked}
-            className="border-sky-300 text-sky-800 hover:border-sky-500 hover:bg-sky-50 aria-pressed:border-sky-600 aria-pressed:bg-sky-600 aria-pressed:text-white"
+            className={`aria-pressed:border-sky-600 aria-pressed:bg-sky-600 aria-pressed:text-white ${showNavigationHint
+              ? "border-sky-500 bg-sky-50! text-sky-950 ring-2 ring-sky-200 motion-safe:scale-105 motion-safe:transition-[scale]"
+              : "border-sky-300 text-sky-800 hover:border-sky-500 hover:bg-sky-50"}`}
           >
             Navigation libre
           </MapDockButton>
         )}
       </div>
+      <p role="status" className={showNavigationHint ? "mt-2 text-xs font-medium text-sky-950" : "sr-only"}>
+        {showNavigationHint ? "Active Navigation libre pour zoomer davantage." : null}
+      </p>
       {workspaceMenu}
       {zoneLockedModal}
       {decisionModal}

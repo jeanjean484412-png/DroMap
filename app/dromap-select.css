@@ -1,0 +1,104 @@
+select:not([multiple], [size]) {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid #b8d6d3;
+  border-radius: 0.625rem;
+  background-color: #f3faf9;
+  color: #134e4a;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+select:not([multiple], [size]):focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+select:not([multiple], [size]):disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@supports (appearance: base-select) and selector(::picker(select)) {
+  select:not([multiple], [size]),
+  select:not([multiple], [size])::picker(select) {
+    appearance: base-select;
+  }
+
+  select:not([multiple], [size]) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  select:not([multiple], [size]).block {
+    display: flex;
+  }
+
+  select:not([multiple], [size])::picker-icon {
+    flex-shrink: 0;
+    color: #0f766e;
+  }
+
+  select:not([multiple], [size]):open::picker-icon {
+    rotate: 180deg;
+  }
+
+  select:not([multiple], [size])::picker(select) {
+    min-inline-size: anchor-size(width);
+    max-inline-size: calc(100vw - 1rem);
+    max-block-size: min(22rem, 50dvh);
+    overflow: auto;
+    margin-block: 0.25rem;
+    padding: 0.25rem;
+    border: 1px solid #b8d6d3;
+    border-radius: 0.75rem;
+    background: white;
+    color: #134e4a;
+    box-shadow: 0 8px 24px #0f3d3926;
+  }
+
+  select:not([multiple], [size]) option {
+    padding: 0.45rem 0.65rem;
+    border-radius: 0.45rem;
+    overflow-wrap: anywhere;
+  }
+
+  select:not([multiple], [size]) option:checked {
+    background: #e4f5f2;
+    font-weight: 700;
+  }
+
+  select:not([multiple], [size]) option:not(:disabled):is(:hover, :focus-visible) {
+    background: #eef8f7;
+    color: #0f5150;
+  }
+
+  select:not([multiple], [size]) option:disabled {
+    color: #64748b;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :root:not(.dromap-reduce-motion) select:not([multiple], [size])::picker-icon {
+    transition: rotate 160ms ease-out;
+  }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  :root:not(.dromap-reduce-motion) select:not([multiple], [size]) {
+    transition: scale 160ms ease-out;
+  }
+
+  :root:not(.dromap-reduce-motion) select:not([multiple], [size], :disabled):hover {
+    scale: 1.03;
+  }
+
+  :root:not(.dromap-reduce-motion) select:not([multiple], [size]):open:hover {
+    scale: none;
+  }
+}

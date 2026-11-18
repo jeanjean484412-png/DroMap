@@ -686,6 +686,10 @@ export function convertGeoJsonLayerToDromapFeatures(
   layerId: string,
 ) {
   return layer.data.features.flatMap((feature, featureIndex) =>
-    convertGeoJsonFeatureToDromapFeatures(layer, feature, layerId, featureIndex),
+    convertGeoJsonFeatureToDromapFeatures(layer, feature, layerId, featureIndex)
+      .map((converted) => ({
+        ...converted,
+        properties: { ...converted.properties, belowBasemapLabels: true },
+      })),
   );
 }
