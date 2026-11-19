@@ -3,6 +3,31 @@ import { test } from "node:test";
 import { create } from "zustand";
 import { loadSource } from "./security/load-source.mjs";
 
+test("une extraction GeoJSON conserve l'identité des entités restantes après rechargement", () => {
+  const { parseGeoJsonTextToDromapGeoJsonLayer, useEditorGeoJsonLayersStore } =
+    loadSource("stores/editor-geojson-layers.ts");
+  const point = (longitude) => ({
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [longitude, 45] },
+    properties: {},
+  });
+  const layer = parseGeoJsonTextToDromapGeoJsonLayer(JSON.stringify({
+    type: "FeatureCollection",
+    features: [point(0), point(10)],
+  }));
+  const store = useEditorGeoJsonLayersStore;
+  store.getState().addGeoJsonLayer(layer);
+  const remainingId = store.getState().geoJsonLayers[0].data.features[1].id;
+
+  store.getState().removeGeoJsonFeature(layer.id, 0);
+  const remainingLayer = store.getState().geoJsonLayers[0];
+  assert.equal(remainingLayer.featureCount, 1);
+  assert.equal(remainingLayer.coordinateCount, 1);
+  assert.ok(remainingLayer.bounds.southWest.lng > 0);
+  store.getState().setGeoJsonLayers(JSON.parse(JSON.stringify([remainingLayer])));
+  assert.equal(store.getState().geoJsonLayers[0].data.features[0].id, remainingId);
+});
+
 test("l’historique restaure la géométrie et les calques sans recopier les versions inchangées", () => {
   const stores = [];
   loadSource("lib/dromap/editor-project-persistence.ts", {

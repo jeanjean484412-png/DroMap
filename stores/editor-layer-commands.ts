@@ -1,5 +1,12 @@
 import { create } from "zustand";
 
+export const EDIT_GEOJSON_FEATURE_EVENT = "dromap:edit-geojson-feature";
+
+export type GeoJsonFeatureEditRequest = {
+  layerId: string;
+  featureId: string | number | undefined;
+};
+
 type DeleteFeatureLayerCommand = {
   featureId: string;
   commandId: number;

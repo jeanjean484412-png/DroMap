@@ -124,6 +124,7 @@ type EditorGeoJsonLayersState = {
   setGeoJsonLayers: (layers: DromapGeoJsonLayer[]) => void;
   addGeoJsonLayer: (layer: DromapGeoJsonLayer) => void;
   removeGeoJsonLayer: (layerId: string) => void;
+  removeGeoJsonFeature: (layerId: string, featureIndex: number) => void;
   renameGeoJsonLayer: (layerId: string, name: string) => void;
   toggleGeoJsonLayerVisibility: (layerId: string) => void;
   setGeoJsonLayerOpacity: (layerId: string, opacity: number) => void;
@@ -1234,11 +1235,25 @@ function normalizeGeoJsonFeatureCollection(value: unknown): DromapGeoJsonFeature
     return null;
   }
 
+  // Après une extraction, les identifiants internes peuvent avoir des trous.
+  // Les conserver évite de donner aux entités restantes l'identité d'un objet déjà converti.
+  const rawFeatures = getRecordValue(value, "features");
+  const existingIds = new Set<string>();
+  const canPreserveIds = getRecordValue(value, "type") === "FeatureCollection" &&
+    Array.isArray(rawFeatures) && rawFeatures.length === flattened.features.length &&
+    rawFeatures.every((item) => {
+      if (!isRecord(item) || item.type !== "Feature" || !isRecord(item.geometry) ||
+          item.geometry.type === "GeometryCollection" || typeof item.id !== "string" ||
+          !/^geojson-layer-feature-[1-9]\d*$/.test(item.id) || existingIds.has(item.id)) return false;
+      existingIds.add(item.id);
+      return true;
+    });
+
   return {
     type: "FeatureCollection",
     features: flattened.features.map((feature, index) => ({
       ...feature,
-      id: `geojson-layer-feature-${index + 1}`,
+      id: canPreserveIds ? rawFeatures[index].id : `geojson-layer-feature-${index + 1}`,
     })),
   };
 }
@@ -1468,6 +1483,30 @@ export const useEditorGeoJsonLayersStore = create<EditorGeoJsonLayersState>((set
         state.geoJsonLayers.filter((layer) => layer.id !== layerId),
       ),
     })),
+
+  removeGeoJsonFeature: (layerId, featureIndex) =>
+    set((state) => {
+      const layer = state.geoJsonLayers.find((candidate) => candidate.id === layerId);
+      if (!layer?.data.features[featureIndex]) return state;
+
+      const features = layer.data.features.filter((_, index) => index !== featureIndex);
+      if (features.length === 0) {
+        return { geoJsonLayers: renormalizeOrders(state.geoJsonLayers.filter((candidate) => candidate.id !== layerId)) };
+      }
+
+      const data = { ...layer.data, features };
+      const nextLayer = {
+        ...layer,
+        data,
+        featureCount: features.length,
+        coordinateCount: getGeoJsonLayerCoordinateCount({ data }),
+        bounds: getGeoJsonLayerBoundsFromFeatures(features),
+        updatedAt: nowIso(),
+      };
+      return {
+        geoJsonLayers: state.geoJsonLayers.map((candidate) => candidate === layer ? nextLayer : candidate),
+      };
+    }),
 
   renameGeoJsonLayer: (layerId, name) =>
     set((state) => ({

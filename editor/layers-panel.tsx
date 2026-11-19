@@ -4,9 +4,13 @@ import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState }
 import { createPortal } from "react-dom";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
+import { DromapDialog } from "@/components/dromap-ui/dialog";
+import { EDIT_GEOJSON_FEATURE_EVENT, type GeoJsonFeatureEditRequest } from "@/stores/editor-layer-commands";
 import {
+  convertGeoJsonFeatureAtIndex,
   convertGeoJsonLayerToDromapFeatures,
   countDromapFeaturesForGeoJsonLayer,
+  getDromapFeatureCountForGeometry,
   GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD,
 } from "./geojson-layer-conversion";
 import { convertDromapLayerToGeoJsonLayer } from "./dromap-layer-to-geojson-conversion";
@@ -201,6 +205,9 @@ export function LayersPanel({
     getInitialFloatingPanelZIndex(),
   );
   const [dialog, setDialog] = useState<LayerDialogState | null>(null);
+  const [objectEditRequest, setObjectEditRequest] = useState<GeoJsonFeatureEditRequest | null>(null);
+  const [focusedGeoJsonLayer, setFocusedGeoJsonLayer] = useState<{ id: string } | null>(null);
+  const focusedGeoJsonCardRef = useRef<HTMLElement | null>(null);
   const [dialogZIndex, setDialogZIndex] = useState(getInitialFloatingPanelZIndex());
   const [isSavedLayersLibraryOpen, setIsSavedLayersLibraryOpen] = useState(false);
   const [dialogName, setDialogName] = useState("");
@@ -297,6 +304,21 @@ export function LayersPanel({
     loadSavedLayersFromStorage();
     loadSavedGeoJsonLayersFromStorage();
   }, [loadSavedGeoJsonLayersFromStorage, loadSavedLayersFromStorage]);
+
+  useEffect(() => {
+    const handleObjectEdit = (event: Event) => {
+      setObjectEditRequest((event as CustomEvent<GeoJsonFeatureEditRequest>).detail);
+    };
+    window.addEventListener(EDIT_GEOJSON_FEATURE_EVENT, handleObjectEdit);
+    return () => window.removeEventListener(EDIT_GEOJSON_FEATURE_EVENT, handleObjectEdit);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!isOpen || !focusedGeoJsonLayer) return;
+    const card = focusedGeoJsonCardRef.current;
+    card?.scrollIntoView({ block: "start", inline: "nearest" });
+    card?.focus({ preventScroll: true });
+  }, [focusedGeoJsonLayer, isOpen]);
 
   useEffect(() => {
     if (!capabilities.canSaveLayersToLibrary) {
@@ -532,10 +554,15 @@ export function LayersPanel({
     setDialogError(null);
   }
 
-  function convertGeoJsonLayerToEditableObjects(layer: DromapGeoJsonLayer) {
-    const targetFeatureCount = countDromapFeaturesForGeoJsonLayer(layer);
+  function convertGeoJsonLayerToEditableObjects(sourceLayer: DromapGeoJsonLayer, featureIndex?: number) {
+    const layer = useEditorGeoJsonLayersStore.getState().geoJsonLayers.find((item) => item.id === sourceLayer.id);
+    if (!layer || (featureIndex !== undefined && layer !== sourceLayer)) return;
+    const convertEntireLayer = featureIndex === undefined;
+    const convertedFeatures = convertEntireLayer
+      ? convertGeoJsonLayerToDromapFeatures(layer, layer.id)
+      : convertGeoJsonFeatureAtIndex(layer, layer.id, featureIndex);
 
-    if (targetFeatureCount === 0) {
+    if (convertedFeatures.length === 0) {
       openMessageDialog(
         "Conversion impossible",
         "Ce calque GeoJSON ne contient aucun élément compatible à ajouter comme objet DroMap éditable.",
@@ -543,21 +570,22 @@ export function LayersPanel({
       return;
     }
 
-    const nextLayerId = createLayer(layer.name);
-    const convertedFeatures = convertGeoJsonLayerToDromapFeatures(
-      layer,
-      nextLayerId,
-    ).map((feature) => {
+    const featureStore = useEditorFeaturesStore.getState();
+    featureStore.commitFeaturesHistory({ includeParticipants: true });
+    const nextLayerName = convertEntireLayer ? layer.name : `${layer.name} · objet éditable`;
+    const nextLayerId = createLayer(nextLayerName);
+    const editableFeatures = convertedFeatures.map((feature) => {
       const { lockOverride: _lockOverride, ...nextProperties } =
         feature.properties;
 
-      return {
+      return setFeatureLayerId({
         ...feature,
         properties: {
           ...nextProperties,
           locked: false,
+          geometryLocked: false,
         },
-      };
+      }, nextLayerId);
     });
 
     useEditorLayersStore.setState((state) => ({
@@ -565,16 +593,18 @@ export function LayersPanel({
         dromapLayer.id === nextLayerId
           ? {
               ...dromapLayer,
-              name: layer.name,
+              name: nextLayerName,
               visible: layer.visible,
               opacity: layer.opacity,
               // La transformation sert précisément à rendre les éléments éditables.
               // Un verrouillage du calque GeoJSON source ne doit donc jamais être
               // recopié comme verrouillage par défaut du nouveau calque DroMap.
               locked: false,
-              sourceGeoJsonLayerId: layer.id,
-              sourceGeoJsonLayerName: layer.name,
-              sourceGeoJsonSourceName: layer.sourceName ?? null,
+              ...(convertEntireLayer ? {
+                sourceGeoJsonLayerId: layer.id,
+                sourceGeoJsonLayerName: layer.name,
+                sourceGeoJsonSourceName: layer.sourceName ?? null,
+              } : {}),
               updatedAt: new Date().toISOString(),
             }
           : dromapLayer,
@@ -582,9 +612,14 @@ export function LayersPanel({
       activeLayerId: nextLayerId,
     }));
 
-    replaceFeatures([...features, ...convertedFeatures]);
-    removeGeoJsonLayer(layer.id);
-    clearSelectedFeatureId();
+    featureStore.addFeatures(editableFeatures);
+    if (convertEntireLayer) {
+      removeGeoJsonLayer(layer.id);
+      clearSelectedFeatureId();
+    } else {
+      useEditorGeoJsonLayersStore.getState().removeGeoJsonFeature(layer.id, featureIndex);
+      useEditorSelectionStore.getState().setSelectedFeatureId(editableFeatures[0].id);
+    }
   }
 
   function handleConvertGeoJsonLayer(layer: DromapGeoJsonLayer) {
@@ -1105,43 +1140,110 @@ export function LayersPanel({
     );
   }
 
+  const objectEditLayer = objectEditRequest && geoJsonLayers.find((layer) => layer.id === objectEditRequest.layerId);
+  const featureId = objectEditRequest?.featureId;
+  const objectEditFeatures = objectEditLayer?.data.features;
+  const featureIndex = featureId === undefined || !objectEditFeatures
+    ? -1
+    : objectEditFeatures.findIndex((feature) => feature.id === featureId);
+  const clickedFeature = objectEditFeatures?.[featureIndex];
+  const canConvertSingleFeature = clickedFeature !== undefined &&
+    getDromapFeatureCountForGeometry(clickedFeature.geometry) === 1 &&
+    objectEditFeatures?.findLastIndex((feature) => feature.id === featureId) === featureIndex;
+
+  const actionClassName = "flex w-full flex-col gap-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 motion-safe:transition-transform motion-safe:hover:scale-[1.015]";
+  const objectEditDialog = objectEditLayer ? (
+    <DromapDialog
+      open
+      title="Que veux-tu modifier ?"
+      description={`Cet élément fait partie du calque GeoJSON « ${objectEditLayer.name} ».`}
+      onClose={() => setObjectEditRequest(null)}
+      scrollable
+    >
+      <div className="space-y-2.5">
+        <button
+          type="button"
+          autoFocus
+          className={actionClassName}
+          onClick={() => {
+            setObjectEditRequest(null);
+            setPanelZIndex(bringFloatingPanelToFront());
+            setFocusedGeoJsonLayer({ id: objectEditLayer.id });
+            setIsOpen(true);
+          }}
+        >
+          Modifier le style du calque
+          <span className="text-xs font-normal text-slate-600">Ouvre ses réglages dans Calques pour modifier l’apparence de tous ses éléments ensemble.</span>
+        </button>
+        {canConvertSingleFeature ? (
+          <button
+            type="button"
+            className={actionClassName}
+            onClick={() => {
+              setObjectEditRequest(null);
+              convertGeoJsonLayerToEditableObjects(objectEditLayer, featureIndex);
+            }}
+          >
+            Rendre cet élément éditable
+            <span className="text-xs font-normal text-slate-600">Transforme l’élément cliqué en objet DroMap et sélectionne-le.</span>
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className={actionClassName}
+          onClick={() => {
+            setObjectEditRequest(null);
+            handleConvertGeoJsonLayer(objectEditLayer);
+          }}
+        >
+          Convertir tout le calque
+          <span className="text-xs font-normal text-slate-600">Remplace le calque GeoJSON par des objets DroMap modifiables individuellement.</span>
+        </button>
+      </div>
+    </DromapDialog>
+  ) : null;
+
   if (!isOpen && !embedded) {
     return (
-      <MapDockButton
-        data-dromap-layers-trigger="true"
-        aria-label="Calque"
-        aria-description={activeLayer?.name ?? "Dessin direct"}
-        aria-expanded={false}
-        label="Calque"
-        onClick={() => {
-          setPanelZIndex(bringFloatingPanelToFront());
-          setIsOpen(true);
-        }}
-        className="absolute right-4 top-[4.25rem] z-[1000] origin-right border-teal-200 text-teal-800 motion-safe:transition-[scale] motion-safe:hover:scale-[1.025]"
-        icon={
-          <span className="grid size-7 place-items-center rounded-lg bg-teal-600 text-white">
-            <svg
-              aria-hidden="true"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.9"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z" />
-              <path d="m4 12 8 4.5 8-4.5" />
-              <path d="m4 16.5 8 4.5 8-4.5" />
-            </svg>
+      <>
+        {objectEditDialog}
+        {renderDialog()}
+        <MapDockButton
+          data-dromap-layers-trigger="true"
+          aria-label="Calque"
+          aria-description={activeLayer?.name ?? "Dessin direct"}
+          aria-expanded={false}
+          label="Calque"
+          onClick={() => {
+            setPanelZIndex(bringFloatingPanelToFront());
+            setIsOpen(true);
+          }}
+          className="absolute right-4 top-[4.25rem] z-[1000] origin-right border-teal-200 text-teal-800 motion-safe:transition-[scale] motion-safe:hover:scale-[1.025]"
+          icon={
+            <span className="grid size-7 place-items-center rounded-lg bg-teal-600 text-white">
+              <svg
+                aria-hidden="true"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.9"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z" />
+                <path d="m4 12 8 4.5 8-4.5" />
+                <path d="m4 16.5 8 4.5 8-4.5" />
+              </svg>
+            </span>
+          }
+        >
+          <span className="inline-block max-w-40 truncate align-middle text-xs text-slate-600">
+            {activeLayer?.name ?? "Dessin direct"}
           </span>
-        }
-      >
-        <span className="inline-block max-w-40 truncate align-middle text-xs text-slate-600">
-          {activeLayer?.name ?? "Dessin direct"}
-        </span>
-      </MapDockButton>
+        </MapDockButton>
+      </>
     );
   }
 
@@ -1366,7 +1468,9 @@ export function LayersPanel({
                 {sortedGeoJsonLayers.map((layer, index) => (
                   <article
                     key={layer.id}
-                    className="rounded-xl border border-sky-100 bg-sky-50/70 p-3"
+                    ref={focusedGeoJsonLayer?.id === layer.id ? focusedGeoJsonCardRef : undefined}
+                    tabIndex={focusedGeoJsonLayer?.id === layer.id ? -1 : undefined}
+                    className="scroll-mt-3 rounded-xl border border-sky-100 bg-sky-50/70 p-3 focus:outline-2 focus:outline-offset-[-2px] focus:outline-teal-600"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -1695,6 +1799,7 @@ export function LayersPanel({
       />
 
       {renderDialog()}
+      {objectEditDialog}
     </>
   );
 }

@@ -11,6 +11,10 @@ import {
   useEditorGeoJsonLayersStore,
 } from "@/stores/editor-geojson-layers";
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
+import { useEditorModeStore } from "@/stores/editor-mode";
+import { useEditorToolStore } from "@/stores/editor-tool";
+import { useEditorSelectionStore } from "@/stores/editor-selection";
+import { EDIT_GEOJSON_FEATURE_EVENT, type GeoJsonFeatureEditRequest } from "@/stores/editor-layer-commands";
 import {
   applyLeafletGeoJsonFeatureStyle,
   applyLeafletGeoJsonLayerStyle,
@@ -21,6 +25,7 @@ import {
   getWorkspaceLoadingKey,
   markGeoJsonLayer,
   removeGeoJsonPane,
+  type DromapLeafletGeoJsonLayer,
 } from "../geojson-leaflet-rendering";
 import {
   GEOJSON_VIEWPORT_PADDING_RATIO,
@@ -293,6 +298,36 @@ function getPaddedViewportBounds(map: L.Map) {
   };
 }
 
+type LeafletPathWithHitTest = L.Path & {
+  _containsPoint?: (point: L.Point, closed?: boolean) => boolean;
+};
+
+function findGeoJsonFeatureAtPoint(
+  layer: L.Layer,
+  point: L.Point,
+  includeUnfilledPolygons: boolean,
+): DromapGeoJsonFeature | undefined {
+  if (layer instanceof L.LayerGroup) {
+    for (const child of layer.getLayers().reverse()) {
+      const feature = findGeoJsonFeatureAtPoint(child, point, includeUnfilledPolygons);
+      if (feature) return feature;
+    }
+    return undefined;
+  }
+
+  if (!(layer instanceof L.Path) || (!layer.options.stroke && !layer.options.fill)) {
+    return undefined;
+  }
+
+  // Leaflet utilise le même test géométrique pour ses Canvas interactifs.
+  // Ici, le calque peut rester verrouillé et ne capter ni clic simple ni dessin.
+  const path = layer as LeafletPathWithHitTest;
+  const hit = layer instanceof L.Polygon && !path.options.fill && !includeUnfilledPolygons
+    ? (L.Polyline.prototype as LeafletPathWithHitTest)._containsPoint?.call(path, point, true)
+    : path._containsPoint?.(point);
+  return hit ? (layer as DromapLeafletGeoJsonLayer).feature : undefined;
+}
+
 /**
  * Renderer de la carte éditeur uniquement.
  *
@@ -365,6 +400,53 @@ export function EditorGeoJsonLayersRenderer() {
       }
     };
   }, [map, scheduleViewportUpdate]);
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const handleDoubleClick = (event: MouseEvent) => {
+      const { activeTool } = useEditorToolStore.getState();
+      if (event.defaultPrevented || event.button !== 0 ||
+          useEditorModeStore.getState().currentMode !== "edit" ||
+          (activeTool !== "select" && activeTool !== "edit") ||
+          useEditorSelectionStore.getState().areaSelectionEnabled) return;
+
+      if (event.target instanceof Element && event.target.closest(
+        "button, a, input, select, textarea, .leaflet-control, .leaflet-popup, .leaflet-marker-icon, [class*='dromap-feature-pane-']",
+      )) return;
+
+      const workspace = workspaceBoundsRef.current;
+      if (!workspace) return;
+      const { lat, lng } = map.mouseEventToLatLng(event);
+      if (lat < workspace.southWest.lat || lat > workspace.northEast.lat ||
+          ![lng, lng - 360, lng + 360].some((value) => value >= workspace.southWest.lng && value <= workspace.northEast.lng)) return;
+
+      const point = map.mouseEventToLayerPoint(event);
+      const visibleLayers = [...layersByIdRef.current.values()]
+        .filter(isEffectivelyVisible)
+        .sort((first, second) => second.order - first.order);
+
+      // Privilégie les traits et les surfaces visibles. Une zone représentée
+      // seulement par son contour reste accessible en cliquant à l'intérieur.
+      for (const includeUnfilledPolygons of [false, true]) {
+        for (const layer of visibleLayers) {
+          const entry = renderedEntriesRef.current.get(layer.id);
+          if (!entry || !map.hasLayer(entry.leafletLayer)) continue;
+          const feature = findGeoJsonFeatureAtPoint(entry.leafletLayer, point, includeUnfilledPolygons);
+          if (!feature) continue;
+
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          window.dispatchEvent(new CustomEvent<GeoJsonFeatureEditRequest>(EDIT_GEOJSON_FEATURE_EVENT, {
+            detail: { layerId: layer.id, featureId: feature.id },
+          }));
+          return;
+        }
+      }
+    };
+
+    container.addEventListener("dblclick", handleDoubleClick, true);
+    return () => container.removeEventListener("dblclick", handleDoubleClick, true);
+  }, [map]);
 
   useEffect(() => {
     workspaceBoundsRef.current = workspaceBounds;

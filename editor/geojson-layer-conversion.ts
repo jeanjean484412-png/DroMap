@@ -556,7 +556,7 @@ function createZoneFeature(input: {
   );
 }
 
-function getDromapFeatureCountForGeometry(geometry: DromapGeoJsonGeometry) {
+export function getDromapFeatureCountForGeometry(geometry: DromapGeoJsonGeometry) {
   if (geometry.type === "Point" || geometry.type === "LineString" || geometry.type === "Polygon") {
     return 1;
   }
@@ -681,15 +681,26 @@ function convertGeoJsonFeatureToDromapFeatures(
   });
 }
 
+export function convertGeoJsonFeatureAtIndex(
+  layer: DromapGeoJsonLayer,
+  layerId: string,
+  featureIndex: number,
+) {
+  const feature = layer.data.features[featureIndex];
+  if (!feature) return [];
+
+  return convertGeoJsonFeatureToDromapFeatures(layer, feature, layerId, featureIndex)
+    .map((converted) => ({
+      ...converted,
+      properties: { ...converted.properties, belowBasemapLabels: true },
+    }));
+}
+
 export function convertGeoJsonLayerToDromapFeatures(
   layer: DromapGeoJsonLayer,
   layerId: string,
 ) {
-  return layer.data.features.flatMap((feature, featureIndex) =>
-    convertGeoJsonFeatureToDromapFeatures(layer, feature, layerId, featureIndex)
-      .map((converted) => ({
-        ...converted,
-        properties: { ...converted.properties, belowBasemapLabels: true },
-      })),
+  return layer.data.features.flatMap((_, featureIndex) =>
+    convertGeoJsonFeatureAtIndex(layer, layerId, featureIndex),
   );
 }
