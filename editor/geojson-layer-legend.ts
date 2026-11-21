@@ -5,7 +5,9 @@ import {
   type DromapGeoJsonFeature,
   type DromapGeoJsonGeometry,
   type DromapGeoJsonLayer,
+  type DromapGeoJsonLayerStyle,
 } from "@/stores/editor-geojson-layers";
+import { getGeoJsonFeatureName } from "./geojson-layer-conversion";
 import { getEffectiveGeoJsonFeatureStyle } from "./geojson-layer-style";
 
 import {
@@ -15,9 +17,12 @@ import {
 
 export type GeoJsonLayerLegendKind = "points" | "lines" | "zones";
 
-type GeoJsonLayerLegendKindInfo = {
-  kind: GeoJsonLayerLegendKind;
+const LEGEND_KINDS = ["zones", "lines", "points"] as const;
+
+type GeoJsonLegendStyleGroup = {
   count: number;
+  style: DromapGeoJsonLayerStyle;
+  sourceFeature: DromapGeoJsonFeature;
 };
 
 function clamp01(value: number) {
@@ -40,49 +45,71 @@ function geometryKind(geometry: DromapGeoJsonGeometry): GeoJsonLayerLegendKind {
   return "lines";
 }
 
-function findRepresentativeGeoJsonFeature(
-  layer: DromapGeoJsonLayer,
+function getVisibleStyleKey(
   kind: GeoJsonLayerLegendKind,
-  workspaceBounds?: WorkspaceBounds | null,
-): DromapGeoJsonFeature | null {
-  return (
-    getGeoJsonLayerLoadedDisplayData(layer, workspaceBounds).features.find(
-      (feature) => geometryKind(feature.geometry) === kind,
-    ) ?? null
-  );
+  style: DromapGeoJsonLayerStyle,
+) {
+  const stroke = style.strokeOpacity > 0
+    ? [style.strokeColor, style.strokeOpacity, style.strokeWeight, style.dashStyle]
+    : null;
+  const fill = kind === "zones" && style.fillOpacity > 0
+    ? [style.fillColor, style.fillOpacity]
+    : null;
+
+  if (!stroke && !fill) return null;
+  return JSON.stringify([stroke, fill, kind === "points" ? style.markerSize : null]);
 }
 
-export function getGeoJsonLayerLegendKinds(
+function getGeoJsonLegendStyleGroups(
   layer: DromapGeoJsonLayer,
   workspaceBounds?: WorkspaceBounds | null,
-): GeoJsonLayerLegendKindInfo[] {
-  const counts: Record<GeoJsonLayerLegendKind, number> = {
-    points: 0,
-    lines: 0,
-    zones: 0,
+) {
+  const groups: Record<GeoJsonLayerLegendKind, Map<string, GeoJsonLegendStyleGroup>> = {
+    points: new Map(),
+    lines: new Map(),
+    zones: new Map(),
   };
+  const defaultKeys = {
+    points: getVisibleStyleKey("points", layer.style),
+    lines: getVisibleStyleKey("lines", layer.style),
+    zones: getVisibleStyleKey("zones", layer.style),
+  };
+  let hasManualZoneClasses = false;
 
   for (const feature of getGeoJsonLayerLoadedDisplayData(layer, workspaceBounds).features) {
-    counts[geometryKind(feature.geometry)] += 1;
+    const kind = geometryKind(feature.geometry);
+    if (kind === "zones" && typeof feature.properties.dromap_ai_value === "number") {
+      hasManualZoneClasses = true;
+    }
+
+    const style = feature.properties.dromap ? getEffectiveGeoJsonFeatureStyle(layer, feature) : layer.style;
+    const key = style === layer.style ? defaultKeys[kind] : getVisibleStyleKey(kind, style);
+    if (key === null) continue;
+
+    const group = groups[kind].get(key);
+    if (group) group.count += 1;
+    else groups[kind].set(key, { style, sourceFeature: feature, count: 1 });
   }
 
-  return (["zones", "lines", "points"] as const)
-    .map((kind) => ({ kind, count: counts[kind] }))
-    .filter((item) => item.count > 0);
+  return { groups, defaultKeys, hasManualZoneClasses };
 }
 
 export function getGeoJsonLayerLegendId(
   layerId: string,
   kind: GeoJsonLayerLegendKind,
+  styleKey?: string,
 ) {
-  return `geojson-layer-legend:${layerId}:${kind}`;
+  const id = `geojson-layer-legend:${layerId}:${kind}`;
+  return styleKey ? `${id}:style:${encodeURIComponent(styleKey)}` : id;
 }
 
 export function getGeoJsonLayerLegendDedupeKey(
   layerId: string,
   kind: GeoJsonLayerLegendKind,
+  styleKey?: string,
 ) {
-  return `geojson-layer:${layerId}:${kind}`;
+  const key = `geojson-layer:${layerId}:${kind}`;
+  return styleKey ? `${key}:style:${encodeURIComponent(styleKey)}` : key;
 }
 
 function getKindLabel(kind: GeoJsonLayerLegendKind) {
@@ -110,17 +137,14 @@ function getDefaultLegendLabel(
 }
 
 function createRepresentativeFeature(
-  layer: DromapGeoJsonLayer,
+  id: string,
+  label: string,
   kind: GeoJsonLayerLegendKind,
-  workspaceBounds?: WorkspaceBounds | null,
+  style: DromapGeoJsonLayerStyle,
+  layerOpacity: number,
 ): DroMapFeature {
-  const sourceFeature = findRepresentativeGeoJsonFeature(layer, kind, workspaceBounds);
-  const style = getEffectiveGeoJsonFeatureStyle(layer, sourceFeature);
-  const layerOpacity = clamp01(layer.opacity);
   const strokeOpacity = clamp01(style.strokeOpacity * layerOpacity);
   const fillOpacity = clamp01(style.fillOpacity * layerOpacity);
-  const id = getGeoJsonLayerLegendId(layer.id, kind);
-  const label = layer.name;
 
   if (kind === "points") {
     return {
@@ -233,38 +257,49 @@ export function getGeoJsonLayerLegendEntries(
       continue;
     }
 
-    const kinds = getGeoJsonLayerLegendKinds(layer, options.workspaceBounds);
+    const { groups, defaultKeys, hasManualZoneClasses } = getGeoJsonLegendStyleGroups(layer, options.workspaceBounds);
+    const kinds = LEGEND_KINDS.filter((kind) => groups[kind].size > 0);
 
-    for (const item of kinds) {
-      const id = getGeoJsonLayerLegendId(layer.id, item.kind);
-
-      if (hiddenFeatureIds.has(id)) {
-        continue;
+    for (const kind of kinds) {
+      const styleGroups = [...groups[kind]];
+      const defaultIndex = styleGroups.findIndex(([key]) => key === defaultKeys[kind]);
+      if (defaultIndex > 0) {
+        const [defaultGroup] = styleGroups.splice(defaultIndex, 1);
+        styleGroups.unshift(defaultGroup);
       }
+      const baseLabel = getDefaultLegendLabel(layer, kind, kinds.length);
+      const baseDedupeKey = getGeoJsonLayerLegendDedupeKey(layer.id, kind);
 
-      const dedupeKey = getGeoJsonLayerLegendDedupeKey(layer.id, item.kind);
-      const customLabel = options.legendGroupLabels?.[dedupeKey];
-      const customSection = options.legendGroupSections?.[dedupeKey];
-      const representativeFeature = createRepresentativeFeature(
-        layer,
-        item.kind,
-        options.workspaceBounds,
-      );
+      // Les classes d’une carte choroplèthe ont déjà leurs entrées personnalisées.
+      const usesManualClasses = kind === "zones" && hasManualZoneClasses;
+      for (const [index, [key, group]] of styleGroups.entries()) {
+        if (usesManualClasses && index > 0) break;
 
-      entries.push({
-        id,
-        dedupeKey,
-        label:
-          typeof customLabel === "string" && customLabel.trim()
-            ? customLabel.trim()
-            : getDefaultLegendLabel(layer, item.kind, kinds.length),
-        section: normalizeSectionLabel(customSection),
-        typeLabel: getKindTypeLabel(item.kind),
-        representativeFeature,
-        features: [],
-        featureIds: [id],
-        count: item.count,
-      });
+        const styleKey = index === 0 ? undefined : key;
+        const id = getGeoJsonLayerLegendId(layer.id, kind, styleKey);
+        if (hiddenFeatureIds.has(id)) continue;
+
+        const dedupeKey = getGeoJsonLayerLegendDedupeKey(layer.id, kind, styleKey);
+        const customLabel = options.legendGroupLabels?.[dedupeKey];
+        const customSection = options.legendGroupSections?.[dedupeKey] ?? options.legendGroupSections?.[baseDedupeKey];
+        const featureName = styleKey ? getGeoJsonFeatureName(group.sourceFeature, "") : null;
+        const defaultLabel = styleKey
+          ? featureName ? (group.count === 1 ? featureName : `${featureName} et autres`) : `${baseLabel} · style ${index + 1}`
+          : baseLabel;
+        const label = typeof customLabel === "string" && customLabel.trim() ? customLabel.trim() : defaultLabel;
+
+        entries.push({
+          id,
+          dedupeKey,
+          label,
+          section: normalizeSectionLabel(customSection),
+          typeLabel: getKindTypeLabel(kind),
+          representativeFeature: createRepresentativeFeature(id, label, kind, group.style, clamp01(layer.opacity)),
+          features: [],
+          featureIds: [id],
+          count: usesManualClasses ? styleGroups.reduce((count, [, item]) => count + item.count, 0) : group.count,
+        });
+      }
     }
   }
 

@@ -48,7 +48,7 @@ import {
 } from "./dromap-layer-to-geojson-conversion";
 import { duplicateDroMapFeature } from "./feature-duplication";
 import { getLegendDedupeKey, getLegendFeatureLabel } from "./legend-entry";
-import { getGeoJsonLayerLegendId, getGeoJsonLayerLegendKinds, getGeoJsonLayerLegendDedupeKey } from "./geojson-layer-legend";
+import { getGeoJsonLayerLegendEntries, getGeoJsonLayerLegendId } from "./geojson-layer-legend";
 import {
   DEFAULT_EXPORT_LEGEND_SYMBOL_SIZE,
   MAX_EXPORT_LEGEND_SYMBOL_SIZE,
@@ -1257,8 +1257,10 @@ function configureFeatureLegend(
     ? useEditorGeoJsonLayersStore.getState().geoJsonLayers.filter(layer => normalizeKey(layer.name) === normalizeKey(command.selector.layerName)) : [];
   if (geoLayers.length) {
     const store = useEditorExportStore.getState();
-    for (const layer of geoLayers) for (const { kind } of getGeoJsonLayerLegendKinds(layer)) {
-      const key = getGeoJsonLayerLegendDedupeKey(layer.id, kind);
+    const legendLayers = geoLayers.map((layer) => layer.visible && layer.opacity > 0
+      ? layer
+      : { ...layer, visible: true, opacity: 1 });
+    for (const { dedupeKey: key } of getGeoJsonLayerLegendEntries(legendLayers)) {
       if (command.label !== null) store.setLegendGroupLabel(key, command.label);
       if (command.section !== null) store.setLegendGroupSection(key, command.section);
       if (command.hidden !== null && command.hidden !== store.hiddenLegendGroupKeys.includes(key)) store.toggleLegendGroupVisibility(key);

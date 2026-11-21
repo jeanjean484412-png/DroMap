@@ -658,6 +658,7 @@ export function BasemapControls() {
           aria-label="Fond de carte"
           aria-description={selectedBasemap.label}
           label="Fond de carte"
+          framedDetails
           className="origin-right border-emerald-200 text-emerald-800 motion-safe:transition-[scale] motion-safe:hover:scale-[1.025]"
           icon={
             <span className="grid size-7 place-items-center rounded-lg bg-emerald-600 text-white">
@@ -678,9 +679,7 @@ export function BasemapControls() {
             </span>
           }
         >
-          <span className="inline-block max-w-40 truncate align-middle text-xs text-slate-600">
-            {selectedBasemap.label}
-          </span>
+          {selectedBasemap.label}
         </MapDockButton>
       ) : (
         <div

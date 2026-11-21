@@ -22,6 +22,11 @@ export type DromapGeoJsonLayerStyle = {
   dashStyle: DromapGeoJsonLayerDashStyle;
 };
 
+export type DromapGeoJsonFeatureSettingsPatch = {
+  name?: string;
+  style?: Partial<DromapGeoJsonLayerStyle>;
+};
+
 export type DromapGeoJsonLayer = {
   id: string;
   name: string;
@@ -47,6 +52,16 @@ export type DromapGeoJsonLayer = {
   style: DromapGeoJsonLayerStyle;
   data: DromapGeoJsonFeatureCollection;
 };
+
+export type DromapGeoJsonLayerSettings = Omit<
+  DromapGeoJsonLayer,
+  "data" | "featureCount" | "coordinateCount" | "bounds" | "updatedAt"
+>;
+
+export function getGeoJsonLayerSettings(layer: DromapGeoJsonLayer): DromapGeoJsonLayerSettings {
+  const { data: _data, featureCount: _featureCount, coordinateCount: _coordinateCount, bounds: _bounds, updatedAt: _updatedAt, ...settings } = layer;
+  return settings;
+}
 
 export type DromapGeoJsonPoint = {
   type: "Point";
@@ -125,6 +140,8 @@ type EditorGeoJsonLayersState = {
   addGeoJsonLayer: (layer: DromapGeoJsonLayer) => void;
   removeGeoJsonLayer: (layerId: string) => void;
   removeGeoJsonFeature: (layerId: string, featureIndex: number) => void;
+  updateGeoJsonFeatureSettings: (layerId: string, featureId: string | number, patch: DromapGeoJsonFeatureSettingsPatch) => void;
+  restoreGeoJsonLayerFeatures: (source: DromapGeoJsonLayerSettings, features: DromapGeoJsonFeature[]) => void;
   renameGeoJsonLayer: (layerId: string, name: string) => void;
   toggleGeoJsonLayerVisibility: (layerId: string) => void;
   setGeoJsonLayerOpacity: (layerId: string, opacity: number) => void;
@@ -1130,7 +1147,7 @@ function normalizeLayerStyle(value: unknown): DromapGeoJsonLayerStyle {
     : normalizedStyle;
 }
 
-function applyGlobalLayerStylePatchToFeature(
+function applyGeoJsonStylePatchToFeature(
   feature: DromapGeoJsonFeature,
   patch: Partial<DromapGeoJsonLayerStyle>,
   nextLayerStyle: DromapGeoJsonLayerStyle,
@@ -1138,12 +1155,8 @@ function applyGlobalLayerStylePatchToFeature(
   const properties = feature.properties ?? {};
   const dromap = properties.dromap;
 
-  // Les GeoJSON revenus d'une conversion DroMap conservent un style par
-  // entité dans properties.dromap.style. Ce style individuel doit rester
-  // visible tant que l'utilisateur ne touche pas au style global. Dès qu'un
-  // réglage global change, on reporte uniquement ce réglage sur toutes les
-  // entités : les contrôles globaux redeviennent donc réellement globaux sans
-  // effacer les autres personnalisations faites dans DroMap.
+  // Une modification remplace uniquement les réglages demandés, même quand
+  // elle est appliquée à tous les éléments depuis les paramètres du calque.
   if (!isRecord(dromap)) {
     return feature;
   }
@@ -1224,6 +1237,37 @@ function applyGlobalLayerStylePatchToFeature(
   };
 }
 
+export function applyGeoJsonFeatureSettings(
+  layer: DromapGeoJsonLayer,
+  feature: DromapGeoJsonFeature,
+  patch: DromapGeoJsonFeatureSettingsPatch,
+): DromapGeoJsonFeature {
+  const name = patch.name?.trim();
+  if (!name && !patch.style) return feature;
+
+  const properties = feature.properties;
+  const dromap = isRecord(properties.dromap) ? properties.dromap : {};
+  const edited = {
+    ...feature,
+    properties: {
+      ...properties,
+      ...(name ? { name, label: name } : {}),
+      dromap: { ...dromap, ...(name ? { label: name } : {}) },
+    },
+  };
+  if (!patch.style) return edited;
+
+  const nextStyle = normalizeLayerStyle({ ...layer.style, ...patch.style });
+  if (typeof patch.style.markerSize === "number" && Number.isFinite(patch.style.markerSize)) {
+    nextStyle.markerSize = clamp(patch.style.markerSize, 2, 80);
+  }
+  return applyGeoJsonStylePatchToFeature(edited, patch.style, nextStyle);
+}
+
+function isNormalizedGeoJsonFeatureId(id: unknown): id is string {
+  return typeof id === "string" && /^geojson-layer-feature-[1-9]\d*$/.test(id);
+}
+
 function normalizeGeoJsonFeatureCollection(value: unknown): DromapGeoJsonFeatureCollection | null {
   if (!isRecord(value)) {
     return null;
@@ -1243,8 +1287,8 @@ function normalizeGeoJsonFeatureCollection(value: unknown): DromapGeoJsonFeature
     Array.isArray(rawFeatures) && rawFeatures.length === flattened.features.length &&
     rawFeatures.every((item) => {
       if (!isRecord(item) || item.type !== "Feature" || !isRecord(item.geometry) ||
-          item.geometry.type === "GeometryCollection" || typeof item.id !== "string" ||
-          !/^geojson-layer-feature-[1-9]\d*$/.test(item.id) || existingIds.has(item.id)) return false;
+          item.geometry.type === "GeometryCollection" || !isNormalizedGeoJsonFeatureId(item.id) ||
+          existingIds.has(item.id)) return false;
       existingIds.add(item.id);
       return true;
     });
@@ -1258,22 +1302,13 @@ function normalizeGeoJsonFeatureCollection(value: unknown): DromapGeoJsonFeature
   };
 }
 
-export function normalizeDromapGeoJsonLayer(
+export function normalizeDromapGeoJsonLayerSettings(
   value: unknown,
   index: number,
-): DromapGeoJsonLayer | null {
+): DromapGeoJsonLayerSettings | null {
   if (!isRecord(value)) {
     return null;
   }
-
-  const data = normalizeGeoJsonFeatureCollection(getRecordValue(value, "data"));
-  if (!data) {
-    return null;
-  }
-
-  const timestamp = nowIso();
-  const featureCount = data.features.length;
-  const temporaryLayer = { data };
 
   return {
     id: normalizeName(getRecordValue(value, "id"), createGeoJsonLayerId()),
@@ -1282,8 +1317,7 @@ export function normalizeDromapGeoJsonLayer(
     opacity: clampOpacity(parseNumberLike(getRecordValue(value, "opacity"), 1)),
     locked: getRecordValue(value, "locked") !== false,
     order: parseNumberLike(getRecordValue(value, "order"), (index + 1) * GEOJSON_LAYER_ORDER_STEP),
-    createdAt: normalizeName(getRecordValue(value, "createdAt"), timestamp),
-    updatedAt: normalizeName(getRecordValue(value, "updatedAt"), timestamp),
+    createdAt: normalizeName(getRecordValue(value, "createdAt"), nowIso()),
     sourceName:
       typeof getRecordValue(value, "sourceName") === "string"
         ? (getRecordValue(value, "sourceName") as string)
@@ -1320,14 +1354,39 @@ export function normalizeDromapGeoJsonLayer(
     String(getRecordValue(value, "sourceSavedLayerId")).trim()
       ? { sourceSavedLayerId: String(getRecordValue(value, "sourceSavedLayerId")).trim() }
       : {}),
-    featureCount,
-    coordinateCount: getGeoJsonLayerCoordinateCount(temporaryLayer),
     skippedGeometries: Math.max(0, Math.round(parseNumberLike(getRecordValue(value, "skippedGeometries"), 0))),
-    bounds: getGeoJsonLayerBoundsFromFeatures(data.features),
     precisionMode: normalizePrecisionMode(getRecordValue(value, "precisionMode")),
     style: normalizeLayerStyle(getRecordValue(value, "style")),
+  };
+}
+
+function buildGeoJsonLayer(
+  settings: DromapGeoJsonLayerSettings,
+  features: DromapGeoJsonFeature[],
+  updatedAt = nowIso(),
+): DromapGeoJsonLayer {
+  const data: DromapGeoJsonFeatureCollection = { type: "FeatureCollection", features };
+  return {
+    ...settings,
+    updatedAt,
+    featureCount: features.length,
+    coordinateCount: getGeoJsonLayerCoordinateCount({ data }),
+    bounds: getGeoJsonLayerBoundsFromFeatures(features),
     data,
   };
+}
+
+export function normalizeDromapGeoJsonLayer(
+  value: unknown,
+  index: number,
+): DromapGeoJsonLayer | null {
+  if (!isRecord(value)) return null;
+  const data = normalizeGeoJsonFeatureCollection(getRecordValue(value, "data"));
+  if (!data) return null;
+  const settings = normalizeDromapGeoJsonLayerSettings(value, index);
+  return settings
+    ? buildGeoJsonLayer(settings, data.features, normalizeName(getRecordValue(value, "updatedAt"), nowIso()))
+    : null;
 }
 
 export function normalizeDromapGeoJsonLayers(value: unknown): DromapGeoJsonLayer[] {
@@ -1494,17 +1553,56 @@ export const useEditorGeoJsonLayersStore = create<EditorGeoJsonLayersState>((set
         return { geoJsonLayers: renormalizeOrders(state.geoJsonLayers.filter((candidate) => candidate.id !== layerId)) };
       }
 
-      const data = { ...layer.data, features };
-      const nextLayer = {
-        ...layer,
-        data,
-        featureCount: features.length,
-        coordinateCount: getGeoJsonLayerCoordinateCount({ data }),
-        bounds: getGeoJsonLayerBoundsFromFeatures(features),
-        updatedAt: nowIso(),
-      };
+      const nextLayer = buildGeoJsonLayer(getGeoJsonLayerSettings(layer), features);
       return {
         geoJsonLayers: state.geoJsonLayers.map((candidate) => candidate === layer ? nextLayer : candidate),
+      };
+    }),
+
+  updateGeoJsonFeatureSettings: (layerId, featureId, patch) =>
+    set((state) => {
+      const layer = state.geoJsonLayers.find((item) => item.id === layerId);
+      const index = layer?.data.features.findIndex((feature) => feature.id === featureId) ?? -1;
+      if (!layer || index < 0) return state;
+
+      const feature = layer.data.features[index];
+      const edited = applyGeoJsonFeatureSettings(layer, feature, patch);
+      if (edited === feature) return state;
+
+      const features = layer.data.features.slice();
+      features[index] = edited;
+      const nextLayer = { ...layer, data: { ...layer.data, features }, updatedAt: nowIso() };
+      return { geoJsonLayers: state.geoJsonLayers.map((item) => item === layer ? nextLayer : item) };
+    }),
+
+  restoreGeoJsonLayerFeatures: (source, features) =>
+    set((state) => {
+      if (features.length === 0) return state;
+
+      const layer = state.geoJsonLayers.find((candidate) => candidate.id === source.id);
+      const remaining = layer?.data.features ?? [];
+      const usedIds = new Set(remaining.map((feature) => feature.id));
+      const reservedIds = new Set(features.map((feature) => feature.id).filter(isNormalizedGeoJsonFeatureId));
+      let nextIndex = remaining.length + features.length + 1;
+      const restored = features.map((feature) => {
+        if (isNormalizedGeoJsonFeatureId(feature.id) && !usedIds.has(feature.id)) {
+          usedIds.add(feature.id);
+          return feature;
+        }
+
+        let id = `geojson-layer-feature-${nextIndex++}`;
+        while (usedIds.has(id) || reservedIds.has(id)) {
+          id = `geojson-layer-feature-${nextIndex++}`;
+        }
+        usedIds.add(id);
+        return { ...feature, id };
+      });
+
+      const nextLayer = buildGeoJsonLayer(layer ? getGeoJsonLayerSettings(layer) : source, [...remaining, ...restored]);
+      return {
+        geoJsonLayers: layer
+          ? state.geoJsonLayers.map((candidate) => candidate === layer ? nextLayer : candidate)
+          : renormalizeOrders([...state.geoJsonLayers, nextLayer].sort((a, b) => a.order - b.order)),
       };
     }),
 
@@ -1591,7 +1689,7 @@ export const useEditorGeoJsonLayersStore = create<EditorGeoJsonLayersState>((set
 
         const nextStyle = normalizeLayerStyle({ ...layer.style, ...patch });
         const nextFeatures = layer.data.features.map((feature) =>
-          applyGlobalLayerStylePatchToFeature(feature, patch, nextStyle),
+          applyGeoJsonStylePatchToFeature(feature, patch, nextStyle),
         );
 
         return {

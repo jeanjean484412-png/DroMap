@@ -548,8 +548,7 @@ export function ExportSetupPanel() {
     try {
       // La publication doit reprendre exactement l’état courant de « Légende & Rendu final ».
       // On capture donc les réglages de rendu avant d’ouvrir la fenêtre de publication.
-      await saveNow("manual");
-      setPublicationDialogOpen(true);
+      if (await saveNow("manual")) setPublicationDialogOpen(true);
     } finally {
       setPublicationPreparing(false);
     }

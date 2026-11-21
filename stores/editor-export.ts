@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { registerEditorHistoryParticipant } from "@/stores/editor-history-coordinator";
 
 export type ExportLegendPosition = "right" | "left" | "top" | "bottom" | "map";
 
@@ -875,3 +876,12 @@ export const useEditorExportStore = create<EditorExportState>(
     },
   }),
 );
+
+registerEditorHistoryParticipant("legend-group-labels", {
+  capture: () => useEditorExportStore.getState().legendGroupLabels,
+  restore: (snapshot) => {
+    if (snapshot && typeof snapshot === "object") {
+      useEditorExportStore.setState({ legendGroupLabels: snapshot as Record<string, string> });
+    }
+  },
+});

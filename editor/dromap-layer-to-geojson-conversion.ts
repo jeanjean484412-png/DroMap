@@ -190,7 +190,11 @@ function createGeoJsonFeatureProperties(feature: DroMapFeature, layer: DroMapLay
       label: feature.properties.label,
       legendLabel: feature.properties.legendLabel ?? layer.name,
       mapLabelVisibility: feature.properties.mapLabelVisibility ?? "inherit",
+      mapLabelScale: feature.properties.mapLabelScale ?? null,
+      mapLabelOffset: feature.properties.mapLabelOffset ? { ...feature.properties.mapLabelOffset } : null,
+      belowBasemapLabels: feature.properties.belowBasemapLabels ?? null,
       lineVariant: feature.properties.lineVariant ?? null,
+      curveHandleIndices: feature.properties.curveHandleIndices ? [...feature.properties.curveHandleIndices] : null,
       zoneVariant: feature.properties.zoneVariant ?? null,
       zoneShapeKind: feature.properties.zoneShapeKind ?? null,
       locked: feature.properties.locked ?? false,
@@ -285,9 +289,13 @@ function canGroupAsMulti(features: DroMapFeature[]) {
 
   const firstGeometryType = features[0]?.geometry.type;
 
-  return Boolean(
-    firstGeometryType && features.every((feature) => feature.geometry.type === firstGeometryType),
-  );
+  return features.every((feature) => feature.geometry.type === firstGeometryType) &&
+    new Set(features.map((feature) => feature.properties.source?.originalPartIndex)).size === features.length;
+}
+
+function getMultiPartSettings(feature: DroMapFeature) {
+  const { source: _source, order: _order, label: _label, ...settings } = feature.properties;
+  return stableStringify(settings);
 }
 
 function createGroupedGeoJsonFeature(
@@ -303,6 +311,16 @@ function createGroupedGeoJsonFeature(
   const firstFeature = orderedFeatures[0];
 
   if (!firstFeature) {
+    return null;
+  }
+
+  const sharedSettings = getMultiPartSettings(firstFeature);
+  const sharedLabel = firstFeature.properties.label;
+  if (orderedFeatures.some((feature, index) =>
+    getMultiPartSettings(feature) !== sharedSettings ||
+    (feature.properties.label !== sharedLabel &&
+      feature.properties.label !== `${sharedLabel} ${getOriginalPartIndex(feature, index) + 1}`)
+  )) {
     return null;
   }
 
@@ -348,7 +366,7 @@ function createGroupedGeoJsonFeature(
   return null;
 }
 
-function convertFeaturesToGeoJsonFeatures(
+export function convertFeaturesToGeoJsonFeatures(
   features: DroMapFeature[],
   layer: DroMapLayer,
 ) {

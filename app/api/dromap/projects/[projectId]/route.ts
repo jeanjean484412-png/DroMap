@@ -72,20 +72,6 @@ function normalizeMetadata(value: unknown) {
     : {};
 }
 
-async function removeRevisionChunks(
-  ownerId: string,
-  projectId: string,
-  revision: string,
-  accessToken: string,
-) {
-  if (!validRevision(revision)) return;
-  await supabaseRestFetch(
-    `/dromap_project_chunks?owner_id=eq.${encodeURIComponent(ownerId)}&project_id=eq.${encodeURIComponent(projectId)}&revision=eq.${encodeURIComponent(revision)}`,
-    accessToken,
-    { method: "DELETE", headers: { Prefer: "return=minimal" } },
-  ).catch(() => null);
-}
-
 async function handleGET(
   request: Request,
   context: { params: Promise<{ projectId: string }> },
@@ -222,14 +208,15 @@ async function handlePUT(
     }
 
     if (manifestResponse.status === 403 || manifestResponse.status === 410) {
-      await removeRevisionChunks(auth.user.id, projectId, revision, auth.accessToken);
       return manifestResponse;
     }
     const updatedRows = await parseJsonResponse<ProjectManifestRow[]>(manifestResponse);
     const manifest = manifestResponse.ok ? rowToManifest(updatedRows?.[0]) : null;
     if (!manifest) {
       const current = await readCurrentManifest(auth.user.id, projectId, auth.accessToken);
-      await removeRevisionChunks(auth.user.id, projectId, revision, auth.accessToken);
+      if (current?.revision === revision && current.chunkCount === chunkCount && current.encoding === encoding) {
+        return NextResponse.json({ ok: true, manifest: current });
+      }
       if (current) {
         return NextResponse.json(
           {
@@ -244,16 +231,11 @@ async function handlePUT(
       return NextResponse.json({ error: "Le projet n’a pas pu être enregistré en ligne." }, { status: 502 });
     }
 
-    // Le manifeste pointe vers la nouvelle révision : les anciennes copies peuvent être supprimées.
-    void supabaseRestFetch(
-      `/dromap_project_chunks?owner_id=eq.${encodeURIComponent(auth.user.id)}&project_id=eq.${encodeURIComponent(projectId)}&revision=neq.${encodeURIComponent(revision)}`,
-      auth.accessToken,
-      { method: "DELETE", headers: { Prefer: "return=minimal" } },
-    ).catch(() => null);
-
+    // La rétention planifiée purge les révisions non référencées après un délai.
+    // Une autre sauvegarde peut encore valider ses morceaux en parallèle.
     return NextResponse.json({ ok: true, manifest });
   } catch {
-    await removeRevisionChunks(auth.user.id, projectId, revision, auth.accessToken);
+    // Une réponse réseau perdue peut suivre une validation réussie côté serveur.
     return NextResponse.json({ error: "La sauvegarde en ligne est momentanément indisponible." }, { status: 503 });
   }
 }

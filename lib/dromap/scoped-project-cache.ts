@@ -6,6 +6,7 @@ export function createScopedProjectCache(
   currentScope: () => string,
   legacyOwners: Map<string, string>,
 ) {
+  const pendingWrites = new Map<string, Promise<boolean>>();
   async function read(projectId: string): Promise<unknown> {
     const scope = currentScope();
     const db = await open();
@@ -33,20 +34,32 @@ export function createScopedProjectCache(
 
   async function write(projectId: string, value: CacheValue) {
     const scope = currentScope();
-    const db = await open();
-    try {
+    const key = JSON.stringify([scope, projectId]);
+    const previous = pendingWrites.get(key);
+    const writeNext = async () => {
       if (scope !== currentScope()) return false;
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(storeName, "readwrite");
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error);
-        const store = tx.objectStore(storeName);
-        store.put({ ...value, ownerScope: scope }, [scope, projectId]);
-        if (legacyOwners.get(projectId) === scope) store.delete(projectId);
-      });
-      return true;
-    } finally { db.close(); }
+      const db = await open();
+      try {
+        if (scope !== currentScope()) return false;
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction(storeName, "readwrite");
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error);
+          const store = tx.objectStore(storeName);
+          store.put({ ...value, ownerScope: scope }, [scope, projectId]);
+          if (legacyOwners.get(projectId) === scope) store.delete(projectId);
+        });
+        return true;
+      } finally { db.close(); }
+    };
+    const pending = previous ? previous.then(writeNext, writeNext) : writeNext();
+    pendingWrites.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      if (pendingWrites.get(key) === pending) pendingWrites.delete(key);
+    }
   }
 
   async function remove(projectId: string) {
@@ -60,6 +73,26 @@ export function createScopedProjectCache(
         const store = tx.objectStore(storeName);
         store.delete([scope, projectId]);
         if (legacyOwners.get(projectId) === scope) store.delete(projectId);
+      });
+    } finally { db.close(); }
+  }
+
+  async function listOwnerProjects(scope: string, filter: (project: unknown) => boolean): Promise<unknown[]> {
+    const db = await open();
+    try {
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, "readonly");
+        const projects: unknown[] = [];
+        const cursor = tx.objectStore(storeName).openCursor(IDBKeyRange.bound([scope], [scope, []]));
+        tx.oncomplete = () => resolve(projects);
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+        cursor.onsuccess = () => {
+          const entry = cursor.result;
+          if (!entry) return;
+          if (entry.value?.ownerScope === scope && filter(entry.value.project)) projects.push(entry.value.project);
+          entry.continue();
+        };
       });
     } finally { db.close(); }
   }
@@ -82,5 +115,5 @@ export function createScopedProjectCache(
       });
     } finally { db.close(); }
   }
-  return { read, write, remove, clearOwner };
+  return { read, write, remove, listOwnerProjects, clearOwner };
 }

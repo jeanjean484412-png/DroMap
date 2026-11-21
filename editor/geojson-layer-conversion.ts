@@ -1,6 +1,5 @@
 import type {
   DroMapFeature,
-  DroMapFeatureDashStyle,
   DroMapFeatureProperties,
   DroMapFeatureMapLabelVisibility,
   DroMapFeatureStyle,
@@ -9,13 +8,14 @@ import type {
   DroMapZoneShapeKind,
   DroMapZoneVariant,
 } from "@/lib/dromap/feature";
+import { readCurveHandleIndices } from "@/lib/dromap/curved-line";
 import { setFeatureLayerId } from "@/stores/editor-layers";
 import type {
   DromapGeoJsonFeature,
   DromapGeoJsonGeometry,
   DromapGeoJsonLayer,
-  DromapGeoJsonLayerStyle,
 } from "@/stores/editor-geojson-layers";
+import { getEffectiveGeoJsonFeatureStyle } from "./geojson-layer-style";
 
 export const GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD = 500;
 
@@ -73,7 +73,7 @@ function getFeatureLabel(
   const properties = feature.properties ?? {};
   const dromap = properties.dromap;
   const dromapLabel = isRecord(dromap)
-    ? getFirstProperty(dromap, ["legendLabel", "label", "name"])
+    ? getFirstProperty(dromap, ["label", "name", "legendLabel"])
     : null;
 
   const label =
@@ -108,12 +108,8 @@ function getFeatureLabel(
   return label;
 }
 
-function getDashStyle(style: DromapGeoJsonLayerStyle): DroMapFeatureDashStyle {
-  return style.dashStyle === "dotted"
-    ? "dotted"
-    : style.dashStyle === "dashed"
-      ? "dashed"
-      : "solid";
+export function getGeoJsonFeatureName(feature: DromapGeoJsonFeature, fallback = "Élément GeoJSON") {
+  return getFeatureLabel(feature, fallback);
 }
 
 function closeRing(ring: Coordinate[]) {
@@ -200,7 +196,7 @@ function getDromapSymbol(dromap: Record<string, unknown>): DroMapMarkerSymbol | 
 
 function getDromapLineVariant(dromap: Record<string, unknown>): DroMapLineVariant | undefined {
   const variant = getStringValue(dromap, "lineVariant");
-  if (variant === "straight" || variant === "freehand" || variant === "traced") {
+  if (variant === "straight" || variant === "freehand" || variant === "traced" || variant === "curved") {
     return variant;
   }
 
@@ -384,6 +380,22 @@ function createExactDromapFeatureFromMetadata(input: {
     baseProperties.order = order;
   }
 
+  const mapLabelScale = getNumberValue(dromap, "mapLabelScale");
+  if (mapLabelScale !== null && mapLabelScale > 0) baseProperties.mapLabelScale = mapLabelScale;
+
+  const mapLabelOffset = dromap.mapLabelOffset;
+  if (isRecord(mapLabelOffset)) {
+    const x = getNumberValue(mapLabelOffset, "x");
+    const y = getNumberValue(mapLabelOffset, "y");
+    const referenceZoom = getNumberValue(mapLabelOffset, "referenceZoom");
+    if (x !== null && y !== null && referenceZoom !== null) {
+      baseProperties.mapLabelOffset = { x, y, referenceZoom };
+    }
+  }
+
+  const belowBasemapLabels = getBooleanValue(dromap, "belowBasemapLabels");
+  if (belowBasemapLabels !== null) baseProperties.belowBasemapLabels = belowBasemapLabels;
+
   const sourceFromMetadata = getDromapSource(dromap);
   const source = sourceFromMetadata
     ? {
@@ -406,6 +418,7 @@ function createExactDromapFeatureFromMetadata(input: {
 
   if (featureType === "line") {
     baseProperties.lineVariant = getDromapLineVariant(dromap) ?? "straight";
+    baseProperties.curveHandleIndices = readCurveHandleIndices(dromap.curveHandleIndices);
   }
 
   if (featureType === "zone") {
@@ -436,6 +449,7 @@ function createMarkerFeature(input: {
   partIndex?: number;
 }): DroMapFeature {
   const label = getFeatureLabel(input.feature, "Point GeoJSON", input.partIndex);
+  const style = getEffectiveGeoJsonFeatureStyle(input.layer, input.feature);
 
   return setFeatureLayerId(
     {
@@ -451,10 +465,10 @@ function createMarkerFeature(input: {
         legendLabel: input.layer.name,
         symbol: { type: "builtin", id: "circle" },
         style: {
-          color: input.layer.style.strokeColor,
-          weight: Math.max(3, input.layer.style.strokeWeight),
-          opacity: input.layer.style.strokeOpacity,
-          markerSize: input.layer.style.markerSize,
+          color: style.strokeColor,
+          weight: Math.max(3, style.strokeWeight),
+          opacity: style.strokeOpacity,
+          markerSize: style.markerSize,
           markerFilled: true,
         },
         locked: false,
@@ -475,6 +489,7 @@ function createLineFeature(input: {
   partIndex?: number;
 }): DroMapFeature {
   const label = getFeatureLabel(input.feature, "Ligne GeoJSON", input.partIndex);
+  const style = getEffectiveGeoJsonFeatureStyle(input.layer, input.feature);
 
   return setFeatureLayerId(
     {
@@ -490,10 +505,10 @@ function createLineFeature(input: {
         legendLabel: input.layer.name,
         lineVariant: "straight",
         style: {
-          color: input.layer.style.strokeColor,
-          weight: input.layer.style.strokeWeight,
-          opacity: input.layer.style.strokeOpacity,
-          dashStyle: getDashStyle(input.layer.style),
+          color: style.strokeColor,
+          weight: style.strokeWeight,
+          opacity: style.strokeOpacity,
+          dashStyle: style.dashStyle,
           arrowStart: false,
           arrowEnd: false,
         },
@@ -515,6 +530,7 @@ function createZoneFeature(input: {
   partIndex?: number;
 }): DroMapFeature {
   const label = getFeatureLabel(input.feature, "Zone GeoJSON", input.partIndex);
+  const style = getEffectiveGeoJsonFeatureStyle(input.layer, input.feature);
 
   return setFeatureLayerId(
     {
@@ -530,14 +546,14 @@ function createZoneFeature(input: {
         legendLabel: input.layer.name,
         zoneVariant: "polygon",
         style: {
-          color: input.layer.style.strokeColor,
-          weight: input.layer.style.strokeWeight,
-          opacity: input.layer.style.strokeOpacity,
-          fillColor: input.layer.style.fillColor,
-          fillOpacity: input.layer.style.fillOpacity,
-          dashStyle: getDashStyle(input.layer.style),
-          zoneStrokeEnabled: true,
-          zoneFillEnabled: input.layer.style.fillOpacity > 0,
+          color: style.strokeColor,
+          weight: style.strokeWeight,
+          opacity: style.strokeOpacity,
+          fillColor: style.fillColor,
+          fillOpacity: style.fillOpacity,
+          dashStyle: style.dashStyle,
+          zoneStrokeEnabled: style.zoneStrokeEnabled,
+          zoneFillEnabled: style.zoneFillEnabled,
           zoneHatchingStyle: "none",
           zoneHatchingColor: "#111827",
           zoneHatchingWeight: 2,

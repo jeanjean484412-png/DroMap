@@ -5,11 +5,13 @@ import L from "leaflet";
 import { useMap } from "react-leaflet";
 
 import {
+  applyGeoJsonFeatureSettings,
   getGeoJsonLayerLoadedDisplayData,
   type DromapGeoJsonFeature,
   type DromapGeoJsonLayer,
   useEditorGeoJsonLayersStore,
 } from "@/stores/editor-geojson-layers";
+import { useEditorFeatureSettingsPreview, type GeoJsonSettingsPreview } from "@/stores/editor-feature-settings-preview";
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
 import { useEditorModeStore } from "@/stores/editor-mode";
 import { useEditorToolStore } from "@/stores/editor-tool";
@@ -64,6 +66,35 @@ type OptimizedRenderedEntry = {
 };
 
 type EditorRenderedEntry = FullRenderedEntry | OptimizedRenderedEntry;
+
+function syncGeoJsonSettingsPreview(
+  entries: Map<string, EditorRenderedEntry>,
+  layers: Map<string, DromapGeoJsonLayer>,
+  preview: GeoJsonSettingsPreview,
+  restore = false,
+) {
+  const entry = entries.get(preview.layerId);
+  const layer = layers.get(preview.layerId);
+  if (!entry || !layer) return;
+
+  const featureLayer = entry.mode === "viewport-canvas"
+    ? entry.mountedLayers.get(String(preview.featureId))
+    : entry.leafletLayer.getLayers().find((item) => (item as DromapLeafletGeoJsonLayer).feature?.id === preview.featureId);
+  const renderedFeature = (featureLayer as DromapLeafletGeoJsonLayer | undefined)?.feature;
+  if (!featureLayer || !renderedFeature) return;
+
+  const indexedFeature = entry.mode === "viewport-canvas" ? entry.index.featuresById.get(String(preview.featureId)) : undefined;
+  const source = indexedFeature
+    ? layer.data.features[indexedFeature.sourceIndex]
+    : layer.data.features.find((feature) => feature.id === preview.featureId);
+  if (!source) return;
+
+  const feature = restore ? source : applyGeoJsonFeatureSettings(layer, source, preview.patch);
+  applyLeafletGeoJsonFeatureStyle(
+    featureLayer, { ...feature, geometry: renderedFeature.geometry }, layer, entry.paneName,
+    entry.mode === "viewport-canvas" ? entry.renderer : undefined,
+  );
+}
 
 function isEffectivelyVisible(layer: DromapGeoJsonLayer) {
   return layer.visible !== false && layer.opacity > 0;
@@ -337,12 +368,14 @@ function findGeoJsonFeatureAtPoint(
 export function EditorGeoJsonLayersRenderer() {
   const map = useMap();
   const layers = useEditorGeoJsonLayersStore((state) => state.geoJsonLayers);
+  const settingsPreview = useEditorFeatureSettingsPreview((state) => state.geoJson);
   const workspaceBounds = useEditorWorkspaceStore((state) => state.workspaceBounds);
   const renderedEntriesRef = useRef<Map<string, EditorRenderedEntry>>(new Map());
   const indexCacheRef = useRef<Map<string, GeoJsonViewportIndex>>(new Map());
   const layersByIdRef = useRef<Map<string, DromapGeoJsonLayer>>(new Map());
   const workspaceBoundsRef = useRef(workspaceBounds);
   const frameIdRef = useRef<number | null>(null);
+  const previousSettingsPreviewRef = useRef<GeoJsonSettingsPreview | null>(null);
 
   const runViewportUpdate = useCallback(() => {
     const viewportBounds = getPaddedViewportBounds(map);
@@ -369,6 +402,8 @@ export function EditorGeoJsonLayersRenderer() {
       );
       reconcileOptimizedEntry(entry, layer, wantedIds);
     }
+    const preview = useEditorFeatureSettingsPreview.getState().geoJson;
+    if (preview) syncGeoJsonSettingsPreview(renderedEntriesRef.current, layersByIdRef.current, preview);
   }, [map]);
 
   const scheduleViewportUpdate = useCallback(() => {
@@ -605,6 +640,17 @@ export function EditorGeoJsonLayersRenderer() {
 
     scheduleViewportUpdate();
   }, [layers, map, scheduleViewportUpdate, workspaceBounds]);
+
+  useEffect(() => {
+    const previous = previousSettingsPreviewRef.current;
+    if (previous && (previous.layerId !== settingsPreview?.layerId || previous.featureId !== settingsPreview?.featureId)) {
+      syncGeoJsonSettingsPreview(renderedEntriesRef.current, layersByIdRef.current, previous, true);
+    }
+    if (settingsPreview) {
+      syncGeoJsonSettingsPreview(renderedEntriesRef.current, layersByIdRef.current, settingsPreview);
+    }
+    previousSettingsPreviewRef.current = settingsPreview;
+  }, [settingsPreview, layers, workspaceBounds]);
 
   useEffect(() => {
     const renderedEntries = renderedEntriesRef.current;

@@ -65,6 +65,12 @@ import {
 } from "./text-rendering";
 import { getLegendDedupeKey } from "./legend-entry";
 import { useEditorFeaturesStore } from "@/stores/editor-features";
+import {
+  applyFeatureSettingsDraft,
+  stageFeatureSettings,
+  useEditorFeatureSettingsPreview,
+  useFeaturesWithSettingsPreview,
+} from "@/stores/editor-feature-settings-preview";
 import { useEditorLayerCommandsStore } from "@/stores/editor-layer-commands";
 import {
   getRenderableFeaturesForLayers,
@@ -668,11 +674,9 @@ export function LegendPanel({
     useState<DroMapMarkerSymbolCategoryId>("basic");
   const effectivePanelMode = mode ?? panelMode;
 
-  const fieldEditHistoryKeysRef = useRef(new Set<string>());
-
-  const rawFeatures = useEditorFeaturesStore(
-    (state) => state.features,
-  ) as LegendFeature[];
+  const legendLabelDrafts = useRef(new Map<string, string>());
+  const nativeDrafts = useEditorFeatureSettingsPreview((state) => state.features);
+  const rawFeatures = useFeaturesWithSettingsPreview() as LegendFeature[];
   useEditorCustomMarkersStore((state) => state.customMarkers);
   const layers = useEditorLayersStore((state) => state.layers);
   const workspaceBounds = useEditorWorkspaceStore(
@@ -687,24 +691,6 @@ export function LegendPanel({
     [rawFeatures, layers, workspaceBounds],
   );
 
-  const updateFeatureInStore = useEditorFeaturesStore(
-    (state) => state.updateFeature,
-  );
-  const updateFeaturesInStore = useEditorFeaturesStore(
-    (state) => state.updateFeatures,
-  );
-
-  const commitFeaturesHistory = useEditorFeaturesStore(
-    (state) => state.commitFeaturesHistory,
-  );
-
-  const updateFeatureWithHistoryInStore = useEditorFeaturesStore(
-    (state) => state.updateFeatureWithHistory,
-  );
-  const updateFeaturesWithHistory = useEditorFeaturesStore(
-    (state) => state.updateFeaturesWithHistory,
-  );
-
   const removeFeatureWithHistory = useEditorFeaturesStore(
     (state) => state.removeFeatureWithHistory,
   );
@@ -714,10 +700,6 @@ export function LegendPanel({
 
   const requestDeleteFeatureLayer = useEditorLayerCommandsStore(
     (state) => state.requestDeleteFeatureLayer,
-  );
-
-  const setLegendGroupLabel = useEditorExportStore(
-    (state) => state.setLegendGroupLabel,
   );
 
   const selectedFeatureIds = useEditorSelectionStore(
@@ -871,18 +853,11 @@ export function LegendPanel({
     (feature) => !isText(feature),
   );
 
-  function updateSelectedFeaturesDuringDrag(
+  function previewSelectedFeatures(
     selected: LegendFeature[],
     updater: (currentFeature: DroMapFeature) => DroMapFeature,
   ) {
-    updateFeatures(selected.map((feature) => feature.id), updater);
-  }
-
-  function updateSelectedFeaturesWithHistory(
-    selected: LegendFeature[],
-    updater: (currentFeature: DroMapFeature) => DroMapFeature,
-  ) {
-    updateFeaturesWithHistory(selected.map((feature) => feature.id), updater);
+    previewFeatures(selected.map((feature) => feature.id), updater);
   }
 
   function getMarkerTypeKey(feature: LegendFeature) {
@@ -950,7 +925,7 @@ export function LegendPanel({
         type="button"
         aria-pressed={isMixed ? "mixed" : allBelow}
         disabled={featureIds.length === 0}
-        onClick={() => updateFeaturesWithHistory(featureIds, (currentFeature) => {
+        onClick={() => stageSettingsForFeatures(featureIds, (currentFeature) => {
           if ((currentFeature.properties.belowBasemapLabels === true) === nextPlacement) {
             return currentFeature;
           }
@@ -1042,132 +1017,72 @@ export function LegendPanel({
     };
   }
 
-  function updateFeatureWithHistory(
-    featureId: string,
-    updater: (currentFeature: DroMapFeature) => DroMapFeature,
-  ) {
-    const sourceFeature = featuresById.get(featureId) as DroMapFeature | undefined;
-
-    if (!sourceFeature) {
-      updateFeatureWithHistoryInStore(featureId, updater);
-      return;
-    }
-
-    const nextSourceFeature = updater(sourceFeature);
-
-    if (!isStyleOnlyChange(sourceFeature, nextSourceFeature)) {
-      updateFeatureWithHistoryInStore(featureId, updater);
-      return;
-    }
-
-    const scopedIds = getScopedFeatureIds(sourceFeature);
-
-    if (scopedIds.length <= 1) {
-      updateFeatureWithHistoryInStore(featureId, updater);
-      return;
-    }
-
-    const patch = getStylePatch(sourceFeature, nextSourceFeature);
-    updateFeaturesWithHistory(scopedIds, (currentFeature) =>
-      applyStylePatch(currentFeature, patch),
-    );
-  }
-
-  function updateFeature(featureId: string, nextFeature: DroMapFeature) {
-    const sourceFeature = featuresById.get(featureId) as DroMapFeature | undefined;
-
-    if (!sourceFeature || !isStyleOnlyChange(sourceFeature, nextFeature)) {
-      updateFeatureInStore(featureId, nextFeature);
-      return;
-    }
-
-    const scopedIds = getScopedFeatureIds(sourceFeature);
-
-    if (scopedIds.length <= 1) {
-      updateFeatureInStore(featureId, nextFeature);
-      return;
-    }
-
-    const patch = getStylePatch(sourceFeature, nextFeature);
-    updateFeaturesInStore(scopedIds, (currentFeature) =>
-      applyStylePatch(currentFeature, patch),
-    );
-  }
-
-  function updateFeatures(
+  function stageSettingsForFeatures(
     featureIds: string[],
     updater: (currentFeature: DroMapFeature) => DroMapFeature,
   ) {
-    if (featureIds.length !== 1) {
-      updateFeaturesInStore(featureIds, updater);
-      return;
-    }
-
-    const sourceFeature = featuresById.get(featureIds[0]) as
-      | DroMapFeature
-      | undefined;
-
-    if (!sourceFeature) {
-      updateFeaturesInStore(featureIds, updater);
-      return;
-    }
-
-    const nextSourceFeature = updater(sourceFeature);
-
-    if (!isStyleOnlyChange(sourceFeature, nextSourceFeature)) {
-      updateFeaturesInStore(featureIds, updater);
-      return;
-    }
-
-    const scopedIds = getScopedFeatureIds(sourceFeature);
-    const patch = getStylePatch(sourceFeature, nextSourceFeature);
-    updateFeaturesInStore(scopedIds, (currentFeature) =>
-      applyStylePatch(currentFeature, patch),
-    );
+    stageFeatureSettings(useEditorFeaturesStore.getState().features, featureIds, updater);
   }
 
-  function updateFeatureStyleWithScope(
+  function previewFeatureSettings(
+    featureId: string,
+    updater: (currentFeature: DroMapFeature) => DroMapFeature,
+  ) {
+    const sourceFeature = featuresById.get(featureId);
+    if (sourceFeature) {
+      const nextSourceFeature = updater(sourceFeature);
+      const scopedIds = getScopedFeatureIds(sourceFeature);
+      if (scopedIds.length > 1 && isStyleOnlyChange(sourceFeature, nextSourceFeature)) {
+        const patch = getStylePatch(sourceFeature, nextSourceFeature);
+        stageSettingsForFeatures(scopedIds, (feature) => applyStylePatch(feature, patch));
+        return;
+      }
+    }
+    stageSettingsForFeatures([featureId], updater);
+  }
+
+  function previewFeature(featureId: string, feature: DroMapFeature) {
+    previewFeatureSettings(featureId, () => feature);
+  }
+
+  function previewFeatures(
+    featureIds: string[],
+    updater: (currentFeature: DroMapFeature) => DroMapFeature,
+  ) {
+    if (featureIds.length === 1) previewFeatureSettings(featureIds[0], updater);
+    else stageSettingsForFeatures(featureIds, updater);
+  }
+
+  function previewScopedStyle(
     feature: LegendFeature,
     updater: (currentFeature: DroMapFeature) => DroMapFeature,
   ) {
-    updateFeaturesWithHistory(getScopedFeatureIds(feature), updater);
+    stageSettingsForFeatures(getScopedFeatureIds(feature), updater);
   }
 
-  function updateFeatureStyleDuringDrag(
-    feature: LegendFeature,
-    updater: (currentFeature: DroMapFeature) => DroMapFeature,
-  ) {
-    updateFeaturesInStore(getScopedFeatureIds(feature), updater);
+  function cancelSettingsPreview() {
+    legendLabelDrafts.current.clear();
+    useEditorFeatureSettingsPreview.setState({ features: new Map() });
   }
 
-  function commitHistoryOnceForField(editKey: string) {
-    if (fieldEditHistoryKeysRef.current.has(editKey)) {
-      return;
+  function applySettingsPreview() {
+    const drafts = useEditorFeatureSettingsPreview.getState().features;
+    const featureStore = useEditorFeaturesStore.getState();
+    const featureIds = featureStore.features.filter((feature) => drafts.has(feature.id)).map((feature) => feature.id);
+    if (featureIds.length > 0) {
+      featureStore.commitFeaturesHistory({ includeParticipants: legendLabelDrafts.current.size > 0 });
+      featureStore.updateFeatures(featureIds, (feature) => applyFeatureSettingsDraft(feature, drafts.get(feature.id)));
+      const { setLegendGroupLabel } = useEditorExportStore.getState();
+      for (const [key, label] of legendLabelDrafts.current) setLegendGroupLabel(key, label);
     }
-
-    fieldEditHistoryKeysRef.current.add(editKey);
-    commitFeaturesHistory();
-  }
-
-  function finishFieldEdit(editKey: string) {
-    fieldEditHistoryKeysRef.current.delete(editKey);
-  }
-
-  function getFeatureLabelEditKey(featureId: string) {
-    return `feature-label:${featureId}`;
-  }
-
-  function getLegendLabelEditKey(feature: LegendFeature) {
-    return `legend-label:${getLegendDedupeKey(feature)}`;
+    cancelSettingsPreview();
   }
 
   function updateFeatureLabelDuringEdit(
     feature: LegendFeature,
     nextLabel: string,
   ) {
-    commitHistoryOnceForField(getFeatureLabelEditKey(feature.id));
-
-    updateFeature(feature.id, {
+    previewFeature(feature.id, {
       ...feature,
       properties: {
         ...feature.properties,
@@ -1185,29 +1100,23 @@ export function LegendPanel({
       (candidate) => getLegendDedupeKey(candidate) === sourceGroupKey,
     );
 
-    setLegendGroupLabel(sourceGroupKey, nextLegendLabel);
+    legendLabelDrafts.current.set(sourceGroupKey, nextLegendLabel);
 
-    for (const groupFeature of groupFeatures) {
-      updateFeature(groupFeature.id, {
-        ...groupFeature,
-        properties: {
-          ...groupFeature.properties,
-          legendLabel: nextLegendLabel,
-        },
-      });
-    }
+    stageSettingsForFeatures(groupFeatures.map((feature) => feature.id), (feature) => ({
+      ...feature,
+      properties: { ...feature.properties, legendLabel: nextLegendLabel },
+    }));
   }
 
   function updateLegendLabelDuringEdit(
     feature: LegendFeature,
     nextLegendLabel: string,
   ) {
-    commitHistoryOnceForField(getLegendLabelEditKey(feature));
     updateLegendLabelForVisualGroup(feature, nextLegendLabel);
   }
 
   function toggleFeatureLocked(feature: LegendFeature) {
-    updateFeatureWithHistory(feature.id, (currentFeature) => {
+    useEditorFeaturesStore.getState().updateFeatureWithHistory(feature.id, (currentFeature) => {
       const currentLockOverride = getFeatureLockOverride(currentFeature);
       const currentObjectLocked =
         currentFeature.properties?.locked === true || currentLockOverride === "locked";
@@ -1300,6 +1209,10 @@ export function LegendPanel({
     setPageIndex(0);
   }, [searchQuery]);
 
+  useEffect(() => () => {
+    useEditorFeatureSettingsPreview.setState((state) => state.features.size > 0 ? { features: new Map() } : state);
+  }, []);
+
   if (!embedded && !isOpen) {
     return (
       <button
@@ -1353,7 +1266,10 @@ export function LegendPanel({
 
             <button
               type="button"
-              onClick={() => setIsOpen(false)}
+              onClick={() => {
+                cancelSettingsPreview();
+                setIsOpen(false);
+              }}
               className="rounded-md px-2 py-1 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
             >
               Replier
@@ -1593,7 +1509,7 @@ export function LegendPanel({
                       <ColorPicker
                         value={getFeatureColor(selectedColorFeatures[0])}
                         onChange={(color) =>
-                          updateSelectedFeaturesWithHistory(
+                          previewSelectedFeatures(
                             selectedColorFeatures,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -1618,7 +1534,7 @@ export function LegendPanel({
                       <ColorPicker
                         value={getFeatureFillColor(selectedZones[0])}
                         onChange={(fillColor) =>
-                          updateSelectedFeaturesWithHistory(
+                          previewSelectedFeatures(
                             selectedZones,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -1646,7 +1562,7 @@ export function LegendPanel({
                         checked={selectedZones.every(getZoneStrokeEnabled)}
                         onChange={(event) => {
                           const zoneStrokeEnabled = event.target.checked;
-                          updateSelectedFeaturesWithHistory(
+                          previewSelectedFeatures(
                             selectedZones,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -1679,10 +1595,9 @@ export function LegendPanel({
                         max="1"
                         step="0.05"
                         value={getFeatureFillOpacity(selectedZones[0])}
-                        onPointerDown={() => commitFeaturesHistory()}
                         onChange={(event) => {
                           const fillOpacity = Number(event.target.value);
-                          updateSelectedFeaturesDuringDrag(
+                          previewSelectedFeatures(
                             selectedZones,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -1715,10 +1630,9 @@ export function LegendPanel({
                         max="1"
                         step="0.05"
                         value={getFeatureOpacity(selectedColorFeatures[0])}
-                        onPointerDown={() => commitFeaturesHistory()}
                         onChange={(event) => {
                           const opacity = Number(event.target.value);
-                          updateSelectedFeaturesDuringDrag(
+                          previewSelectedFeatures(
                             selectedColorFeatures,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -1752,10 +1666,9 @@ export function LegendPanel({
                           max={selectedMarkerSizeLimits.max}
                           step="0.5"
                           value={getFeatureMarkerSize(selectedMarkers[0])}
-                          onPointerDown={() => commitFeaturesHistory()}
                           onChange={(event) => {
                             const markerSize = Number(event.target.value);
-                            updateSelectedFeaturesDuringDrag(
+                            previewSelectedFeatures(
                               selectedMarkers,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -1786,7 +1699,7 @@ export function LegendPanel({
                               selectedMarkerSizeLimits.min,
                               selectedMarkerSizeLimits.max,
                             );
-                            updateSelectedFeaturesWithHistory(
+                            previewSelectedFeatures(
                               selectedMarkers,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -1824,7 +1737,7 @@ export function LegendPanel({
                               MIN_TEXT_FONT_SIZE,
                               MAX_TEXT_FONT_SIZE,
                             );
-                            updateSelectedFeaturesWithHistory(
+                            previewSelectedFeatures(
                               selectedTexts,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -1862,7 +1775,7 @@ export function LegendPanel({
                             const raw = Number(event.target.value);
                             if (!Number.isFinite(raw)) return;
                             const fontSize = clamp(raw, MIN_TEXT_FONT_SIZE, MAX_TEXT_FONT_SIZE);
-                            updateSelectedFeaturesWithHistory(
+                            previewSelectedFeatures(
                               selectedTexts,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -1885,7 +1798,7 @@ export function LegendPanel({
                           type="button"
                           onClick={() => {
                             const textBold = !getTextFeatureBold(selectedTexts[0]);
-                            updateSelectedFeaturesWithHistory(
+                            previewSelectedFeatures(
                               selectedTexts,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -1912,7 +1825,7 @@ export function LegendPanel({
                           type="button"
                           onClick={() => {
                             const textItalic = !getTextFeatureItalic(selectedTexts[0]);
-                            updateSelectedFeaturesWithHistory(
+                            previewSelectedFeatures(
                               selectedTexts,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -1953,10 +1866,9 @@ export function LegendPanel({
                         max="18"
                         step={selectedLines.length > 0 ? "0.5" : "0.25"}
                         value={getFeatureWeight((selectedLines[0] ?? selectedZones[0]) as LegendFeature)}
-                        onPointerDown={() => commitFeaturesHistory()}
                         onChange={(event) => {
                           const weight = Number(event.target.value);
-                          updateSelectedFeaturesDuringDrag(
+                          previewSelectedFeatures(
                             [...selectedLines, ...selectedZones],
                             (currentFeature) => ({
                               ...currentFeature,
@@ -1980,7 +1892,7 @@ export function LegendPanel({
                       <button
                         type="button"
                         onClick={() =>
-                          updateSelectedFeaturesWithHistory(
+                          previewSelectedFeatures(
                             selectedNonTextFeatures,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -1998,7 +1910,7 @@ export function LegendPanel({
                       <button
                         type="button"
                         onClick={() =>
-                          updateSelectedFeaturesWithHistory(
+                          previewSelectedFeatures(
                             selectedNonTextFeatures,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -2076,9 +1988,6 @@ export function LegendPanel({
                                   event.target.value,
                                 );
                               }}
-                              onBlur={() => {
-                                finishFieldEdit(getFeatureLabelEditKey(feature.id));
-                              }}
                               placeholder={"Texte affiché\nsur plusieurs lignes"}
                               rows={3}
                             />
@@ -2092,9 +2001,6 @@ export function LegendPanel({
                                   feature,
                                   event.target.value,
                                 );
-                              }}
-                              onBlur={() => {
-                                finishFieldEdit(getFeatureLabelEditKey(feature.id));
                               }}
                               placeholder={getDefaultFeatureLabel(feature, index)}
                             />
@@ -2114,9 +2020,6 @@ export function LegendPanel({
                                 feature,
                                 event.target.value,
                               );
-                            }}
-                            onBlur={() => {
-                              finishFieldEdit(getLegendLabelEditKey(feature));
                             }}
                             placeholder={getFeatureLegendLabelFallback(feature)}
                           />
@@ -2200,7 +2103,7 @@ export function LegendPanel({
                             const zoneShapeKind = event.target
                               .value as DroMapZoneShapeKind;
 
-                            updateFeatureWithHistory(
+                            previewFeatureSettings(
                               feature.id,
                               (currentFeature) =>
                                 changeQuickShapeKind(
@@ -2282,7 +2185,7 @@ export function LegendPanel({
                           onChange={(event) => {
                             const zoneFillEnabled = event.target.checked;
 
-                            updateFeatureWithHistory(
+                            previewFeatureSettings(
                               feature.id,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -2308,7 +2211,7 @@ export function LegendPanel({
                           onChange={(event) => {
                             const zoneStrokeEnabled = event.target.checked;
 
-                            updateFeatureWithHistory(
+                            previewFeatureSettings(
                               feature.id,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -2332,9 +2235,8 @@ export function LegendPanel({
                       <span className="text-slate-600">Fond</span>
                       <ColorPicker
                         value={getFeatureFillColor(feature)}
-                        onInteractionStart={commitFeaturesHistory}
                         onChange={(nextFillColor) => {
-                          updateFeatures(
+                          previewFeatures(
                             [feature.id],
                             (currentFeature) => ({
                               ...currentFeature,
@@ -2359,9 +2261,8 @@ export function LegendPanel({
                       </span>
                       <ColorPicker
                         value={getFeatureColor(feature)}
-                        onInteractionStart={commitFeaturesHistory}
                         onChange={(nextColor) => {
-                          updateFeatureStyleDuringDrag(
+                          previewScopedStyle(
                             feature,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -2393,13 +2294,10 @@ export function LegendPanel({
                         max="1"
                         step="0.05"
                         value={getFeatureFillOpacity(feature)}
-                        onPointerDown={() => {
-                          commitFeaturesHistory();
-                        }}
                         onChange={(event) => {
                           const nextFillOpacity = Number(event.target.value);
 
-                          updateFeature(feature.id, {
+                          previewFeature(feature.id, {
                             ...feature,
                             properties: {
                               ...feature.properties,
@@ -2430,13 +2328,10 @@ export function LegendPanel({
                         max="1"
                         step="0.05"
                         value={getFeatureOpacity(feature)}
-                        onPointerDown={() => {
-                          commitFeaturesHistory();
-                        }}
                         onChange={(event) => {
                           const nextOpacity = Number(event.target.value);
 
-                          updateFeatureStyleDuringDrag(
+                          previewScopedStyle(
                             feature,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -2472,7 +2367,7 @@ export function LegendPanel({
                                 MIN_TEXT_FONT_SIZE,
                                 MAX_TEXT_FONT_SIZE,
                               );
-                              updateFeatureWithHistory(
+                              previewFeatureSettings(
                                 feature.id,
                                 (currentFeature) => ({
                                   ...currentFeature,
@@ -2510,7 +2405,7 @@ export function LegendPanel({
                               const raw = Number(event.target.value);
                               if (!Number.isFinite(raw)) return;
                               const fontSize = clamp(raw, MIN_TEXT_FONT_SIZE, MAX_TEXT_FONT_SIZE);
-                              updateFeatureWithHistory(
+                              previewFeatureSettings(
                                 feature.id,
                                 (currentFeature) => ({
                                   ...currentFeature,
@@ -2532,7 +2427,7 @@ export function LegendPanel({
                           <button
                             type="button"
                             onClick={() =>
-                              updateFeatureWithHistory(
+                              previewFeatureSettings(
                                 feature.id,
                                 (currentFeature) => ({
                                   ...currentFeature,
@@ -2558,7 +2453,7 @@ export function LegendPanel({
                           <button
                             type="button"
                             onClick={() =>
-                              updateFeatureWithHistory(
+                              previewFeatureSettings(
                                 feature.id,
                                 (currentFeature) => ({
                                   ...currentFeature,
@@ -2597,7 +2492,7 @@ export function LegendPanel({
                               const textBackgroundEnabled =
                                 event.target.checked;
 
-                              updateFeatureWithHistory(
+                              previewFeatureSettings(
                                 feature.id,
                                 (currentFeature) => ({
                                   ...currentFeature,
@@ -2624,7 +2519,7 @@ export function LegendPanel({
                             onChange={(event) => {
                               const textBorderEnabled = event.target.checked;
 
-                              updateFeatureWithHistory(
+                              previewFeatureSettings(
                                 feature.id,
                                 (currentFeature) => ({
                                   ...currentFeature,
@@ -2651,7 +2546,7 @@ export function LegendPanel({
                             onChange={(event) => {
                               const textOutlineEnabled = event.target.checked;
 
-                              updateFeatureWithHistory(
+                              previewFeatureSettings(
                                 feature.id,
                                 (currentFeature) => ({
                                   ...currentFeature,
@@ -2685,13 +2580,10 @@ export function LegendPanel({
                             max={MAX_TEXT_OUTLINE_WIDTH}
                             step="0.25"
                             value={getTextOutlineWidth(feature)}
-                            onPointerDown={() => {
-                              commitFeaturesHistory();
-                            }}
                             onChange={(event) => {
                               const textOutlineWidth = Number(event.target.value);
 
-                              updateFeature(feature.id, {
+                              previewFeature(feature.id, {
                                 ...feature,
                                 properties: {
                                   ...feature.properties,
@@ -2715,9 +2607,8 @@ export function LegendPanel({
                             <span className="text-slate-600">Couleur fond</span>
                             <ColorPicker
                               value={getTextBackgroundColor(feature)}
-                              onInteractionStart={commitFeaturesHistory}
                               onChange={(textBackgroundColor) => {
-                                updateFeatures(
+                                previewFeatures(
                                   [feature.id],
                                   (currentFeature) => ({
                                     ...currentFeature,
@@ -2753,15 +2644,12 @@ export function LegendPanel({
                               max="1"
                               step="0.05"
                               value={getTextBackgroundOpacity(feature)}
-                              onPointerDown={() => {
-                                commitFeaturesHistory();
-                              }}
                               onChange={(event) => {
                                 const textBackgroundOpacity = Number(
                                   event.target.value,
                                 );
 
-                                updateFeature(feature.id, {
+                                previewFeature(feature.id, {
                                   ...feature,
                                   properties: {
                                     ...feature.properties,
@@ -2784,9 +2672,8 @@ export function LegendPanel({
                             <span className="text-slate-600">Couleur cadre</span>
                             <ColorPicker
                               value={getTextBorderColor(feature)}
-                              onInteractionStart={commitFeaturesHistory}
                               onChange={(textBorderColor) => {
-                                updateFeatures(
+                                previewFeatures(
                                   [feature.id],
                                   (currentFeature) => ({
                                     ...currentFeature,
@@ -2819,15 +2706,12 @@ export function LegendPanel({
                               max={MAX_TEXT_BORDER_WIDTH}
                               step="0.5"
                               value={getTextBorderWidth(feature)}
-                              onPointerDown={() => {
-                                commitFeaturesHistory();
-                              }}
                               onChange={(event) => {
                                 const textBorderWidth = Number(
                                   event.target.value,
                                 );
 
-                                updateFeature(feature.id, {
+                                previewFeature(feature.id, {
                                   ...feature,
                                   properties: {
                                     ...feature.properties,
@@ -3007,7 +2891,7 @@ export function LegendPanel({
                                           id: option.id,
                                         };
 
-                                        updateFeatureStyleWithScope(
+                                        previewScopedStyle(
                                           feature,
                                           (currentFeature) => ({
                                             ...currentFeature,
@@ -3060,7 +2944,7 @@ export function LegendPanel({
                               selectionOnly
                               selectedSymbol={getFeatureMarkerSymbol(feature)}
                               onSelect={(symbol) => {
-                                updateFeatureStyleWithScope(
+                                previewScopedStyle(
                                   feature,
                                   (currentFeature) => ({
                                     ...currentFeature,
@@ -3095,13 +2979,10 @@ export function LegendPanel({
                           max={getFeatureMarkerSizeLimits(feature).max}
                           step="0.5"
                           value={getFeatureMarkerSize(feature)}
-                          onPointerDown={() => {
-                            commitFeaturesHistory();
-                          }}
                           onChange={(event) => {
                             const markerSize = Number(event.target.value);
 
-                            updateFeatureStyleDuringDrag(
+                            previewScopedStyle(
                               feature,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -3134,7 +3015,7 @@ export function LegendPanel({
                               limits.max,
                             );
 
-                            updateFeatureWithHistory(
+                            previewFeatureSettings(
                               feature.id,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -3161,11 +3042,8 @@ export function LegendPanel({
                       <input
                         type="checkbox"
                         checked={getMarkerFilled(feature)}
-                        onPointerDown={() => {
-                          commitFeaturesHistory();
-                        }}
                         onChange={(event) => {
-                          updateFeatureStyleDuringDrag(
+                          previewScopedStyle(
                             feature,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -3202,13 +3080,10 @@ export function LegendPanel({
                         max={MAX_MARKER_STROKE_WIDTH}
                         step="0.5"
                         value={getMarkerStrokeWeight(feature)}
-                        onPointerDown={() => {
-                          commitFeaturesHistory();
-                        }}
                         onChange={(event) => {
                           const weight = Number(event.target.value);
 
-                          updateFeatureStyleDuringDrag(
+                          previewScopedStyle(
                             feature,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -3238,7 +3113,7 @@ export function LegendPanel({
                         onChange={(event) => {
                           const enabled = event.target.checked;
 
-                          updateFeatureWithHistory(
+                          previewFeatureSettings(
                             feature.id,
                             (currentFeature) => {
                               const currentStyle = getZoneHatchingStyle(currentFeature);
@@ -3273,7 +3148,7 @@ export function LegendPanel({
                           const zoneHatchingStyle = event.target
                             .value as DroMapZoneHatchingStyle;
 
-                          updateFeatureWithHistory(
+                          previewFeatureSettings(
                             feature.id,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -3305,9 +3180,8 @@ export function LegendPanel({
                         <span className="text-slate-600">Couleur hachures</span>
                         <ColorPicker
                           value={getZoneHatchingColor(feature)}
-                          onInteractionStart={commitFeaturesHistory}
                           onChange={(zoneHatchingColor) => {
-                            updateFeatures(
+                            previewFeatures(
                               [feature.id],
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -3340,15 +3214,12 @@ export function LegendPanel({
                           max={MAX_ZONE_HATCHING_WEIGHT}
                           step="0.5"
                           value={getZoneHatchingWeight(feature)}
-                          onPointerDown={() => {
-                            commitFeaturesHistory();
-                          }}
                           onChange={(event) => {
                             const zoneHatchingWeight = Number(
                               event.target.value,
                             );
 
-                            updateFeature(feature.id, {
+                            previewFeature(feature.id, {
                               ...feature,
                               properties: {
                                 ...feature.properties,
@@ -3376,15 +3247,12 @@ export function LegendPanel({
                           max={MAX_ZONE_HATCHING_SPACING}
                           step="0.5"
                           value={getZoneHatchingSpacing(feature)}
-                          onPointerDown={() => {
-                            commitFeaturesHistory();
-                          }}
                           onChange={(event) => {
                             const zoneHatchingSpacing = Number(
                               event.target.value,
                             );
 
-                            updateFeature(feature.id, {
+                            previewFeature(feature.id, {
                               ...feature,
                               properties: {
                                 ...feature.properties,
@@ -3410,7 +3278,7 @@ export function LegendPanel({
                           onChange={(event) => {
                             const zoneDotsEnabled = event.target.checked;
 
-                            updateFeatureWithHistory(
+                            previewFeatureSettings(
                               feature.id,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -3435,9 +3303,8 @@ export function LegendPanel({
                         <span className="text-slate-600">Couleur points</span>
                         <ColorPicker
                           value={getZoneDotsColor(feature)}
-                          onInteractionStart={commitFeaturesHistory}
                           onChange={(zoneDotsColor) => {
-                            updateFeatures(
+                            previewFeatures(
                               [feature.id],
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -3468,13 +3335,10 @@ export function LegendPanel({
                           max={MAX_ZONE_DOTS_RADIUS}
                           step="0.5"
                           value={getZoneDotsRadius(feature)}
-                          onPointerDown={() => {
-                            commitFeaturesHistory();
-                          }}
                           onChange={(event) => {
                             const zoneDotsRadius = Number(event.target.value);
 
-                            updateFeature(feature.id, {
+                            previewFeature(feature.id, {
                               ...feature,
                               properties: {
                                 ...feature.properties,
@@ -3502,13 +3366,10 @@ export function LegendPanel({
                           max={MAX_ZONE_DOTS_SPACING}
                           step="0.5"
                           value={getZoneDotsSpacing(feature)}
-                          onPointerDown={() => {
-                            commitFeaturesHistory();
-                          }}
                           onChange={(event) => {
                             const zoneDotsSpacing = Number(event.target.value);
 
-                            updateFeature(feature.id, {
+                            previewFeature(feature.id, {
                               ...feature,
                               properties: {
                                 ...feature.properties,
@@ -3535,7 +3396,7 @@ export function LegendPanel({
                           const dashStyle = event.target
                             .value as DroMapDashStyle;
 
-                          updateFeatureWithHistory(
+                          previewFeatureSettings(
                             feature.id,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -3574,10 +3435,9 @@ export function LegendPanel({
                           max={MAX_DASH_LENGTH}
                           step="1"
                           value={getFeatureDashLength(feature)}
-                          onPointerDown={() => commitFeaturesHistory()}
                           onChange={(event) => {
                             const dashLength = Number(event.target.value);
-                            updateFeature(feature.id, {
+                            previewFeature(feature.id, {
                               ...feature,
                               properties: {
                                 ...feature.properties,
@@ -3613,10 +3473,9 @@ export function LegendPanel({
                           max={MAX_DASH_GAP}
                           step="1"
                           value={getFeatureDashGap(feature)}
-                          onPointerDown={() => commitFeaturesHistory()}
                           onChange={(event) => {
                             const dashGap = Number(event.target.value);
-                            updateFeature(feature.id, {
+                            previewFeature(feature.id, {
                               ...feature,
                               properties: {
                                 ...feature.properties,
@@ -3648,13 +3507,10 @@ export function LegendPanel({
                         max="12"
                         step={isZone(feature) ? "0.25" : "0.5"}
                         value={getFeatureWeight(feature)}
-                        onPointerDown={() => {
-                          commitFeaturesHistory();
-                        }}
                         onChange={(event) => {
                           const nextWeight = Number(event.target.value);
 
-                          updateFeature(feature.id, {
+                          previewFeature(feature.id, {
                             ...feature,
                             properties: {
                               ...feature.properties,
@@ -3686,13 +3542,10 @@ export function LegendPanel({
                         max="1"
                         step="0.05"
                         value={getFeatureOpacity(feature)}
-                        onPointerDown={() => {
-                          commitFeaturesHistory();
-                        }}
                         onChange={(event) => {
                           const nextOpacity = Number(event.target.value);
 
-                          updateFeatureStyleDuringDrag(
+                          previewScopedStyle(
                             feature,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -3722,7 +3575,7 @@ export function LegendPanel({
                           onChange={(event) => {
                             const arrowStart = event.target.checked;
 
-                            updateFeatureWithHistory(
+                            previewFeatureSettings(
                               feature.id,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -3748,7 +3601,7 @@ export function LegendPanel({
                           onChange={(event) => {
                             const arrowEnd = event.target.checked;
 
-                            updateFeatureWithHistory(
+                            previewFeatureSettings(
                               feature.id,
                               (currentFeature) => ({
                                 ...currentFeature,
@@ -3788,7 +3641,7 @@ export function LegendPanel({
                           const mapLabelVisibility = event.target
                             .value as DroMapFeatureMapLabelVisibility;
 
-                          updateFeatureWithHistory(
+                          previewFeatureSettings(
                             feature.id,
                             (currentFeature) => ({
                               ...currentFeature,
@@ -3820,10 +3673,9 @@ export function LegendPanel({
                         max={MAX_FEATURE_MAP_LABEL_SCALE}
                         step="0.05"
                         value={getFeatureMapLabelScale(feature)}
-                        onPointerDown={() => commitFeaturesHistory()}
                         onChange={(event) => {
                           const mapLabelScale = Number(event.currentTarget.value);
-                          updateFeature(feature.id, {
+                          previewFeature(feature.id, {
                             ...feature,
                             properties: { ...feature.properties, mapLabelScale },
                           });
@@ -3853,7 +3705,7 @@ export function LegendPanel({
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            updateFeatureWithHistory(
+                            previewFeatureSettings(
                               feature.id,
                               (currentFeature) => {
                                 const nextProperties = {
@@ -3960,6 +3812,12 @@ export function LegendPanel({
           </>
         )}
       </div>
+      {nativeDrafts.size > 0 ? (
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-teal-100 bg-teal-50 px-4 py-2.5" data-dromap-feature-settings-actions="true">
+          <button type="button" onClick={cancelSettingsPreview} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Annuler</button>
+          <button type="button" onClick={applySettingsPreview} className="rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-800">Appliquer</button>
+        </div>
+      ) : null}
     </aside>
   );
 }

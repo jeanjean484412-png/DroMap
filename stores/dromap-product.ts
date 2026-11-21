@@ -55,6 +55,15 @@ const remoteSyncInFlight = new Map<string, Promise<boolean>>();
 const remoteSyncAgain = new Set<string>();
 const remoteMetadataOnly = new Set<string>();
 const remoteDeletePending = new Set<string>();
+const projectSnapshotWrites = new Map<string, DromapProject>();
+const resolvingProjectConflicts = new Set<string>();
+const openEditorProjects = new Set<string>();
+const LOCAL_SAVE_ERROR = "Enregistrement sur cet appareil impossible. Réessaie avant de quitter le projet.";
+
+export function retainOpenEditorProject(projectId: string) {
+  openEditorProjects.add(projectId);
+  return () => { openEditorProjects.delete(projectId); };
+}
 
 type ProductStoragePayload = {
   schemaVersion: 1 | 2;
@@ -105,6 +114,7 @@ type DromapProductState = {
   activeProjectId: string | null;
   projects: DromapProject[];
   projectConflicts: Record<string, { remote: RemoteProjectManifest; localUpdatedAt: string }>;
+  localSaveErrors: Record<string, string>;
 
   bootstrap: () => Promise<void>;
   activateAuthenticatedAccount: (account: DromapAccountSession) => Promise<void>;
@@ -140,11 +150,11 @@ type DromapProductState = {
   checkpointProjectSnapshot: (
     projectId: string,
     snapshot: DromapEditorProjectSnapshot,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   saveProjectSnapshot: (
     projectId: string,
     snapshot: DromapEditorProjectSnapshot,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   setProjectThumbnail: (projectId: string, thumbnailDataUrl: string | null) => void;
   markProjectSyncPending: (projectId: string) => void;
   trashProject: (projectId: string) => void;
@@ -469,8 +479,8 @@ type ProjectCacheRecord = {
 };
 
 const legacyProjectCacheOwners = new Map<string, string>();
-function projectCacheScope() {
-  const owner = useDromapProductStore.getState().accountUserId;
+function projectCacheScope(): string {
+  const owner: string | null = useDromapProductStore.getState().accountUserId;
   return owner ? `user:${owner}` : "guest";
 }
 const projectContentCache = createScopedProjectCache(openProductDatabase, PRODUCT_DATABASE_PROJECT_CACHE_STORE, projectCacheScope, legacyProjectCacheOwners);
@@ -507,10 +517,10 @@ async function readProjectCache(projectId: string): Promise<ProjectCacheRecord |
 
 // Keep the latest write per project and owner. Unchanged projects can share
 // an in-flight or completed write, and failed writes can be retried on flush.
-const projectCacheWrites = new WeakMap<DromapProject, { scope: string; write: Promise<void> }>();
+const projectCacheWrites = new WeakMap<DromapProject, { scope: string; write: Promise<boolean> }>();
 
-async function writeProjectCache(project: DromapProject) {
-  if (typeof window === "undefined" || typeof indexedDB === "undefined" || project.contentLoaded === false) return;
+async function writeProjectCache(project: DromapProject): Promise<boolean> {
+  if (typeof window === "undefined" || typeof indexedDB === "undefined" || project.contentLoaded === false) return false;
   const scope = projectCacheScope();
   const previous = projectCacheWrites.get(project);
   if (previous?.scope === scope) return previous.write;
@@ -526,9 +536,11 @@ async function writeProjectCache(project: DromapProject) {
     if (!written && projectCacheWrites.get(project)?.write === write) {
       projectCacheWrites.delete(project);
     }
+    return written;
   }).catch((error) => {
     if (projectCacheWrites.get(project)?.write === write) projectCacheWrites.delete(project);
     console.warn("DroMap: cache projet IndexedDB impossible", error);
+    return false;
   });
   projectCacheWrites.set(project, { scope, write });
   return write;
@@ -593,28 +605,31 @@ function persistState(state: DromapProductState, includeProjectContent = true) {
   void persistIndexedDatabase(payload);
   if (!includeProjectContent) return;
   for (const project of state.projects) {
-    if (project.contentLoaded !== false) void writeProjectCache(project);
+    if (project.contentLoaded !== false && !projectSnapshotWrites.has(project.id) &&
+        !resolvingProjectConflicts.has(project.id)) void writeProjectCache(project);
   }
 }
 
 async function persistStateDurably(
   state: DromapProductState,
   projectIds?: readonly string[],
-) {
-  const payload = createStoragePayload(state);
-  persistLocalStorage(payload);
-
+): Promise<boolean> {
+  const scope = projectCacheScope();
   const requestedIds = projectIds ? new Set(projectIds) : null;
   const projectsToCache = state.projects.filter(
     (project) =>
       project.contentLoaded !== false &&
-      (!requestedIds || requestedIds.has(project.id)),
+      (requestedIds ? requestedIds.has(project.id)
+        : !projectSnapshotWrites.has(project.id) && !resolvingProjectConflicts.has(project.id)),
   );
 
-  await Promise.all([
-    persistIndexedDatabase(payload),
-    ...projectsToCache.map((project) => writeProjectCache(project)),
-  ]);
+  const contentWritten = (await Promise.all(projectsToCache.map(writeProjectCache))).every(Boolean);
+  if (projectCacheScope() !== scope || (requestedIds && !contentWritten)) return false;
+
+  const payload = createStoragePayload(state);
+  const localIndexWritten = persistLocalStorage(payload);
+  const indexedIndexWritten = await persistIndexedDatabase(payload);
+  return (localIndexWritten || indexedIndexWritten) && contentWritten;
 }
 
 let persistenceScheduled = false;
@@ -639,6 +654,71 @@ function updateProject(
   updater: (project: DromapProject) => DromapProject,
 ) {
   return projects.map((project) => (project.id === projectId ? updater(project) : project));
+}
+
+async function persistEditorSnapshot(
+  projectId: string,
+  snapshot: DromapEditorProjectSnapshot,
+  checkpointOnly: boolean,
+  get: () => DromapProductState,
+  set: (updater: (state: DromapProductState) => Partial<DromapProductState>) => void,
+): Promise<boolean> {
+  const state = get();
+  const source = state.projects.find((project) => project.id === projectId);
+  if (!source || resolvingProjectConflicts.has(projectId)) return false;
+  const scope = projectCacheScope();
+  const timestamp = nowIso();
+  const authenticated = state.userMode === "authenticated";
+  const persistedProject: DromapProject = {
+    ...source,
+    editorSnapshot: snapshot,
+    pendingChanges: checkpointOnly ? source.pendingChanges : 0,
+    status: source.status === "trashed" ? "trashed"
+      : authenticated && (!checkpointOnly || source.pendingChanges > 0 || source.status === "sync-pending")
+        ? "sync-pending" : "saved",
+    setupComplete: true,
+    lastSavedAt: timestamp,
+    updatedAt: timestamp,
+  };
+  projectSnapshotWrites.set(projectId, persistedProject);
+  const saved = await persistStateDurably({
+    ...state,
+    projects: updateProject(state.projects, projectId, () => persistedProject),
+  }, [projectId]);
+  if (projectSnapshotWrites.get(projectId) !== persistedProject) return false;
+  projectSnapshotWrites.delete(projectId);
+  if (projectCacheScope() !== scope) return false;
+
+  set((current) => {
+    const localSaveErrors = { ...current.localSaveErrors };
+    if (saved) delete localSaveErrors[projectId];
+    else localSaveErrors[projectId] = LOCAL_SAVE_ERROR;
+    return {
+      localSaveErrors,
+      projects: updateProject(current.projects, projectId, (project) => {
+        if (saved && project === source) return persistedProject;
+        const newerEdits = project.pendingChanges > source.pendingChanges;
+        return {
+          ...project,
+          editorSnapshot: snapshot,
+          setupComplete: true,
+          lastSavedAt: saved ? timestamp : project.lastSavedAt,
+          updatedAt: project.updatedAt > timestamp ? project.updatedAt : timestamp,
+          pendingChanges: saved
+            ? (newerEdits ? project.pendingChanges : persistedProject.pendingChanges)
+            : Math.max(1, project.pendingChanges),
+          status: project.status === "trashed" ? "trashed"
+            : !saved || newerEdits ? "unsaved" : persistedProject.status,
+        };
+      }),
+    };
+  });
+  // Preserve any edits to dashboard metadata made during the write.
+  const current = get();
+  persistState(current, false);
+  const project = current.projects.find((item) => item.id === projectId);
+  if (saved && project && project !== persistedProject) void writeProjectCache(project);
+  return saved;
 }
 
 function createProjectRecord(
@@ -732,6 +812,11 @@ function mergeProjectLists(remoteProjects: DromapProject[], localProjects: Droma
       continue;
     }
 
+    if (openEditorProjects.has(local.id) && local.remoteRevision !== remote.remoteRevision) {
+      merged.set(remote.id, local);
+      continue;
+    }
+
     const localBusinessIsNewer = local.updatedAt.localeCompare(remote.updatedAt) > 0;
     if (localBusinessIsNewer) {
       // Cas typique : changement local sauvegardé dans IndexedDB juste avant une
@@ -776,6 +861,8 @@ function registerProjectConflict(
   get: () => DromapProductState,
   set: (partial: Partial<DromapProductState> | ((state: DromapProductState) => Partial<DromapProductState>)) => void,
 ) {
+  const existing = get().projectConflicts[projectId]?.remote;
+  if (existing?.revision === remote.revision && existing.updatedAt === remote.updatedAt) return;
   const local = get().projects.find((project) => project.id === projectId);
   set((state) => ({
     lastSyncError: "Ce projet a été modifié sur un autre appareil. Choisis la version à conserver.",
@@ -876,15 +963,16 @@ async function synchronizeSingleProjectOnce(
 ) {
   const state = get();
   if (state.userMode !== "authenticated" || remoteDeletePending.has(projectId)) return true;
+  if (state.projectConflicts[projectId] || state.localSaveErrors[projectId] || projectSnapshotWrites.has(projectId)) return false;
   let project = state.projects.find((item) => item.id === projectId);
   if (!project) return true;
   if (isDromapTrashExpired(project)) {
     cancelQueuedRemoteProjectSync(projectId);
     return true;
   }
-  if (project.pendingChanges > 0 && project.status === "unsaved") return true;
+  if (project.pendingChanges > 0 && project.status === "unsaved") return false;
 
-  const metadataOnly = remoteMetadataOnly.has(projectId) && Boolean(project.remoteRevision);
+  const metadataOnly = remoteMetadataOnly.has(projectId) && Boolean(project.remoteRevision) && !isProjectLocallyPending(project);
   try {
     let manifest: RemoteProjectManifest;
     if (metadataOnly && project.remoteRevision) {
@@ -940,43 +1028,8 @@ async function synchronizeSingleProjectOnce(
   } catch (error) {
     if (get().accountUserId !== state.accountUserId) return false;
     if (error instanceof RemoteProjectConflictError && error.current) {
-      const currentRemote = error.current;
-      const local = get().projects.find((item) => item.id === projectId) ?? null;
-      const remoteBusinessUpdatedAt =
-        typeof currentRemote.metadata?.updatedAt === "string" && currentRemote.metadata.updatedAt
-          ? currentRemote.metadata.updatedAt
-          : currentRemote.updatedAt;
-
-      // DroMap conserve automatiquement la version métier la plus récente.
-      // Les changements de révision purement techniques (miniature, réencodage,
-      // reprise réseau...) ne doivent plus provoquer de fausse fenêtre de conflit.
-      if (local && local.updatedAt.localeCompare(remoteBusinessUpdatedAt) > 0) {
-        set((current) => ({
-          lastSyncError: null,
-          projects: updateProject(current.projects, projectId, (item) => ({
-            ...item,
-            ...manifestFields(currentRemote),
-          })),
-        }));
-        persistState(get());
-        return synchronizeSingleProjectOnce(projectId, get, set);
-      }
-
-      try {
-        const remote = await fetchRemoteProject(currentRemote);
-        if (get().accountUserId !== state.accountUserId) return false;
-        const loaded = { ...remote, contentLoaded: true } satisfies DromapProject;
-        set((current) => ({
-          lastSyncError: null,
-          projects: updateProject(current.projects, projectId, () => loaded),
-        }));
-        await writeProjectCache(loaded);
-        persistState(get());
-        return true;
-      } catch {
-        set({ lastSyncError: "La version en ligne la plus récente n’a pas pu être récupérée." });
-        return false;
-      }
+      registerProjectConflict(projectId, error.current, get, set);
+      return false;
     }
     const message = error instanceof Error ? error.message : "Synchronisation impossible.";
     set((current) => ({
@@ -1125,6 +1178,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   activeProjectId: null,
   projects: [],
   projectConflicts: {},
+  localSaveErrors: {},
 
   bootstrap: async () => {
     if (get().hydrated) return;
@@ -1163,8 +1217,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       } else if (!session.error && session.configured && get().userMode === "authenticated") {
         const current = get();
         if (current.accountUserId) {
-          await projectContentCache.clearOwner(`user:${current.accountUserId}`).catch(() => null);
-          // Une vraie session de compte a expiré ou a été supprimée : ne pas exposer les projets privés après déconnexion.
+          // Les projets du compte restent privés et peuvent être récupérés après reconnexion.
           set({
             userMode: "guest",
             accountName: "Utilisateur DroMap",
@@ -1238,6 +1291,13 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
     }
     const canReuseLocalProjects =
       previous.userMode === "guest" || previous.accountUserId === account.userId;
+    const recoveredProjects = previous.accountUserId !== account.userId && typeof indexedDB !== "undefined"
+      ? await projectContentCache.listOwnerProjects(`user:${account.userId}`, (value) =>
+        isRecord(value) && (!value.remoteRevision || value.status === "sync-pending" || value.status === "saving" ||
+          value.status === "unsaved" || (typeof value.pendingChanges === "number" && value.pendingChanges > 0)),
+      ).catch(() => [])
+      : [];
+    if (projectCacheScope() !== previousScope) return;
     const localProjects = (canReuseLocalProjects ? get().projects : []).map((project) => ({
       ...project,
       creatorName:
@@ -1246,6 +1306,15 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
           ? account.displayName
           : project.creatorName,
     }));
+    const localIds = new Set(localProjects.map((project) => project.id));
+    for (const recovered of recoveredProjects) {
+      const project = normalizeProject(recovered, 0);
+      if (project && !localIds.has(project.id) && !isDromapTrashExpired(project) &&
+          (!project.remoteRevision || isProjectLocallyPending(project))) {
+        localProjects.push({ ...project, contentLoaded: true });
+        localIds.add(project.id);
+      }
+    }
 
     set({
       userMode: "authenticated",
@@ -1265,6 +1334,8 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       ),
       accountBackendConfigured: true,
       projects: localProjects,
+      projectConflicts: previous.accountUserId === account.userId ? get().projectConflicts : {},
+      localSaveErrors: canReuseLocalProjects ? get().localSaveErrors : {},
       lastSyncError: null,
     });
     persistState(get());
@@ -1332,6 +1403,9 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   signOutAccount: async () => {
     const ownerScope = projectCacheScope();
     if (get().userMode === "authenticated") {
+      if (get().projects.some((project) => get().localSaveErrors[project.id] || projectSnapshotWrites.has(project.id))) {
+        return { ok: false, error: LOCAL_SAVE_ERROR };
+      }
       const synced = await get().syncAllProjects();
       if (!synced) {
         return {
@@ -1379,6 +1453,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       activeProjectId: null,
       projects: [],
       projectConflicts: {},
+      localSaveErrors: {},
       lastSyncError: null,
     });
     await persistStateDurably(get());
@@ -1412,6 +1487,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       activeProjectId: null,
       projects: [],
       projectConflicts: {},
+      localSaveErrors: {},
       lastSyncError: null,
     });
     persistState(get());
@@ -1453,8 +1529,10 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
 
   refreshRemoteProjects: async () => {
     if (get().userMode !== "authenticated") return true;
+    const ownerId = get().accountUserId;
     try {
       const remoteProjects = await fetchRemoteProjectSummaries();
+      if (get().accountUserId !== ownerId) return false;
       const remoteById = new Map(remoteProjects.map((project) => [project.id, project] as const));
       const currentProjects = get().projects;
       const currentById = new Map(currentProjects.map((project) => [project.id, project] as const));
@@ -1496,18 +1574,12 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
           remoteMetadataOnly.has(local.id) ||
           localBusinessIsNewer;
 
-        if (localHasPendingSync) {
+        if (localHasPendingSync || get().projectConflicts[local.id] ||
+            (revisionChanged && openEditorProjects.has(local.id))) {
+          next.push(local);
           if (serverChanged && remoteManifest) {
-            if (local.updatedAt.localeCompare(remote.updatedAt) > 0) {
-              const rebasedLocal = { ...local, ...manifestFields(remoteManifest) };
-              next.push(rebasedLocal);
-              queueRemoteProjectSync(local.id, get, set, 120, remoteMetadataOnly.has(local.id));
-            } else {
-              // Le serveur contient la modification métier la plus récente.
-              next.push(remote);
-            }
-          } else {
-            next.push(local);
+            registerProjectConflict(local.id, remoteManifest, get, set);
+          } else if (!get().projectConflicts[local.id]) {
             queueRemoteProjectSync(local.id, get, set, 120, remoteMetadataOnly.has(local.id));
           }
           continue;
@@ -1556,7 +1628,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       const activeProjectId = get().activeProjectId && sorted.some((project) => project.id === get().activeProjectId)
         ? get().activeProjectId
         : null;
-      set({ projects: sorted, activeProjectId, lastSyncError: null });
+      set({ projects: sorted, activeProjectId, ...(Object.keys(get().projectConflicts).length === 0 ? { lastSyncError: null } : {}) });
       persistState(get());
       return true;
     } catch (error) {
@@ -1575,20 +1647,22 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
     if (projectCacheScope() !== ownerScope) return { ok: false, error: "Connexion requise." };
     const knownRemoteRevision = current.remoteRevision ?? null;
 
-    const applyCached = async (cache: ProjectCacheRecord) => {
+    const applyCached = async (cache: ProjectCacheRecord, preserveCachedRevision = false) => {
       const loaded: DromapProject = {
         ...cache.project,
-        name: current!.name,
-        creatorName: current!.creatorName,
-        updatedAt: current!.updatedAt,
-        deletedAt: current!.deletedAt,
-        status: current!.status,
-        thumbnailDataUrl: current!.thumbnailDataUrl,
-        remoteRevision: current!.remoteRevision ?? cache.remoteRevision,
-        remoteChunkCount: current!.remoteChunkCount ?? cache.project.remoteChunkCount ?? null,
-        remoteEncoding: current!.remoteEncoding ?? cache.project.remoteEncoding ?? null,
-        remotePayloadSizeBytes: current!.remotePayloadSizeBytes ?? cache.project.remotePayloadSizeBytes ?? null,
-        remoteUpdatedAt: current!.remoteUpdatedAt ?? cache.project.remoteUpdatedAt ?? null,
+        ...(!preserveCachedRevision ? {
+          name: current!.name,
+          creatorName: current!.creatorName,
+          updatedAt: current!.updatedAt,
+          deletedAt: current!.deletedAt,
+          status: current!.status,
+          thumbnailDataUrl: current!.thumbnailDataUrl,
+          remoteRevision: current!.remoteRevision ?? cache.remoteRevision,
+          remoteChunkCount: current!.remoteChunkCount ?? cache.project.remoteChunkCount ?? null,
+          remoteEncoding: current!.remoteEncoding ?? cache.project.remoteEncoding ?? null,
+          remotePayloadSizeBytes: current!.remotePayloadSizeBytes ?? cache.project.remotePayloadSizeBytes ?? null,
+          remoteUpdatedAt: current!.remoteUpdatedAt ?? cache.project.remoteUpdatedAt ?? null,
+        } : {}),
         contentLoaded: true,
       };
       set((state) => ({ projects: updateProject(state.projects, projectId, () => loaded) }));
@@ -1597,12 +1671,15 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       return loaded;
     };
 
-    if (cached && (!knownRemoteRevision || cached.remoteRevision === knownRemoteRevision)) {
+    const cachedMatchesServer = cached?.remoteRevision === knownRemoteRevision &&
+      (!current.remoteUpdatedAt || !cached?.project.remoteUpdatedAt || cached.project.remoteUpdatedAt === current.remoteUpdatedAt);
+    if (cached && (!knownRemoteRevision || cachedMatchesServer)) {
       await applyCached(cached);
       return { ok: true };
     }
 
-    if (cached && knownRemoteRevision && cached.remoteRevision !== knownRemoteRevision && isProjectLocallyPending(current)) {
+    if (cached && knownRemoteRevision && !cachedMatchesServer &&
+        (isProjectLocallyPending(current) || isProjectLocallyPending(cached.project))) {
       const remoteManifest: RemoteProjectManifest = {
         projectId,
         revision: knownRemoteRevision,
@@ -1612,15 +1689,10 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
         deletedAt: current.deletedAt,
         payloadSizeBytes: current.remotePayloadSizeBytes ?? 0,
       };
-      if (cached.project.updatedAt.localeCompare(current.updatedAt) > 0) {
-        const loaded = await applyCached(cached);
-        const rebased = { ...loaded, ...manifestFields(remoteManifest) };
-        set((state) => ({ projects: updateProject(state.projects, projectId, () => rebased) }));
-        persistState(get());
-        queueRemoteProjectSync(projectId, get, set, 80);
-        return { ok: true };
-      }
-      // La copie distante connue est plus récente : elle est chargée ci-dessous.
+      await applyCached(cached, true);
+      if (projectCacheScope() !== ownerScope) return { ok: false, error: "Connexion requise." };
+      registerProjectConflict(projectId, remoteManifest, get, set);
+      return { ok: true };
     }
 
     if (knownRemoteRevision) {
@@ -1635,7 +1707,7 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
       } catch (error) {
         if (projectCacheScope() !== ownerScope) return { ok: false, error: "Connexion requise." };
         if (cached) {
-          await applyCached(cached);
+          await applyCached(cached, true);
           set({ lastSyncError: "Mode hors ligne : la copie enregistrée sur cet appareil a été ouverte." });
           return { ok: true };
         }
@@ -1658,22 +1730,32 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
     const ownerId = get().accountUserId;
     const conflict = get().projectConflicts[projectId];
     if (!conflict) return true;
+    if (projectSnapshotWrites.has(projectId) || resolvingProjectConflicts.has(projectId)) return false;
+    resolvingProjectConflicts.add(projectId);
     try {
       if (choice === "remote") {
         const remote = await fetchRemoteProject(conflict.remote);
-        if (get().accountUserId !== ownerId) return false;
+        const current = get();
+        if (current.accountUserId !== ownerId || current.projectConflicts[projectId] !== conflict) return false;
         const loaded = { ...remote, contentLoaded: true } satisfies DromapProject;
+        if (!(await persistStateDurably({
+          ...current,
+          projects: updateProject(current.projects, projectId, () => loaded),
+        }, [projectId]))) throw new Error(LOCAL_SAVE_ERROR);
+        if (get().accountUserId !== ownerId) return false;
         set((state) => {
           const conflicts = { ...state.projectConflicts };
           delete conflicts[projectId];
+          const localSaveErrors = { ...state.localSaveErrors };
+          delete localSaveErrors[projectId];
           return {
             projectConflicts: conflicts,
+            localSaveErrors,
             lastSyncError: null,
             projects: updateProject(state.projects, projectId, () => loaded),
           };
         });
-        await writeProjectCache(loaded);
-        persistState(get());
+        persistState(get(), false);
         return true;
       }
 
@@ -1717,6 +1799,8 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
         set({ lastSyncError: error instanceof Error ? error.message : "Résolution du conflit impossible." });
       }
       return false;
+    } finally {
+      resolvingProjectConflicts.delete(projectId);
     }
   },
 
@@ -2005,59 +2089,19 @@ export const useDromapProductStore = create<DromapProductState>((set, get) => ({
   },
 
   checkpointProjectSnapshot: async (projectId, snapshot) => {
-    const timestamp = nowIso();
-    const authenticated = get().userMode === "authenticated";
-    set((state) => ({
-      projects: updateProject(state.projects, projectId, (project) => ({
-        ...project,
-        editorSnapshot: snapshot,
-        // Un checkpoint protège le travail sur l'appareil sans forcer un envoi
-        // réseau à chaque geste. pendingChanges reste donc inchangé.
-        status:
-          project.status === "trashed"
-            ? "trashed"
-            : authenticated && project.pendingChanges > 0
-              ? "sync-pending"
-              : "saved",
-        setupComplete: true,
-        lastSavedAt: timestamp,
-        updatedAt: timestamp,
-      })),
-    }));
-
-    await persistStateDurably(get(), [projectId]);
-
-    // Si une synchronisation avait déjà commencé pendant que l'utilisateur
-    // modifiait encore le projet, une seconde passe devra envoyer ce checkpoint.
-    if (authenticated && remoteSyncInFlight.has(projectId)) {
+    const saved = await persistEditorSnapshot(projectId, snapshot, true, get, set);
+    if (saved && get().userMode === "authenticated" && remoteSyncInFlight.has(projectId)) {
       remoteSyncAgain.add(projectId);
     }
+    return saved;
   },
 
   saveProjectSnapshot: async (projectId, snapshot) => {
-    const timestamp = nowIso();
-    const authenticated = get().userMode === "authenticated";
-    set((state) => ({
-      projects: updateProject(state.projects, projectId, (project) => ({
-        ...project,
-        editorSnapshot: snapshot,
-        pendingChanges: 0,
-        // Le travail est sécurisé localement avant que la copie en ligne parte
-        // en arrière-plan. Une navigation n'attend donc jamais Supabase.
-        status: authenticated ? "sync-pending" : "saved",
-        setupComplete: true,
-        lastSavedAt: timestamp,
-        updatedAt: timestamp,
-      })),
-    }));
-
-    // Navigation/fermeture : ne rendre la main qu'une fois la copie IndexedDB
-    // du projet terminée. La synchronisation distante reste asynchrone.
-    await persistStateDurably(get(), [projectId]);
-
-    if (authenticated) {
+    const saved = await persistEditorSnapshot(projectId, snapshot, false, get, set);
+    if (saved && get().userMode === "authenticated") {
       queueRemoteProjectSync(projectId, get, set, 120);
     }
+    return saved;
   },
 
   setProjectThumbnail: (projectId, thumbnailDataUrl) => {

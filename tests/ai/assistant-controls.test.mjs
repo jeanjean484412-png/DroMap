@@ -97,8 +97,10 @@ test("N15 : les catégories routières GeoJSON ont leurs propres groupes de lég
     {[`useEditor${name[0].toUpperCase()}${name.slice(1)}Store`]:value},
   ]));
   modules["./geojson-layer-legend"] = {
-    getGeoJsonLayerLegendKinds: () => [{kind:"lines",count:1}],
-    getGeoJsonLayerLegendDedupeKey: (id,kind) => `geojson-layer:${id}:${kind}`,
+    getGeoJsonLayerLegendEntries: (layers) => layers.flatMap(({ id }) => [
+      { dedupeKey: `geojson-layer:${id}:lines` },
+      ...(id === "roads-primary" ? [{ dedupeKey: `geojson-layer:${id}:lines:style:secondary` }] : []),
+    ]),
   };
   for (const [,dependency] of readFileSync(new URL("../../editor/dromap-ai-executor.ts",import.meta.url),"utf8").matchAll(/from "([^"]+)"/g)) modules[dependency] ??= {};
   const {executeDroMapAiPlan} = loadTs("editor/dromap-ai-executor.ts",modules);
@@ -107,7 +109,11 @@ test("N15 : les catégories routières GeoJSON ont leurs propres groupes de lég
     selector:{all:false,featureIds:[],layerName:name,sourceType:"geojson",featureType:null,labelContains:null,legendLabelContains:null},
   }));
   await executeDroMapAiPlan({commands,warnings:[]});
-  assert.deepEqual(grouped,[["geojson-layer:roads-primary:lines","Routes principales"],["geojson-layer:roads-secondary:lines","Routes secondaires"]]);
+  assert.deepEqual(grouped, [
+    ["geojson-layer:roads-primary:lines", "Routes principales"],
+    ["geojson-layer:roads-primary:lines:style:secondary", "Routes principales"],
+    ["geojson-layer:roads-secondary:lines", "Routes secondaires"],
+  ]);
 });
 
 test("remplir puis tracer un pays sur fond classique conserve les objets sans ajouter de calque technique", async (t) => {

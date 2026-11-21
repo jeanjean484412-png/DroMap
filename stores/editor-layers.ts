@@ -1,6 +1,10 @@
 import { create } from "zustand";
 
 import { registerEditorHistoryParticipant } from "@/stores/editor-history-coordinator";
+import {
+  normalizeDromapGeoJsonLayerSettings,
+  type DromapGeoJsonLayerSettings,
+} from "@/stores/editor-geojson-layers";
 
 import type { DroMapFeature } from "@/lib/dromap/feature";
 import type { WorkspaceBounds } from "@/lib/dromap/workspace-bounds";
@@ -27,6 +31,7 @@ export type DroMapLayer = {
   sourceGeoJsonLayerId?: string;
   sourceGeoJsonLayerName?: string;
   sourceGeoJsonSourceName?: string | null;
+  sourceGeoJsonLayerSettings?: DromapGeoJsonLayerSettings;
 };
 
 export type DroMapSavedLayerLegendConfig = {
@@ -58,7 +63,7 @@ type EditorLayersState = {
   setLayers: (layers: DroMapLayer[], activeLayerId?: string | null) => void;
   syncLayersForFeatures: (features: DroMapFeature[]) => void;
   setActiveLayerId: (layerId: string) => void;
-  createLayer: (name?: string) => string;
+  createLayer: (name?: string, options?: { activate?: boolean; geoJsonSource?: DromapGeoJsonLayerSettings }) => string;
   renameLayer: (layerId: string, name: string) => void;
   deleteLayer: (layerId: string) => void;
   toggleLayerVisibility: (layerId: string) => void;
@@ -162,6 +167,7 @@ function normalizeLayer(layer: Partial<DroMapLayer>, index: number): DroMapLayer
   const fallback = createDefaultDromapLayer();
   const id = typeof layer.id === "string" && layer.id.trim() ? layer.id : createLayerId();
   const timestamp = nowIso();
+  const sourceSettings = normalizeDromapGeoJsonLayerSettings(layer.sourceGeoJsonLayerSettings, 0);
 
   return {
     id,
@@ -189,6 +195,9 @@ function normalizeLayer(layer: Partial<DroMapLayer>, index: number): DroMapLayer
       : layer.sourceGeoJsonSourceName === null
         ? { sourceGeoJsonSourceName: null }
         : {}),
+    ...(sourceSettings && sourceSettings.id === layer.sourceGeoJsonLayerId
+      ? { sourceGeoJsonLayerSettings: sourceSettings }
+      : {}),
   };
 }
 
@@ -473,7 +482,7 @@ export const useEditorLayersStore = create<EditorLayersState>((set, get) => ({
       }
 
       const requestedActiveLayerId = activeLayerId ?? normalizedLayers[0]?.id ?? DEFAULT_DROMAP_LAYER_ID;
-      const safeActiveLayerId = normalizedLayers.some((layer) => layer.id === requestedActiveLayerId)
+      const safeActiveLayerId = requestedActiveLayerId === "" || normalizedLayers.some((layer) => layer.id === requestedActiveLayerId)
         ? requestedActiveLayerId
         : normalizedLayers[0]?.id ?? DEFAULT_DROMAP_LAYER_ID;
 
@@ -496,7 +505,7 @@ export const useEditorLayersStore = create<EditorLayersState>((set, get) => ({
 
       for (const feature of features) {
         const layerId = getFeatureLayerId(feature);
-        if (layerIds.has(layerId)) {
+        if (layerIds.has(layerId) || (state.activeLayerId === "" && layerId === DEFAULT_DROMAP_LAYER_ID)) {
           continue;
         }
 
@@ -518,7 +527,7 @@ export const useEditorLayersStore = create<EditorLayersState>((set, get) => ({
         changed = true;
       }
 
-      const activeLayerId = nextLayers.some((layer) => layer.id === state.activeLayerId)
+      const activeLayerId = state.activeLayerId === "" || nextLayers.some((layer) => layer.id === state.activeLayerId)
         ? state.activeLayerId
         : nextLayers[0]?.id ?? DEFAULT_DROMAP_LAYER_ID;
 
@@ -536,16 +545,25 @@ export const useEditorLayersStore = create<EditorLayersState>((set, get) => ({
       return { activeLayerId: layerId };
     }),
 
-  createLayer: (name) => {
+  createLayer: (name, { activate = true, geoJsonSource } = {}) => {
     const currentLayers = get().layers;
-    const nextLayer = createDromapLayer(
+    const baseLayer = createDromapLayer(
       name ?? `Calque ${currentLayers.length + 1}`,
       (currentLayers.length + 1) * LAYER_ORDER_STEP,
     );
+    const nextLayer = geoJsonSource ? {
+      ...baseLayer,
+      visible: geoJsonSource.visible,
+      opacity: geoJsonSource.opacity,
+      sourceGeoJsonLayerId: geoJsonSource.id,
+      sourceGeoJsonLayerName: geoJsonSource.name,
+      sourceGeoJsonSourceName: geoJsonSource.sourceName ?? null,
+      sourceGeoJsonLayerSettings: geoJsonSource,
+    } : baseLayer;
 
     set((state) => ({
       layers: renormalizeLayerOrders([...state.layers, nextLayer]),
-      activeLayerId: nextLayer.id,
+      activeLayerId: activate ? nextLayer.id : state.activeLayerId,
     }));
 
     return nextLayer.id;
@@ -682,7 +700,7 @@ export const useEditorLayersStore = create<EditorLayersState>((set, get) => ({
 export function getActiveDromapLayerId() {
   const state = useEditorLayersStore.getState();
 
-  if (state.layers.length === 0) {
+  if (state.layers.length === 0 || state.activeLayerId === "") {
     return null;
   }
 

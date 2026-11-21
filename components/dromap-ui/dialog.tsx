@@ -12,6 +12,7 @@ export function DromapDialog({
   onClose,
   maxWidthClassName = "max-w-lg",
   scrollable = false,
+  showCloseButton = true,
 }: {
   open: boolean;
   title: string;
@@ -21,6 +22,7 @@ export function DromapDialog({
   onClose: () => void;
   maxWidthClassName?: string;
   scrollable?: boolean;
+  showCloseButton?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -58,14 +60,14 @@ export function DromapDialog({
               <p className="mt-1 text-sm leading-6 text-slate-600">{description}</p>
             ) : null}
           </div>
-          <button
+          {showCloseButton ? <button
             type="button"
             onClick={onClose}
             aria-label="Fermer"
             className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-slate-200 bg-white text-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-950"
           >
             ×
-          </button>
+          </button> : null}
         </header>
         {children ? (
           <div className={scrollable ? "min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5" : "px-5 py-5"}>

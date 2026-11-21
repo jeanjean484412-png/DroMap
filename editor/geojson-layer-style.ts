@@ -41,15 +41,7 @@ function normalizeNumber(value: unknown, fallback: number, min: number, max: num
 }
 
 function normalizeDashStyle(value: unknown, fallback: DromapGeoJsonLayerDashStyle) {
-  if (value === "dotted") {
-    return "dotted";
-  }
-
-  if (value === "dashed") {
-    return "dashed";
-  }
-
-  return fallback;
+  return value === "solid" || value === "dotted" || value === "dashed" ? value : fallback;
 }
 
 function getDromapMetadata(feature: DromapGeoJsonFeature) {
@@ -112,8 +104,9 @@ export function getEffectiveGeoJsonFeatureStyle(
   const strokeColor = normalizeString(dromapStyle.color, layerStyle.strokeColor);
   const fillColor = normalizeString(dromapStyle.fillColor, layerStyle.fillColor);
   const zoneStrokeEnabled = dromapStyle.zoneStrokeEnabled !== false;
+  const zoneFillOpacity = normalizeNumber(dromapStyle.fillOpacity, layerStyle.fillOpacity, 0, 1);
   const zoneFillEnabled = dromapStyle.zoneFillEnabled === true ||
-    (dromapStyle.zoneFillEnabled !== false && typeof dromapStyle.fillOpacity === "number" && dromapStyle.fillOpacity > 0);
+    (dromapStyle.zoneFillEnabled !== false && dromapFeatureType === "zone" && zoneFillOpacity > 0);
 
   return {
     strokeColor,
@@ -126,13 +119,7 @@ export function getEffectiveGeoJsonFeatureStyle(
         )
       : 0,
     fillColor,
-    fillOpacity: zoneFillEnabled
-      ? clamp01(
-          typeof dromapStyle.fillOpacity === "number"
-            ? dromapStyle.fillOpacity
-            : layerStyle.fillOpacity,
-        )
-      : 0,
+    fillOpacity: zoneFillEnabled ? zoneFillOpacity : 0,
     markerSize: normalizeNumber(
       dromapStyle.markerSize ?? dromapStyle.fontSize,
       layerStyle.markerSize,

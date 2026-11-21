@@ -26,6 +26,7 @@ export function DromapProjectEditorTopbar({
     state.projects.find((item) => item.id === projectId),
   );
   const userMode = useDromapProductStore((state) => state.userMode);
+  const localSaveError = useDromapProductStore((state) => state.localSaveErrors[projectId]);
   const renameProject = useDromapProductStore((state) => state.renameProject);
   const { saveNow } = useDromapProjectSave();
   const [nameDraft, setNameDraft] = useState(project?.name ?? "Projet sans titre");
@@ -50,8 +51,7 @@ export function DromapProjectEditorTopbar({
 
   async function leaveEditor(href: string) {
     useEditorWorkspaceStore.getState().cancelWorkspaceZoneModification();
-    await saveNow("navigation");
-    router.push(href);
+    if (await saveNow("navigation")) router.push(href);
   }
 
   function openRenderPage() {
@@ -184,9 +184,11 @@ export function DromapProjectEditorTopbar({
           type="button"
           onClick={() => void saveNow("manual")}
           disabled={activeProject.status === "saving"}
+          title={localSaveError}
+          aria-label={localSaveError ? `Réessayer. ${localSaveError}` : undefined}
           className="h-9 shrink-0 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 transition hover:bg-slate-100 disabled:cursor-wait disabled:text-slate-400"
         >
-          {activeProject.status === "saving" ? "Enregistrement…" : "Enregistrer"}
+          {activeProject.status === "saving" ? "Enregistrement…" : localSaveError ? "Réessayer" : "Enregistrer"}
         </button>
 
         <button

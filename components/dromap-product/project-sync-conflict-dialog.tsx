@@ -40,12 +40,24 @@ export function DromapProjectSyncConflictDialog() {
   async function choose(choice: "local" | "remote") {
     const projectId = conflict!.projectId;
     setWorking(choice);
-    const resolved = await resolve(projectId, choice);
-    setWorking(null);
+    let resolved: boolean;
+    try {
+      if (choice === "local") {
+        let saved = Promise.resolve(true);
+        window.dispatchEvent(new CustomEvent("dromap:project-conflict-save", {
+          detail: { projectId, waitFor: (result: Promise<boolean>) => { saved = result; } },
+        }));
+        if (!(await saved)) return;
+      }
+      resolved = await resolve(projectId, choice);
+    } finally {
+      setWorking(null);
+    }
     if (resolved && choice === "remote" && window.location.pathname.includes(`/projects/${projectId}/`)) {
       // Le moteur de l'éditeur possède ses propres stores. Un rechargement ciblé
       // garantit que le choix explicite « version en ligne » remonte immédiatement
       // dans la carte au lieu de laisser l'ancienne scène locale affichée.
+      window.dispatchEvent(new CustomEvent("dromap:project-remote-version-accepted", { detail: projectId }));
       window.location.reload();
     }
   }

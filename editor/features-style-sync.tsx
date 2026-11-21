@@ -22,7 +22,7 @@ import {
   getZoneVisibleFillOpacity,
   getZoneVisibleStrokeOpacity,
 } from "./zone-style";
-import { useEditorFeaturesStore } from "@/stores/editor-features";
+import { useFeaturesWithSettingsPreview } from "@/stores/editor-feature-settings-preview";
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
 import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
 
@@ -136,7 +136,7 @@ export function FeaturesStyleSync() {
   const appliedStylesRef = useRef(new WeakMap<L.Layer, DroMapFeature>());
   const previousStyleContextRef = useRef<readonly unknown[]>([]);
 
-  const features = useEditorFeaturesStore((state) => state.features);
+  const features = useFeaturesWithSettingsPreview();
   const markerCatalog = useMarkerSymbolCatalog(features.some((feature) =>
     feature.geometry.type === "Point" && markerSymbolNeedsCatalog(getFeatureMarkerSymbol(feature)),
   ));

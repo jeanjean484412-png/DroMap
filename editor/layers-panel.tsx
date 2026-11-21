@@ -11,9 +11,11 @@ import {
   convertGeoJsonLayerToDromapFeatures,
   countDromapFeaturesForGeoJsonLayer,
   getDromapFeatureCountForGeometry,
+  getGeoJsonFeatureName,
   GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD,
 } from "./geojson-layer-conversion";
-import { convertDromapLayerToGeoJsonLayer } from "./dromap-layer-to-geojson-conversion";
+import { GeoJsonFeatureSettings } from "./geojson-feature-settings";
+import { convertDromapLayerToGeoJsonLayer, convertFeaturesToGeoJsonFeatures } from "./dromap-layer-to-geojson-conversion";
 import { useEditorExportStore } from "@/stores/editor-export";
 import { useEditorFeaturesStore } from "@/stores/editor-features";
 import {
@@ -27,8 +29,10 @@ import {
 import {
   createDromapSavedGeoJsonLayer,
   getGeoJsonLayerDisplayCoordinateCount,
+  getGeoJsonLayerSettings,
   getGeoJsonPrecisionModeLabel,
   remapSavedGeoJsonLayerToMap,
+  type DromapGeoJsonFeatureSettingsPatch,
   type DromapGeoJsonLayer,
   type DromapGeoJsonPrecisionMode,
   type DromapSavedGeoJsonLayer,
@@ -83,6 +87,8 @@ const GEOJSON_PRECISION_OPTIONS: Array<{
   },
 ];
 
+const LEGACY_EDITABLE_GEOJSON_LAYER_SUFFIX = " · objet éditable";
+
 function getLayerFeatureCount(features: DroMapFeature[], layerId: string) {
   return features.filter((feature) => getFeatureLayerId(feature) === layerId).length;
 }
@@ -90,20 +96,6 @@ function getLayerFeatureCount(features: DroMapFeature[], layerId: string) {
 function getLayerPreviewLabel(layer: DroMapLayer, features: DroMapFeature[]) {
   const count = getLayerFeatureCount(features, layer.id);
   return `${count} objet${count > 1 ? "s" : ""}`;
-}
-
-type DroMapLayerWithGeoJsonOrigin = DroMapLayer & {
-  sourceGeoJsonLayerId?: string;
-  sourceGeoJsonLayerName?: string;
-  sourceGeoJsonSourceName?: string | null;
-};
-
-function hasGeoJsonOriginMetadata(layer: DroMapLayer) {
-  const metadata = layer as DroMapLayerWithGeoJsonOrigin;
-  return (
-    typeof metadata.sourceGeoJsonLayerId === "string" &&
-    metadata.sourceGeoJsonLayerId.trim().length > 0
-  );
 }
 
 function isFeatureFromGeoJson(feature: DroMapFeature) {
@@ -114,13 +106,20 @@ function canConvertDromapLayerBackToGeoJson(
   layer: DroMapLayer,
   features: DroMapFeature[],
 ) {
-  if (hasGeoJsonOriginMetadata(layer)) {
+  if (layer.sourceGeoJsonLayerId) {
     return true;
   }
 
   return features.some(
     (feature) => getFeatureLayerId(feature) === layer.id && isFeatureFromGeoJson(feature),
   );
+}
+
+function getLegacyEditableGeoJsonSourceId(layer: DroMapLayer, features: DroMapFeature[]) {
+  if (!layer.name.endsWith(LEGACY_EDITABLE_GEOJSON_LAYER_SUFFIX)) return undefined;
+  const layerFeatures = features.filter((feature) => getFeatureLayerId(feature) === layer.id);
+  const source = layerFeatures[0]?.properties.source;
+  return layerFeatures.length === 1 && source?.type === "geojson" ? source.importId : undefined;
 }
 
 function createSavedLayerLegendConfig(layerFeatureIds: string[]) {
@@ -181,7 +180,7 @@ type LayerDialogState =
   | { kind: "save-geojson-layer"; layer: DromapGeoJsonLayer; initialName: string }
   | { kind: "rename-saved-geojson-layer"; savedLayer: DromapSavedGeoJsonLayer; initialName: string }
   | { kind: "delete-geojson-layer"; layer: DromapGeoJsonLayer }
-  | { kind: "convert-geojson-layer"; layer: DromapGeoJsonLayer; targetFeatureCount: number }
+  | { kind: "convert-geojson-layer"; layer: DromapGeoJsonLayer; targetFeatureCount: number; featureId?: string | number }
   | { kind: "delete-saved-layer"; savedLayer: DroMapSavedLayer }
   | { kind: "delete-saved-geojson-layer"; savedLayer: DromapSavedGeoJsonLayer }
   | { kind: "message"; title: string; message: string };
@@ -205,7 +204,9 @@ export function LayersPanel({
     getInitialFloatingPanelZIndex(),
   );
   const [dialog, setDialog] = useState<LayerDialogState | null>(null);
-  const [objectEditRequest, setObjectEditRequest] = useState<GeoJsonFeatureEditRequest | null>(null);
+  const [geoJsonEditRequest, setGeoJsonEditRequest] = useState<GeoJsonFeatureEditRequest | null>(null);
+  const [geoJsonFeatureSelection, setGeoJsonFeatureSelection] = useState<GeoJsonFeatureEditRequest | null>(null);
+  const [createdLayerNotice, setCreatedLayerNotice] = useState<{ name: string } | null>(null);
   const [focusedGeoJsonLayer, setFocusedGeoJsonLayer] = useState<{ id: string } | null>(null);
   const focusedGeoJsonCardRef = useRef<HTMLElement | null>(null);
   const [dialogZIndex, setDialogZIndex] = useState(getInitialFloatingPanelZIndex());
@@ -306,8 +307,14 @@ export function LayersPanel({
   }, [loadSavedGeoJsonLayersFromStorage, loadSavedLayersFromStorage]);
 
   useEffect(() => {
+    if (!createdLayerNotice) return;
+    const timeout = window.setTimeout(() => setCreatedLayerNotice(null), 5500);
+    return () => window.clearTimeout(timeout);
+  }, [createdLayerNotice]);
+
+  useEffect(() => {
     const handleObjectEdit = (event: Event) => {
-      setObjectEditRequest((event as CustomEvent<GeoJsonFeatureEditRequest>).detail);
+      setGeoJsonEditRequest((event as CustomEvent<GeoJsonFeatureEditRequest>).detail);
     };
     window.addEventListener(EDIT_GEOJSON_FEATURE_EVENT, handleObjectEdit);
     return () => window.removeEventListener(EDIT_GEOJSON_FEATURE_EVENT, handleObjectEdit);
@@ -384,7 +391,7 @@ export function LayersPanel({
     [geoJsonLayers],
   );
 
-  const activeLayer = layers.find((layer) => layer.id === activeLayerId) ?? layers[0];
+  const activeLayer = layers.find((layer) => layer.id === activeLayerId);
 
   function getSliderDraftValue(key: string, fallback: number) {
     return sliderDrafts[key] ?? fallback;
@@ -508,7 +515,8 @@ export function LayersPanel({
   }
 
   function convertEditableLayerToGeoJson(layer: DroMapLayer) {
-    if (!canConvertDromapLayerBackToGeoJson(layer, features)) {
+    const featureStore = useEditorFeaturesStore.getState();
+    if (!canConvertDromapLayerBackToGeoJson(layer, featureStore.features)) {
       openMessageDialog(
         "Conversion impossible",
         "Ce calque DroMap n’est pas issu d’un calque GeoJSON. Il ne peut pas être transformé en calque GeoJSON léger.",
@@ -516,7 +524,7 @@ export function LayersPanel({
       return;
     }
 
-    const layerFeatures = features.filter(
+    const layerFeatures = featureStore.features.filter(
       (feature) => getFeatureLayerId(feature) === layer.id,
     );
 
@@ -528,15 +536,35 @@ export function LayersPanel({
       return;
     }
 
-    const geoJsonLayer = convertDromapLayerToGeoJsonLayer({
-      layer,
-      features: layerFeatures,
-      existingGeoJsonLayerCount: geoJsonLayers.length,
-    });
+    const geoJsonStore = useEditorGeoJsonLayersStore.getState();
+    const legacySourceId = layer.sourceGeoJsonLayerId ? undefined : getLegacyEditableGeoJsonSourceId(layer, layerFeatures);
+    const sourceId = layer.sourceGeoJsonLayerId ?? legacySourceId;
+    const sourceLayer = geoJsonStore.geoJsonLayers.find((candidate) => candidate.id === sourceId);
+    const sourceSettings = sourceLayer ? getGeoJsonLayerSettings(sourceLayer) : layer.sourceGeoJsonLayerSettings;
 
-    addGeoJsonLayer(geoJsonLayer);
+    featureStore.commitFeaturesHistory({ includeParticipants: true });
+    if (sourceSettings) {
+      geoJsonStore.restoreGeoJsonLayerFeatures(sourceSettings, convertFeaturesToGeoJsonFeatures(layerFeatures, layer));
+    } else {
+      const geoJsonLayer = convertDromapLayerToGeoJsonLayer({
+        layer,
+        features: layerFeatures,
+        existingGeoJsonLayerCount: geoJsonStore.geoJsonLayers.length,
+      });
+      addGeoJsonLayer(sourceId ? {
+        ...geoJsonLayer,
+        id: sourceId,
+        name: layer.sourceGeoJsonLayerName ?? (legacySourceId
+          ? layer.name.slice(0, -LEGACY_EDITABLE_GEOJSON_LAYER_SUFFIX.length)
+          : geoJsonLayer.name),
+        sourceName: layer.sourceGeoJsonSourceName ?? geoJsonLayer.sourceName,
+      } : geoJsonLayer);
+    }
+
     clearSelectedFeatureId();
-    replaceFeatures(features.filter((feature) => getFeatureLayerId(feature) !== layer.id));
+    useEditorFeaturesStore.setState((state) => ({
+      features: state.features.filter((feature) => getFeatureLayerId(feature) !== layer.id),
+    }));
     deleteLayer(layer.id);
   }
 
@@ -554,13 +582,25 @@ export function LayersPanel({
     setDialogError(null);
   }
 
-  function convertGeoJsonLayerToEditableObjects(sourceLayer: DromapGeoJsonLayer, featureIndex?: number) {
+  function openGeoJsonLayerSettings(layerId: string) {
+    setGeoJsonFeatureSelection(null);
+    setPanelZIndex(bringFloatingPanelToFront());
+    setFocusedGeoJsonLayer({ id: layerId });
+    setIsOpen(true);
+  }
+
+  function applyGeoJsonFeatureSettings(layerId: string, featureId: string | number, patch: DromapGeoJsonFeatureSettingsPatch) {
+    useEditorFeaturesStore.getState().commitFeaturesHistory({ includeParticipants: true });
+    useEditorGeoJsonLayersStore.getState().updateGeoJsonFeatureSettings(layerId, featureId, patch);
+  }
+
+  function convertGeoJsonLayerToEditableObjects(sourceLayer: DromapGeoJsonLayer, featureId?: string | number) {
     const layer = useEditorGeoJsonLayersStore.getState().geoJsonLayers.find((item) => item.id === sourceLayer.id);
-    if (!layer || (featureIndex !== undefined && layer !== sourceLayer)) return;
-    const convertEntireLayer = featureIndex === undefined;
-    const convertedFeatures = convertEntireLayer
+    if (!layer) return;
+    const index = featureId === undefined ? -1 : layer.data.features.findIndex((feature) => feature.id === featureId);
+    const convertedFeatures = featureId === undefined
       ? convertGeoJsonLayerToDromapFeatures(layer, layer.id)
-      : convertGeoJsonFeatureAtIndex(layer, layer.id, featureIndex);
+      : convertGeoJsonFeatureAtIndex(layer, layer.id, index);
 
     if (convertedFeatures.length === 0) {
       openMessageDialog(
@@ -572,8 +612,31 @@ export function LayersPanel({
 
     const featureStore = useEditorFeaturesStore.getState();
     featureStore.commitFeaturesHistory({ includeParticipants: true });
-    const nextLayerName = convertEntireLayer ? layer.name : `${layer.name} · objet éditable`;
-    const nextLayerId = createLayer(nextLayerName);
+    const sourceSettings = getGeoJsonLayerSettings(layer);
+    const drawingLayers = useEditorLayersStore.getState().layers;
+    const existingLayer = drawingLayers.find((candidate) => candidate.sourceGeoJsonLayerId === layer.id);
+    const legacyLayer = existingLayer ? undefined : drawingLayers.find((candidate) =>
+      !candidate.sourceGeoJsonLayerId && getLegacyEditableGeoJsonSourceId(candidate, featureStore.features) === layer.id,
+    );
+    const destinationLayer = existingLayer ?? legacyLayer;
+    const nextLayerId = destinationLayer?.id ?? createLayer(layer.name, { activate: false, geoJsonSource: sourceSettings });
+    if (!destinationLayer) {
+      setCreatedLayerNotice({ name: layer.name });
+    } else if (legacyLayer || featureId === undefined || layer.data.features.length === 1) {
+      useEditorLayersStore.setState((state) => ({
+        layers: state.layers.map((candidate) => candidate.id === nextLayerId
+          ? {
+              ...candidate,
+              name: legacyLayer ? layer.name : candidate.name,
+              sourceGeoJsonLayerId: layer.id,
+              sourceGeoJsonLayerName: layer.name,
+              sourceGeoJsonSourceName: layer.sourceName ?? null,
+              sourceGeoJsonLayerSettings: sourceSettings,
+            }
+          : candidate),
+      }));
+    }
+
     const editableFeatures = convertedFeatures.map((feature) => {
       const { lockOverride: _lockOverride, ...nextProperties } =
         feature.properties;
@@ -588,51 +651,30 @@ export function LayersPanel({
       }, nextLayerId);
     });
 
-    useEditorLayersStore.setState((state) => ({
-      layers: state.layers.map((dromapLayer) =>
-        dromapLayer.id === nextLayerId
-          ? {
-              ...dromapLayer,
-              name: nextLayerName,
-              visible: layer.visible,
-              opacity: layer.opacity,
-              // La transformation sert précisément à rendre les éléments éditables.
-              // Un verrouillage du calque GeoJSON source ne doit donc jamais être
-              // recopié comme verrouillage par défaut du nouveau calque DroMap.
-              locked: false,
-              ...(convertEntireLayer ? {
-                sourceGeoJsonLayerId: layer.id,
-                sourceGeoJsonLayerName: layer.name,
-                sourceGeoJsonSourceName: layer.sourceName ?? null,
-              } : {}),
-              updatedAt: new Date().toISOString(),
-            }
-          : dromapLayer,
-      ),
-      activeLayerId: nextLayerId,
-    }));
-
     featureStore.addFeatures(editableFeatures);
-    if (convertEntireLayer) {
+    if (featureId === undefined) {
       removeGeoJsonLayer(layer.id);
       clearSelectedFeatureId();
     } else {
-      useEditorGeoJsonLayersStore.getState().removeGeoJsonFeature(layer.id, featureIndex);
-      useEditorSelectionStore.getState().setSelectedFeatureId(editableFeatures[0].id);
+      useEditorGeoJsonLayersStore.getState().removeGeoJsonFeature(layer.id, index);
+      const selection = useEditorSelectionStore.getState();
+      if (editableFeatures.length === 1) selection.setSelectedFeatureId(editableFeatures[0].id);
+      else selection.setSelectedFeatureIds(editableFeatures.map((feature) => feature.id));
     }
   }
 
-  function handleConvertGeoJsonLayer(layer: DromapGeoJsonLayer) {
-    const targetFeatureCount = countDromapFeaturesForGeoJsonLayer(layer);
+  function handleConvertGeoJsonLayer(layer: DromapGeoJsonLayer, featureId?: string | number) {
+    const target = featureId === undefined ? undefined : layer.data.features.find((feature) => feature.id === featureId);
+    const targetFeatureCount = target ? getDromapFeatureCountForGeometry(target.geometry) : countDromapFeaturesForGeoJsonLayer(layer);
 
     if (targetFeatureCount >= GEOJSON_TO_DROMAP_HEAVY_FEATURE_THRESHOLD) {
-      setDialog({ kind: "convert-geojson-layer", layer, targetFeatureCount });
+      setDialog({ kind: "convert-geojson-layer", layer, targetFeatureCount, featureId });
       setDialogName("");
       setDialogError(null);
       return;
     }
 
-    convertGeoJsonLayerToEditableObjects(layer);
+    convertGeoJsonLayerToEditableObjects(layer, featureId);
   }
 
   function requestSavedLayersAccess() {
@@ -923,8 +965,8 @@ export function LayersPanel({
     }
 
     if (dialog.kind === "convert-layer-to-geojson") {
-      convertEditableLayerToGeoJson(dialog.layer);
       closeDialog();
+      convertEditableLayerToGeoJson(dialog.layer);
       return;
     }
 
@@ -935,8 +977,8 @@ export function LayersPanel({
     }
 
     if (dialog.kind === "convert-geojson-layer") {
-      convertGeoJsonLayerToEditableObjects(dialog.layer);
       closeDialog();
+      convertGeoJsonLayerToEditableObjects(dialog.layer, dialog.featureId);
       return;
     }
 
@@ -1015,12 +1057,17 @@ export function LayersPanel({
       }
       case "convert-layer-to-geojson": {
         const count = dialog.featureCount;
-        return `Ce calque contient ${count.toLocaleString()} objet${count > 1 ? "s" : ""} DroMap issu${count > 1 ? "s" : ""} d’un calque GeoJSON. Il sera remplacé par un calque GeoJSON léger, en conservant les modifications faites sur les objets convertis.`;
+        const objects = count > 1 ? "objets DroMap" : "objet DroMap";
+        const sourceName = geoJsonLayers.find((layer) => layer.id === dialog.layer.sourceGeoJsonLayerId)?.name
+          ?? dialog.layer.sourceGeoJsonLayerSettings?.name ?? dialog.layer.sourceGeoJsonLayerName;
+        return sourceName
+          ? `Retour vers le calque GeoJSON « ${sourceName} » pour ${count.toLocaleString()} ${objects}. Les modifications seront conservées.`
+          : `Conversion de ${count.toLocaleString()} ${objects} en GeoJSON. Les modifications seront conservées.`;
       }
       case "delete-geojson-layer":
         return `Le calque “${dialog.layer.name}” sera retiré de cette carte. Le fichier GeoJSON source ne sera pas modifié.`;
       case "convert-geojson-layer":
-        return `Ce calque contient ${dialog.targetFeatureCount.toLocaleString()} éléments qui seront ajoutés comme objets DroMap éditables individuellement. C’est très lourd : la carte, la légende, les exports et l’onglet Objets risquent de ralentir fortement. Garde plutôt le calque GeoJSON léger si tu n’as pas besoin d’éditer chaque élément séparément.`;
+        return `${dialog.featureId === undefined ? "Ce calque" : "Cet élément"} sera converti en ${dialog.targetFeatureCount.toLocaleString()} objets DroMap éditables. Cette conversion risque de ralentir la carte, la légende et les exports.`;
       case "delete-saved-layer":
         return "Les cartes déjà créées ne seront pas modifiées.";
       case "delete-saved-geojson-layer":
@@ -1140,85 +1187,92 @@ export function LayersPanel({
     );
   }
 
-  const objectEditLayer = objectEditRequest && geoJsonLayers.find((layer) => layer.id === objectEditRequest.layerId);
-  const featureId = objectEditRequest?.featureId;
-  const objectEditFeatures = objectEditLayer?.data.features;
-  const featureIndex = featureId === undefined || !objectEditFeatures
-    ? -1
-    : objectEditFeatures.findIndex((feature) => feature.id === featureId);
-  const clickedFeature = objectEditFeatures?.[featureIndex];
-  const canConvertSingleFeature = clickedFeature !== undefined &&
-    getDromapFeatureCountForGeometry(clickedFeature.geometry) === 1 &&
-    objectEditFeatures?.findLastIndex((feature) => feature.id === featureId) === featureIndex;
-
-  const actionClassName = "flex w-full flex-col gap-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 motion-safe:transition-transform motion-safe:hover:scale-[1.015]";
-  const objectEditDialog = objectEditLayer ? (
+  const requestedGeoJsonLayer = geoJsonLayers.find((layer) => layer.id === geoJsonEditRequest?.layerId);
+  const requestedGeoJsonFeature = requestedGeoJsonLayer?.data.features.find((feature) => feature.id === geoJsonEditRequest?.featureId);
+  const geoJsonSettingsDialog = requestedGeoJsonLayer && requestedGeoJsonFeature ? (
     <DromapDialog
       open
-      title="Que veux-tu modifier ?"
-      description={`Cet élément fait partie du calque GeoJSON « ${objectEditLayer.name} ».`}
-      onClose={() => setObjectEditRequest(null)}
-      scrollable
-    >
-      <div className="space-y-2.5">
+      title="Modifier cet élément GeoJSON ?"
+      showCloseButton={false}
+      description={`« ${getGeoJsonFeatureName(requestedGeoJsonFeature)} » fait partie du calque GeoJSON « ${requestedGeoJsonLayer.name} ».`}
+      onClose={() => setGeoJsonEditRequest(null)}
+      footer={
+        <>
+        <button type="button" onClick={() => setGeoJsonEditRequest(null)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100">
+          Annuler
+        </button>
         <button
           type="button"
           autoFocus
-          className={actionClassName}
+          className="rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 motion-safe:transition-transform motion-safe:hover:scale-[1.02]"
           onClick={() => {
-            setObjectEditRequest(null);
+            setGeoJsonFeatureSelection(geoJsonEditRequest);
+            setGeoJsonEditRequest(null);
+            setIsOpen(false);
             setPanelZIndex(bringFloatingPanelToFront());
-            setFocusedGeoJsonLayer({ id: objectEditLayer.id });
-            setIsOpen(true);
           }}
         >
-          Modifier le style du calque
-          <span className="text-xs font-normal text-slate-600">Ouvre ses réglages dans Calques pour modifier l’apparence de tous ses éléments ensemble.</span>
+          Modifier cet élément
         </button>
-        {canConvertSingleFeature ? (
-          <button
-            type="button"
-            className={actionClassName}
-            onClick={() => {
-              setObjectEditRequest(null);
-              convertGeoJsonLayerToEditableObjects(objectEditLayer, featureIndex);
-            }}
-          >
-            Rendre cet élément éditable
-            <span className="text-xs font-normal text-slate-600">Transforme l’élément cliqué en objet DroMap et sélectionne-le.</span>
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className={actionClassName}
-          onClick={() => {
-            setObjectEditRequest(null);
-            handleConvertGeoJsonLayer(objectEditLayer);
-          }}
-        >
-          Convertir tout le calque
-          <span className="text-xs font-normal text-slate-600">Remplace le calque GeoJSON par des objets DroMap modifiables individuellement.</span>
-        </button>
-      </div>
-    </DromapDialog>
+        </>
+      }
+    />
   ) : null;
+
+  const editedLayer = geoJsonLayers.find((layer) => layer.id === geoJsonFeatureSelection?.layerId);
+  const editedFeatureId = geoJsonFeatureSelection?.featureId;
+  const editedFeature = editedLayer?.data.features.find((feature) => feature.id === editedFeatureId);
+  const featureSettings = editedLayer && editedFeature && editedFeatureId !== undefined ? (
+    <GeoJsonFeatureSettings
+      key={`${editedLayer.id}:${editedFeatureId}`}
+      layer={editedLayer}
+      feature={editedFeature}
+      zIndex={panelZIndex}
+      onClose={() => setGeoJsonFeatureSelection(null)}
+      onApply={(patch) => applyGeoJsonFeatureSettings(editedLayer.id, editedFeatureId, patch)}
+      onOpenLayer={() => openGeoJsonLayerSettings(editedLayer.id)}
+      onConvertFeature={() => {
+        setGeoJsonFeatureSelection(null);
+        handleConvertGeoJsonLayer(editedLayer, editedFeatureId);
+      }}
+      onConvertLayer={() => {
+        setGeoJsonFeatureSelection(null);
+        handleConvertGeoJsonLayer(editedLayer);
+      }}
+    />
+  ) : null;
+
+  const layerCreationNotice = typeof document === "undefined" ? null : createPortal(
+    <div role="status" className="sr-only">
+      {createdLayerNotice ? `Nouveau calque créé. Calque DroMap « ${createdLayerNotice.name} ».` : null}
+    </div>,
+    document.body,
+  );
 
   if (!isOpen && !embedded) {
     return (
       <>
-        {objectEditDialog}
+        {geoJsonSettingsDialog}
+        {featureSettings}
         {renderDialog()}
+        {layerCreationNotice}
         <MapDockButton
           data-dromap-layers-trigger="true"
           aria-label="Calque"
           aria-description={activeLayer?.name ?? "Dessin direct"}
           aria-expanded={false}
           label="Calque"
+          framedDetails
+          revealDetails={Boolean(createdLayerNotice)}
           onClick={() => {
+            setGeoJsonFeatureSelection(null);
+            setFocusedGeoJsonLayer(null);
             setPanelZIndex(bringFloatingPanelToFront());
             setIsOpen(true);
           }}
-          className="absolute right-4 top-[4.25rem] z-[1000] origin-right border-teal-200 text-teal-800 motion-safe:transition-[scale] motion-safe:hover:scale-[1.025]"
+          className={`absolute right-4 top-[4.25rem] z-[1000] origin-right motion-safe:transition-[scale] ${createdLayerNotice
+            ? "border-teal-500 bg-teal-50! text-teal-950 ring-2 ring-teal-200 motion-safe:scale-105"
+            : "border-teal-200 text-teal-800 motion-safe:hover:scale-[1.025]"}`}
           icon={
             <span className="grid size-7 place-items-center rounded-lg bg-teal-600 text-white">
               <svg
@@ -1239,9 +1293,7 @@ export function LayersPanel({
             </span>
           }
         >
-          <span className="inline-block max-w-40 truncate align-middle text-xs text-slate-600">
-            {activeLayer?.name ?? "Dessin direct"}
-          </span>
+          {createdLayerNotice ? "Nouveau calque créé" : activeLayer?.name ?? "Dessin direct"}
         </MapDockButton>
       </>
     );
@@ -1271,6 +1323,7 @@ export function LayersPanel({
                 ? ` · ${geoJsonLayers.length} GeoJSON (${visibleGeoJsonLayerCount} visible${visibleGeoJsonLayerCount > 1 ? "s" : ""})`
                 : ""}
             </div>
+            {createdLayerNotice ? <p className="mt-1 text-xs font-semibold text-teal-700">Nouveau calque créé · {createdLayerNotice.name}</p> : null}
           </div>
 
           {!embedded ? (
@@ -1799,7 +1852,9 @@ export function LayersPanel({
       />
 
       {renderDialog()}
-      {objectEditDialog}
+      {geoJsonSettingsDialog}
+      {featureSettings}
+      {layerCreationNotice}
     </>
   );
 }

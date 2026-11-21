@@ -48,6 +48,7 @@ import {
   type FeatureBodyDragPreviewDetail,
 } from "@/lib/dromap/drag-preview";
 import { useEditorFeaturesStore } from "@/stores/editor-features";
+import { useFeaturesWithSettingsPreview } from "@/stores/editor-feature-settings-preview";
 import { useEditorCustomMarkersStore } from "@/stores/editor-custom-markers";
 import { useEditorToolStore } from "@/stores/editor-tool";
 import { useEditorWorkspaceStore } from "@/stores/editor-workspace";
@@ -1050,7 +1051,7 @@ export function FeaturesStoreRenderer() {
     new Map<string, Set<L.Layer>>(),
   );
 
-  const features = useEditorFeaturesStore((state) => state.features);
+  const features = useFeaturesWithSettingsPreview();
   const markerCatalog = useMarkerSymbolCatalog(features.some((feature) =>
     feature.geometry.type === "Point" && markerSymbolNeedsCatalog(getFeatureMarkerSymbol(feature)),
   ));

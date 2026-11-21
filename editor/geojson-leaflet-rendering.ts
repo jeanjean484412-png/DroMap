@@ -164,9 +164,13 @@ export function applyLeafletGeoJsonFeatureStyle(
   const isPoint =
     feature.geometry.type === "Point" || feature.geometry.type === "MultiPoint";
 
-  // Reproduit exactement le contrat historique du renderer complet : un
-  // Point direct reçoit les options de CircleMarker ; un MultiPoint est un
-  // FeatureGroup et reçoit le style Path via FeatureGroup#setStyle.
+  if (feature.geometry.type === "MultiPoint" && featureLayer instanceof L.LayerGroup) {
+    featureLayer.eachLayer((point) =>
+      applyLeafletGeoJsonFeatureStyle(point, feature, layer, paneName, renderer, graphicScale),
+    );
+    return;
+  }
+
   if (featureLayer instanceof L.CircleMarker && isPoint) {
     const options = getGeoJsonLayerPointOptions(layer, feature, paneName, renderer, graphicScale);
     featureLayer.setRadius(options.radius ?? 4);

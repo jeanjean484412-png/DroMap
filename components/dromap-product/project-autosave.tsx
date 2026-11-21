@@ -12,7 +12,7 @@ import {
 
 import { createDromapEditorProjectSnapshot } from "@/lib/dromap/editor-project-persistence";
 import { createDromapProjectThumbnailDataUrl } from "@/lib/dromap/project-thumbnail";
-import { useDromapProductStore } from "@/stores/dromap-product";
+import { retainOpenEditorProject, useDromapProductStore } from "@/stores/dromap-product";
 import { useEditorFeaturesStore } from "@/stores/editor-features";
 import { useEditorLayersStore } from "@/stores/editor-layers";
 import { useEditorGeoJsonLayersStore } from "@/stores/editor-geojson-layers";
@@ -29,11 +29,11 @@ type ThumbnailSnapshot = Parameters<typeof createDromapProjectThumbnailDataUrl>[
 const latestThumbnailJobs = new Map<string, object>();
 
 type ProjectSaveContextValue = {
-  saveNow: (reason?: SaveReason) => Promise<void>;
+  saveNow: (reason?: SaveReason) => Promise<boolean>;
 };
 
 const ProjectSaveContext = createContext<ProjectSaveContextValue>({
-  saveNow: async () => undefined,
+  saveNow: async () => true,
 });
 
 function isTourSimulationActive() {
@@ -116,11 +116,13 @@ export function DromapProjectAutosaveProvider({
     if (mountedAtRef.current === 0) mountedAtRef.current = Date.now();
   }, []);
 
-  const enqueuePersistence = useCallback((task: () => Promise<void>) => {
+  useEffect(() => retainOpenEditorProject(projectId), [projectId]);
+
+  const enqueuePersistence = useCallback(<T,>(task: () => Promise<T>) => {
     persistencePendingRef.current += 1;
     const run = persistenceQueueRef.current.then(task, task);
     persistenceQueueRef.current = run
-      .catch(() => undefined)
+      .then(() => undefined, () => undefined)
       .finally(() => {
         persistencePendingRef.current = Math.max(
           0,
@@ -149,7 +151,7 @@ export function DromapProjectAutosaveProvider({
       generationOverride?: number,
     ) => {
       // Les états fictifs du tutoriel ne doivent jamais entrer dans une sauvegarde.
-      if (isTourSimulationActive()) return;
+      if (isTourSimulationActive()) return true;
 
       markProjectSaving(projectId);
       if (reason === "manual" || reason === "navigation") {
@@ -158,7 +160,7 @@ export function DromapProjectAutosaveProvider({
 
       const generation = generationOverride ?? changeGenerationRef.current;
       const snapshot = snapshotOverride ?? createDromapEditorProjectSnapshot();
-      await saveProjectSnapshot(projectId, snapshot);
+      if (!(await saveProjectSnapshot(projectId, snapshot))) return false;
       checkpointedGenerationRef.current = Math.max(
         checkpointedGenerationRef.current,
         generation,
@@ -169,6 +171,7 @@ export function DromapProjectAutosaveProvider({
         // sauvegarde locale ni le retour vers une autre page.
         generateThumbnail(snapshot);
       }
+      return true;
     },
     [generateThumbnail, markProjectSaving, projectId, saveProjectSnapshot],
   );
@@ -176,7 +179,7 @@ export function DromapProjectAutosaveProvider({
   const saveNow = useCallback(
     async (reason: SaveReason = "manual") => {
       restoreTourSimulationBeforePersistence();
-      if (isTourSimulationActive()) return;
+      if (isTourSimulationActive()) return true;
 
       if (gestureTimerRef.current !== null) {
         window.clearTimeout(gestureTimerRef.current);
@@ -189,7 +192,7 @@ export function DromapProjectAutosaveProvider({
       countPendingGeneration();
       const generation = changeGenerationRef.current;
 
-      await enqueuePersistence(() => performSave(reason, undefined, generation));
+      return enqueuePersistence(() => performSave(reason, undefined, generation));
     },
     [countPendingGeneration, enqueuePersistence, performSave],
   );
@@ -245,8 +248,7 @@ export function DromapProjectAutosaveProvider({
         if (triggerAutomaticSave && (project?.pendingChanges ?? 0) >= 5 && project?.status !== "trashed") {
           await performSave("automatic", snapshot, generation);
         }
-        if (generation > checkpointedGenerationRef.current) {
-          await checkpointProjectSnapshot(projectId, snapshot);
+        if (generation > checkpointedGenerationRef.current && await checkpointProjectSnapshot(projectId, snapshot)) {
           checkpointedGenerationRef.current = generation;
         }
       });
@@ -259,6 +261,9 @@ export function DromapProjectAutosaveProvider({
       changeGenerationRef.current += 1;
       if (gestureTimerRef.current !== null) {
         window.clearTimeout(gestureTimerRef.current);
+        countedGenerationRef.current = changeGenerationRef.current;
+      } else {
+        countPendingGeneration();
       }
 
       // Chaque geste terminé reçoit rapidement un checkpoint IndexedDB. Les
@@ -366,11 +371,9 @@ export function DromapProjectAutosaveProvider({
         const snapshot = createDromapEditorProjectSnapshot();
         void enqueuePersistence(async () => {
           if (generation <= checkpointedGenerationRef.current) return;
-          await checkpointProjectSnapshot(projectId, snapshot);
-          checkpointedGenerationRef.current = Math.max(
-            checkpointedGenerationRef.current,
-            generation,
-          );
+          if (await checkpointProjectSnapshot(projectId, snapshot)) {
+            checkpointedGenerationRef.current = Math.max(checkpointedGenerationRef.current, generation);
+          }
         });
       } else {
         void enqueuePersistence(flushPersistence);
@@ -394,6 +397,22 @@ export function DromapProjectAutosaveProvider({
     };
 
     const handlePageHide = () => checkpointBeforeLeaving();
+    const handleConflictSave = (event: Event) => {
+      const { projectId: requestedId, waitFor } = (event as CustomEvent<{
+        projectId: string;
+        waitFor: (saved: Promise<boolean>) => void;
+      }>).detail;
+      if (requestedId === projectId) waitFor(saveNow("automatic"));
+    };
+    const handleRemoteVersionAccepted = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== projectId) return;
+      if (gestureTimerRef.current !== null) {
+        window.clearTimeout(gestureTimerRef.current);
+        gestureTimerRef.current = null;
+      }
+      checkpointedGenerationRef.current = changeGenerationRef.current;
+      countedGenerationRef.current = changeGenerationRef.current;
+    };
     const handlePageShow = (event: PageTransitionEvent) => {
       if (event.persisted) useEditorWorkspaceStore.getState().cancelWorkspaceZoneModification();
     };
@@ -404,6 +423,8 @@ export function DromapProjectAutosaveProvider({
     window.addEventListener("beforeunload", handleBeforeUnload);
     window.addEventListener("pagehide", handlePageHide);
     window.addEventListener("pageshow", handlePageShow);
+    window.addEventListener("dromap:project-remote-version-accepted", handleRemoteVersionAccepted);
+    window.addEventListener("dromap:project-conflict-save", handleConflictSave);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
@@ -419,6 +440,8 @@ export function DromapProjectAutosaveProvider({
       window.removeEventListener("beforeunload", handleBeforeUnload);
       window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("pageshow", handlePageShow);
+      window.removeEventListener("dromap:project-remote-version-accepted", handleRemoteVersionAccepted);
+      window.removeEventListener("dromap:project-conflict-save", handleConflictSave);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
 
       checkpointBeforeLeaving();
@@ -430,6 +453,7 @@ export function DromapProjectAutosaveProvider({
     flushPersistence,
     performSave,
     projectId,
+    saveNow,
   ]);
 
   const value = useMemo(() => ({ saveNow }), [saveNow]);
